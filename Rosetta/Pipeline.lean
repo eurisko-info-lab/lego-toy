@@ -52,7 +52,7 @@ def sanitizeVarName (name : String) : String :=
 def lowercaseCtor (name : String) : String :=
   if name.isEmpty then name
   else
-    let first := name.get ⟨0⟩
+    let first := name.data[0]!
     let rest := name.drop 1
     String.singleton first.toLower ++ rest
 
@@ -1018,7 +1018,7 @@ partial def termToLean (t : Term) (indent : Nat := 0) : String :=
     let lawLines := laws.map fun law =>
       match law with
       | .con "lawEq" [.var n, lhs, _, rhs, _] => s!"  -- {n}: {termToLean lhs 0} = {termToLean rhs 0}"
-      | .con "lawEq2" es => s!"  -- (paired law)"
+      | .con "lawEq2" _ => s!"  -- (paired law)"
       | _ => ""
     let lines := [
       s!"-- Algebra {name} for {sort}",
@@ -1243,7 +1243,7 @@ partial def termToLean (t : Term) (indent : Nat := 0) : String :=
       | _ => "example"
     s!"{pad}-- Example: {name}"
   -- Comment out grammar/parser definitions since they're not valid Lean
-  | .con "inductive" [.var name, body] =>
+  | .con "inductive" [.var name, _body] =>
     s!"{pad}-- Grammar: {name}"
   | .con "inductive" args =>
     let name := args.head?.map (termToLean · 0) |>.getD "unknown"

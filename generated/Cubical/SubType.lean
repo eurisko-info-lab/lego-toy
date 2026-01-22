@@ -5,6 +5,8 @@
 
 import Lego.Algebra
 
+set_option linter.unusedVariables false
+
 open Lego
 
 namespace SubType

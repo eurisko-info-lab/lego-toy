@@ -1343,10 +1343,12 @@ def main : IO Unit := do
   IO.FS.createDirAll "./generated/Cubical"
 
   -- Header for generated files depends on generation mode
+  -- Disable linter for generated code (lots of unused variables are normal)
+  -- Note: set_option MUST come after import in Lean 4
   let header := if genMode == .nativeLean then
-    "/-\n  AUTO-GENERATED from .lego files\n  Do not edit directly.\n-/\n\nimport Lego.Cubical.Core\n\nopen Lego.Core\nopen Lego.Core.Expr\n\n"
+    "/-\n  AUTO-GENERATED from .lego files\n  Do not edit directly.\n-/\n\nimport Lego.Cubical.Core\n\nset_option linter.unusedVariables false\n\nopen Lego.Core\nopen Lego.Core.Expr\n\n"
   else
-    "/-\n  AUTO-GENERATED from .lego files\n  Do not edit directly.\n-/\n\nimport Lego.Algebra\n\nopen Lego\n\n"
+    "/-\n  AUTO-GENERATED from .lego files\n  Do not edit directly.\n-/\n\nimport Lego.Algebra\n\nset_option linter.unusedVariables false\n\nopen Lego\n\n"
 
   for (input, output) in files do
     let content ← IO.FS.readFile input

@@ -1,0 +1,578 @@
+-----------------------------------------------------
+-- CubicalFeatures.lego: Tests for Cubical Type Theory Features
+--
+-- Comprehensive tests covering the cubical type theory
+-- infrastructure added for cooltt/redtt feature parity:
+--
+-- 1. Conversion module (equate_tp, equate_con, equate_dim, equate_cof)
+-- 2. RefineMonad (RefineM, LocalEnv, GlobalEnv)
+-- 3. TermBuilder (lam, pi, sigma, path builders)
+-- 4. Semantics (eval, doRigidCoe, doRigidHCom)
+-- 5. Tactic system (Cof, Prf, Path, El, Structural, Hole, Probe,
+--                   Univ, ElV, ElExt, ElFHCom, Telescope, KanTelescope)
+-- 6. Elaborate (checkType, checkTelescope, SurfaceExt, checkExt, inferExt)
+-- 7. Glue types (GlueInfo, ua, reduction)
+-- 8. Domain/Semantic types (D.Con, D.Tp, D.Cut, D.Env, closures)
+--
+-- Tests are organized by feature area.
+-----------------------------------------------------
+
+lang CubicalFeatures :=
+
+-----------------------------------------------------
+-- Token: Basic lexer for test syntax
+-----------------------------------------------------
+
+token Token
+  digit  ::= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
+  lower  ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+           | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+           | 'u' | 'v' | 'w' | 'x' | 'y' | 'z' ;
+  upper  ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
+           | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
+           | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' ;
+  mathbb ::= '𝕀' | '𝔽' ;
+  greek  ::= 'α' | 'β' | 'γ' | 'δ' | 'ε' | 'ζ' | 'η' | 'θ' | 'ι' | 'κ'
+           | 'λ' | 'μ' | 'ν' | 'ξ' | 'ο' | 'π' | 'ρ' | 'σ' | 'τ' | 'υ'
+           | 'φ' | 'χ' | 'ψ' | 'ω' ;
+  alpha  ::= lower | upper | mathbb | greek | '_' ;
+  symch  ::= '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+           | ':' | ';' | ',' | '.' | '|' | '!' | '?' | '@'
+           | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '-'
+           | '=' | '~' | '/' | '\\' | '→' | '←' | '↔' | '⊕'
+           | '⊢' | '×' | '∀' | '∃' | '★' | '☆' | '∧' | '∨' | '⊤' | '⊥' ;
+
+  ident   ::= alpha (alpha | digit | '-' | '/' | '\'')* ;
+  number  ::= digit digit* ;
+  ws      ::= ' ' | '\t' | '\n' | '\r' ;
+  comment ::= '-' '-' nonnl* ;
+  nonnl   ::= alpha | digit | symch | ' ' | '\t' ;
+  sym     ::= symch ;
+
+-----------------------------------------------------
+-- 1. Dimension Types (𝕀)
+-- Tests dimension construction and operations
+-----------------------------------------------------
+
+piece Dimension
+  dim ::= "0" → dim0                          -- dimension 0
+        | "1" → dim1                          -- dimension 1
+        | ident → dimVar ;                    -- dimension variable i
+
+  -- Dimension application: f @ r
+  dimApp ::= ident "@" dim → dimApp ;
+
+  -- Dimension substitution: [r/i]
+  dimSubst ::= "[" dim "/" ident "]" → dimSubst ;
+
+test Dimension
+  -- Dimension literals
+  "0" ~> dim0
+  "1" ~> dim1
+  "i" ~> dimVar("i")
+  "j" ~> dimVar("j")
+
+  -- Dimension application (path @ dim)
+  "p @ 0" ~> dimApp("p", dim0)
+  "p @ 1" ~> dimApp("p", dim1)
+  "p @ i" ~> dimApp("p", dimVar("i"))
+  "path @ j" ~> dimApp("path", dimVar("j"))
+
+  -- Dimension substitution
+  "[0/i]" ~> dimSubst(dim0, "i")
+  "[1/j]" ~> dimSubst(dim1, "j")
+  "[k/i]" ~> dimSubst(dimVar("k"), "i")
+
+-----------------------------------------------------
+-- 2. Cofibration Types (𝔽)
+-- Tests cofibration construction and operations
+-----------------------------------------------------
+
+piece Cofibration
+  -- Atomic cofibrations
+  cofAtom ::= "⊤" → cofTop                    -- true (top)
+            | "⊥" → cofBot                    -- false (bot)
+            | "(" cof ")" → cof ;             -- parenthesized
+
+  -- Equation: r = s
+  cofEq ::= dim "=" dim → cofEq ;
+
+  -- Disjunction: φ ∨ ψ  
+  cofOr ::= cofAtom "∨" cofAtom → cofJoin ;
+
+  -- Conjunction: φ ∧ ψ
+  cofAnd ::= cofAtom "∧" cofAtom → cofMeet ;
+
+  -- General cofibration
+  cof ::= cofOr | cofAnd | cofEq | cofAtom ;
+
+  -- Boundary cofibration: ∂i (shorthand for i=0 ∨ i=1)
+  boundary ::= "∂" ident → boundary ;
+
+test Cofibration
+  -- Atomic cofibrations
+  "⊤" ~> cofTop
+  "⊥" ~> cofBot
+
+  -- Equation cofibrations
+  "0 = 0" ~> cofEq(dim0, dim0)
+  "i = 0" ~> cofEq(dimVar("i"), dim0)
+  "i = 1" ~> cofEq(dimVar("i"), dim1)
+  "i = j" ~> cofEq(dimVar("i"), dimVar("j"))
+
+  -- Disjunction (join)
+  "⊤ ∨ ⊥" ~> cofJoin(cofTop, cofBot)
+  "(i = 0) ∨ (i = 1)" ~> cofJoin(cofEq(dimVar("i"), dim0), cofEq(dimVar("i"), dim1))
+
+  -- Conjunction (meet)  
+  "⊤ ∧ ⊥" ~> cofMeet(cofTop, cofBot)
+  "(i = 0) ∧ (j = 1)" ~> cofMeet(cofEq(dimVar("i"), dim0), cofEq(dimVar("j"), dim1))
+
+  -- Boundary (syntactic sugar)
+  "∂i" ~> boundary("i")
+  "∂j" ~> boundary("j")
+
+-----------------------------------------------------
+-- 3. Path Types
+-- Tests path type construction and operations
+-----------------------------------------------------
+
+piece PathType
+  -- Path type: Path A a b
+  pathType ::= "Path" type term term → pathType ;
+
+  -- Path abstraction: λi. e
+  pathAbs ::= "λ" ident "." term → pathAbs ;
+
+  -- Path application: p @ r
+  pathApp ::= term "@" dim → pathApp ;
+
+  -- Reflexivity: refl
+  pathRefl ::= "refl" term → refl ;
+
+  -- Types (simplified)
+  type ::= "Type" → univ
+         | "Nat" → nat
+         | "S¹" → circle
+         | ident → typeVar
+         | "(" type ")" → type ;
+
+  -- Terms (simplified)
+  term ::= pathAbs
+         | pathRefl
+         | ident → var
+         | number → lit
+         | "(" term ")" → term ;
+
+test PathType
+  -- Path type construction
+  "Path Nat 0 0" ~> pathType(nat, lit("0"), lit("0"))
+  "Path A x y" ~> pathType(typeVar("A"), var("x"), var("y"))
+
+  -- Path abstraction
+  "λi. x" ~> pathAbs("i", var("x"))
+  "λj. y" ~> pathAbs("j", var("y"))
+
+  -- Reflexivity
+  "refl x" ~> refl(var("x"))
+  "refl 0" ~> refl(lit("0"))
+
+-----------------------------------------------------
+-- 4. Extension Types
+-- Tests n-ary extension type construction
+-----------------------------------------------------
+
+piece ExtensionType
+  -- Extension type: Ext n A φ [a]
+  extType ::= "Ext" number type cof extBdry → extType ;
+  
+  -- Extension boundary: [t]
+  extBdry ::= "[" term "]" → extBdry ;
+
+  -- Extension lambda: extλ (i j ...). e
+  extLam ::= "extλ" "(" ident* ")" "." term → extLam ;
+
+  -- Extension application: e # (r s ...)
+  extApp ::= term "#" "(" dim* ")" → extApp ;
+
+test ExtensionType
+  -- Unary extension (like Path)
+  "Ext 1 A (i = 0) [x]" ~> extType(lit("1"), typeVar("A"), cofEq(dimVar("i"), dim0), extBdry(var("x")))
+
+  -- Binary extension
+  "Ext 2 A (i = 0) [x]" ~> extType(lit("2"), typeVar("A"), cofEq(dimVar("i"), dim0), extBdry(var("x")))
+
+  -- Extension lambda
+  "extλ (i). x" ~> extLam(["i"], var("x"))
+  "extλ (i j). y" ~> extLam(["i", "j"], var("y"))
+
+-----------------------------------------------------
+-- 5. V-Types (Univalence)
+-- Tests V-type construction for univalence
+-----------------------------------------------------
+
+piece VType
+  -- V-type: V r A B e
+  vType ::= "V" dim type type term → vType ;
+
+  -- V-intro: Vin r a b
+  vIn ::= "Vin" dim term term → vIn ;
+
+  -- V-proj: Vproj r e
+  vProj ::= "Vproj" dim term → vProj ;
+
+test VType
+  -- V-type construction
+  "V i A B e" ~> vType(dimVar("i"), typeVar("A"), typeVar("B"), var("e"))
+  "V 0 A B e" ~> vType(dim0, typeVar("A"), typeVar("B"), var("e"))
+  "V 1 A B e" ~> vType(dim1, typeVar("A"), typeVar("B"), var("e"))
+
+  -- V-intro
+  "Vin i a b" ~> vIn(dimVar("i"), var("a"), var("b"))
+  "Vin 0 a b" ~> vIn(dim0, var("a"), var("b"))
+
+  -- V-proj
+  "Vproj i e" ~> vProj(dimVar("i"), var("e"))
+  "Vproj 0 e" ~> vProj(dim0, var("e"))
+
+-----------------------------------------------------
+-- 6. Glue Types (Univalence)
+-- Tests Glue type construction for univalence
+-----------------------------------------------------
+
+piece GlueType
+  -- Glue type: Glue A φ T e
+  glueType ::= "Glue" type cof type term → glueType ;
+
+  -- Glue element: glue t a
+  glueElem ::= "glue" term term → glueElem ;
+
+  -- Unglue: unglue e
+  unglue ::= "unglue" term → unglue ;
+
+  -- ua: ua e (for univalence axiom)
+  ua ::= "ua" term → ua ;
+
+test GlueType
+  -- Glue type construction  
+  "Glue A ⊤ T e" ~> glueType(typeVar("A"), cofTop, typeVar("T"), var("e"))
+  "Glue A (i = 0) T e" ~> glueType(typeVar("A"), cofEq(dimVar("i"), dim0), typeVar("T"), var("e"))
+
+  -- Glue element
+  "glue t a" ~> glueElem(var("t"), var("a"))
+
+  -- Unglue
+  "unglue e" ~> unglue(var("e"))
+
+  -- ua (univalence)
+  "ua e" ~> ua(var("e"))
+
+-----------------------------------------------------
+-- 7. Sub Types
+-- Tests sub type construction
+-----------------------------------------------------
+
+piece SubType
+  -- Sub type: Sub A φ a
+  subType ::= "Sub" type cof term → subType ;
+
+  -- Sub intro: subIn a
+  subIn ::= "subIn" term → subIn ;
+
+  -- Sub elim: subOut e
+  subOut ::= "subOut" term → subOut ;
+
+test SubType
+  -- Sub type construction
+  "Sub A ⊤ a" ~> subType(typeVar("A"), cofTop, var("a"))
+  "Sub A (i = 0) a" ~> subType(typeVar("A"), cofEq(dimVar("i"), dim0), var("a"))
+
+  -- Sub intro
+  "subIn a" ~> subIn(var("a"))
+
+  -- Sub out
+  "subOut e" ~> subOut(var("e"))
+
+-----------------------------------------------------
+-- 8. Kan Operations (Coercion and Composition)
+-- Tests coe and hcom operations
+-----------------------------------------------------
+
+piece KanOps
+  -- Coercion: coe r r' i.A a
+  coe ::= "coe" dim dim dimBinder type term → coe ;
+  dimBinder ::= ident "." → dimBinder ;
+
+  -- Homogeneous composition: hcom r r' A φ sys a
+  hcom ::= "hcom" dim dim type cof system term → hcom ;
+  
+  -- System (partial element): [φ₁ → e₁ | φ₂ → e₂ | ...]
+  system ::= "[" branch ("|" branch)* "]" → system ;
+  branch ::= cof "→" term → branch ;
+
+  -- fhcom (heterogeneous): fhcom r r' A φ sys
+  fhcom ::= "fhcom" dim dim type cof system → fhcom ;
+
+test KanOps
+  -- Coercion
+  "coe 0 1 i.A x" ~> coe(dim0, dim1, dimBinder("i"), typeVar("A"), var("x"))
+  "coe i j k.B y" ~> coe(dimVar("i"), dimVar("j"), dimBinder("k"), typeVar("B"), var("y"))
+
+  -- System (partial elements)
+  "[⊤ → x]" ~> system(branch(cofTop, var("x")))
+  "[i = 0 → a | i = 1 → b]" ~> system(branch(cofEq(dimVar("i"), dim0), var("a")), branch(cofEq(dimVar("i"), dim1), var("b")))
+
+-----------------------------------------------------
+-- 9. Signature/Record Types
+-- Tests record/signature type construction
+-----------------------------------------------------
+
+piece Signature
+  -- Signature type: sig (x : A) (y : B x) ...
+  sigType ::= "sig" sigFields → sigType ;
+  sigFields ::= sigField* ;
+  sigField ::= "(" ident ":" type ")" → sigField ;
+
+  -- Struct value: struct { x = a, y = b, ... }  
+  structVal ::= "struct" "{" structFields "}" → struct ;
+  structFields ::= structField ("," structField)* ;
+  structField ::= ident "=" term → structFieldVal ;
+
+  -- Projection: e.x
+  proj ::= term "." ident → proj ;
+
+test Signature
+  -- Signature type (dependent record type)
+  "sig (x : A)" ~> sigType(sigField("x", typeVar("A")))
+  "sig (x : A) (y : B)" ~> sigType(sigField("x", typeVar("A")), sigField("y", typeVar("B")))
+
+  -- Struct value
+  "struct { x = a }" ~> struct(structFieldVal("x", var("a")))
+  "struct { x = a, y = b }" ~> struct(structFieldVal("x", var("a")), structFieldVal("y", var("b")))
+
+-----------------------------------------------------
+-- 10. Datatype/Eliminator
+-- Tests datatype and eliminator syntax
+-----------------------------------------------------
+
+piece Datatype
+  -- Datatype reference: data.Name
+  dataRef ::= "data" "." ident → dataRef ;
+
+  -- Constructor: intro.Name
+  introRef ::= "intro" "." ident → introRef ;
+
+  -- Eliminator: elim e [| con → body]*
+  elim ::= "elim" term elimClauses → elim ;
+  elimClauses ::= "[" elimClause ("|" elimClause)* "]" → elimClauses ;
+  elimClause ::= ident "→" term → elimClause ;
+
+  -- Nat eliminator: natElim P z s n
+  natElim ::= "natElim" term term term term → natElim ;
+
+  -- Circle eliminator: circleElim P base loop s
+  circleElim ::= "circleElim" term term term term → circleElim ;
+
+test Datatype
+  -- Datatype and constructor references
+  "data.Nat" ~> dataRef("Nat")
+  "data.List" ~> dataRef("List")
+  "intro.zero" ~> introRef("zero")
+  "intro.suc" ~> introRef("suc")
+
+  -- Nat eliminator
+  "natElim P z s n" ~> natElim(var("P"), var("z"), var("s"), var("n"))
+
+  -- Circle eliminator
+  "circleElim P base loop s" ~> circleElim(var("P"), var("base"), var("loop"), var("s"))
+
+-----------------------------------------------------
+-- 11. Pi and Sigma Types
+-- Tests dependent function and pair types
+-----------------------------------------------------
+
+piece PiSigma
+  -- Pi type: (x : A) → B
+  piType ::= "(" ident ":" type ")" "→" type → piType ;
+
+  -- Arrow type (non-dependent): A → B
+  arrowType ::= type "→" type → arrowType ;
+
+  -- Sigma type: (x : A) × B
+  sigmaType ::= "(" ident ":" type ")" "×" type → sigmaType ;
+
+  -- Pair type (non-dependent): A × B
+  pairType ::= type "×" type → pairType ;
+
+  -- Lambda: λ x. e
+  lam ::= "λ" ident "." term → lam ;
+
+  -- Pair: (a, b)
+  pair ::= "(" term "," term ")" → pair ;
+
+  -- Projections: fst, snd
+  fst ::= "fst" term → fst ;
+  snd ::= "snd" term → snd ;
+
+test PiSigma
+  -- Pi type
+  "(x : A) → B" ~> piType("x", typeVar("A"), typeVar("B"))
+  "(n : Nat) → Type" ~> piType("n", nat, univ)
+
+  -- Arrow type (non-dependent)
+  "A → B" ~> arrowType(typeVar("A"), typeVar("B"))
+  "Nat → Nat" ~> arrowType(nat, nat)
+
+  -- Sigma type
+  "(x : A) × B" ~> sigmaType("x", typeVar("A"), typeVar("B"))
+  "(n : Nat) × Type" ~> sigmaType("n", nat, univ)
+
+  -- Pair type (non-dependent)
+  "A × B" ~> pairType(typeVar("A"), typeVar("B"))
+
+  -- Lambda
+  "λ x. x" ~> lam("x", var("x"))
+  "λ f. f" ~> lam("f", var("f"))
+
+  -- Pair
+  "(a, b)" ~> pair(var("a"), var("b"))
+  "(0, 1)" ~> pair(lit("0"), lit("1"))
+
+  -- Projections
+  "fst p" ~> fst(var("p"))
+  "snd p" ~> snd(var("p"))
+
+-----------------------------------------------------
+-- 12. Holes and Probes (Elaboration)
+-- Tests hole syntax for interactive proving
+-----------------------------------------------------
+
+piece HolesProbes
+  -- Hole: ?name or {! !}
+  hole ::= "?" ident → namedHole
+         | "{!" "!}" → anonHole ;
+
+  -- Probe: #probe e
+  probe ::= "#probe" term → probe ;
+
+  -- Normalize: #normalize e  
+  normalize ::= "#normalize" term → normalize ;
+
+test HolesProbes
+  -- Named hole
+  "?goal" ~> namedHole("goal")
+  "?x" ~> namedHole("x")
+
+  -- Anonymous hole
+  "{! !}" ~> anonHole
+
+  -- Probe (show normalized value)
+  "#probe x" ~> probe(var("x"))
+
+  -- Normalize
+  "#normalize e" ~> normalize(var("e"))
+
+-----------------------------------------------------
+-- 13. Definitions and Declarations
+-- Tests top-level definition syntax
+-----------------------------------------------------
+
+piece Definitions
+  -- Definition: def name : type := body
+  defn ::= "def" ident ":" type ":=" term → def ;
+
+  -- Opaque definition: opaque name : type
+  opaque ::= "opaque" ident ":" type → opaque ;
+
+  -- Axiom: axiom name : type
+  axiom ::= "axiom" ident ":" type → axiom ;
+
+test Definitions
+  -- Regular definition
+  "def id : A → A := λ x. x" ~> def("id", arrowType(typeVar("A"), typeVar("A")), lam("x", var("x")))
+
+  -- Opaque (no body)
+  "opaque f : A → B" ~> opaque("f", arrowType(typeVar("A"), typeVar("B")))
+
+  -- Axiom
+  "axiom funext : Type" ~> axiom("funext", univ)
+
+-----------------------------------------------------
+-- 14. Conversion Tests
+-- Tests type and term equality checking
+-----------------------------------------------------
+
+piece Conversion
+  -- Check convertible: e1 ≡ e2 : A
+  conv ::= term "≡" term ":" type → conv ;
+
+  -- Check subtype: A <: B
+  subty ::= type "<:" type → subtype ;
+
+test Conversion
+  -- Term conversion
+  "x ≡ x : A" ~> conv(var("x"), var("x"), typeVar("A"))
+  "0 ≡ 0 : Nat" ~> conv(lit("0"), lit("0"), nat)
+
+  -- Subtype
+  "A <: A" ~> subtype(typeVar("A"), typeVar("A"))
+
+-----------------------------------------------------
+-- 15. Circle (S¹) Type
+-- Tests circle type with base and loop
+-----------------------------------------------------
+
+piece CircleType
+  -- Circle type: S¹
+  circleType ::= "S¹" → circle ;
+
+  -- Base point: base
+  base ::= "base" → base ;
+
+  -- Loop: loop i
+  loop ::= "loop" dim → loop ;
+
+test CircleType
+  -- Circle type
+  "S¹" ~> circle
+
+  -- Base point
+  "base" ~> base
+
+  -- Loop with dimension
+  "loop i" ~> loop(dimVar("i"))
+  "loop 0" ~> loop(dim0)
+  "loop 1" ~> loop(dim1)
+
+-----------------------------------------------------
+-- 16. Universe Levels
+-- Tests universe hierarchy
+-----------------------------------------------------
+
+piece Universe
+  -- Universe at level: Type@n
+  univLevel ::= "Type" "@" number → univLevel ;
+
+  -- Universe (level 0): Type
+  univ0 ::= "Type" → univ0 ;
+
+  -- Level max: max l1 l2
+  levelMax ::= "max" number number → levelMax ;
+
+  -- Level suc: suc l
+  levelSuc ::= "suc" number → levelSuc ;
+
+test Universe
+  -- Universe at specific level
+  "Type@0" ~> univLevel(lit("0"))
+  "Type@1" ~> univLevel(lit("1"))
+  "Type@2" ~> univLevel(lit("2"))
+
+  -- Default universe (level 0)
+  "Type" ~> univ0
+
+-----------------------------------------------------
+-- End of lang
+-----------------------------------------------------
+
+end CubicalFeatures

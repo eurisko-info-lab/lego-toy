@@ -1,0 +1,521 @@
+-----------------------------------------------------
+-- Bootstrap: The Meta-Grammar
+--
+-- This is the grammar that parses grammars.
+-- Self-describing: it defines the syntax used to write itself.
+--
+-- Two levels of grammar:
+--   token: CharStream → Token (lexer level)
+--   piece: TokenStream → Term (parser level)
+--
+-- NOTE ON CHARACTER CLASSES:
+-- The character classes below define what the tokenizer recognizes.
+-- In a production implementation, the tokenizer should use Unicode
+-- categories (IsLetter, IsDigit, etc.) rather than enumeration.
+-- This enumeration exists only because the current implementation
+-- requires explicit character lists.
+--
+-- Users should be able to use ANY Unicode in their .lego files.
+-- The limitation is in the implementation, not the design.
+-----------------------------------------------------
+
+lang Bootstrap :=
+
+-----------------------------------------------------
+-- Token: Character-level grammar (lexer)
+-- Uses 'x' single-char literals, same algebra as piece
+--
+-- FUTURE: Replace character enumeration with Unicode categories:
+--   alpha ::= <unicode-letter> | '_' ;
+--   digit ::= <unicode-digit> ;
+--   symch ::= <unicode-symbol> | <unicode-punctuation> ;
+-----------------------------------------------------
+
+token Token
+  -- Basic ASCII character classes
+  digit  ::= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
+  lower  ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+           | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+           | 'u' | 'v' | 'w' | 'x' | 'y' | 'z' ;
+  upper  ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
+           | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
+           | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' ;
+  
+  -- Extended characters (implementation limitation - should be Unicode categories)
+  -- Greek letters for type theory
+  greek  ::= 'α' | 'β' | 'γ' | 'δ' | 'ε' | 'ζ' | 'η' | 'θ' | 'ι' | 'κ'
+           | 'λ' | 'μ' | 'ν' | 'ξ' | 'ο' | 'π' | 'ρ' | 'σ' | 'τ' | 'υ'
+           | 'φ' | 'χ' | 'ψ' | 'ω'
+           | 'Α' | 'Β' | 'Γ' | 'Δ' | 'Ε' | 'Ζ' | 'Η' | 'Θ' | 'Ι' | 'Κ'
+           | 'Λ' | 'Μ' | 'Ν' | 'Ξ' | 'Ο' | 'Π' | 'Ρ' | 'Σ' | 'Τ' | 'Υ'
+           | 'Φ' | 'Χ' | 'Ψ' | 'Ω' ;
+  -- Double-struck (blackboard bold) letters
+  mathbb ::= '𝕀' | '𝔽' | '𝕊' ;
+  -- Superscripts and subscripts
+  super  ::= '¹' | '²' | '³' ;
+  sub    ::= '₀' | '₁' | '₂' | '₃' | '₄' | '₅' | '₆' | '₇' | '₈' | '₉' ;
+  -- Math relation and operator symbols
+  mathrel ::= '≈' | '≅' | '≤' | '≥' | '≡' ;
+  mathop  ::= '∘' | '⊗' | '⊙' | '∧' | '∨' | '∷' | '⋆' | '¯' | '⊤' | '⊥' ;
+  
+  -- Alphabetic: anything that can start/continue an identifier
+  alpha  ::= lower | upper | greek | mathbb | super | sub | mathrel | mathop | '_' ;
+  
+  -- Symbol characters (punctuation, operators)
+  symch  ::= '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+           | ':' | ';' | ',' | '.' | '|' | '!' | '?' | '@'
+           | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '-'
+           | '=' | '~' | '/' | '\\' | '→' | '←' | '↔' | '⊕'
+           | '⊢' | '×' | 'λ' | '∂' | '∀' | '∃' | '⦉' | '⦊'
+           | '«' | '»' | '★' | '☆' | '`' | '↦' | '↾'
+           | '⟨' | '⟩' ;
+
+  -- Token patterns
+  -- Note: '/' is allowed in identifiers for hierarchical names (e.g., trans/filler in redtt)
+  -- Note: '\'' is allowed as a suffix for primed identifiers (e.g., symm' in redtt)
+  ident   ::= alpha (alpha | digit | '-' | '/' | '\'')* ;
+  number  ::= digit digit* ;
+  string  ::= '"' strchar* '"' ;
+  strchar ::= '\\' escape | printable ;
+  escape  ::= '"' | '\\' | 'n' | 't' | 'r' | '\'' ;
+  printable ::= alpha | digit | symch | ' ' ;
+  -- Character literals: 'x' or '\x' (including '\'' for escaped quote)
+  char    ::= '\'' charinner '\'' ;
+  charinner ::= '\\' escape | alpha | digit | symch | ' ' | '"' ;
+
+  -- Whitespace and comments (to skip)
+  ws      ::= ' ' | '\t' | '\n' | '\r' ;
+  comment ::= '-' '-' nonnl* ;
+  nonnl   ::= alpha | digit | symch | ' ' | '\t' | '\'' | '"' ;
+
+  -- Multi-character operators (ordered longest first)
+  op3     ::= ':' ':' '='    -- ::=
+            | '=' 'I' '=' ;  -- =I=
+  op2     ::= '~' '~' '>'    -- ~~>
+            | ':' '='        -- :=
+            | '~' '>'        -- ~>
+            | '-' '>'        -- ->
+            | '<' '-'        -- <-
+            | '=' '>'        -- =>
+            | '@' '@' ;      -- @@
+
+  -- Special <name> syntax
+  special ::= '<' alpha+ '>' ;
+
+  -- Single symbol (fallback)
+  sym     ::= symch ;
+
+-----------------------------------------------------
+-- Atoms: Basic tokens (references Token piece outputs)
+-----------------------------------------------------
+
+piece Atom
+  ident  ::= <ident> → ident ;
+  string ::= <string> → string ;
+  char   ::= <char> → char ;
+  number ::= <number> → number ;
+  -- Meta-type aliases for generated grammars
+  expr   ::= <expr> → expr ;
+  symbol ::= <symbol> → symbol ;
+  bool   ::= <bool> → bool ;
+  elabCtx ::= <elabCtx> → elabCtx ;
+  sysEntry ::= <sysEntry> → sysEntry ;
+  visibility ::= <visibility> → visibility ;
+  name   ::= <name> → name ;
+
+-----------------------------------------------------
+-- Term: S-expression terms
+-- Binder notation: `ident "." term` binds identifier in term
+-----------------------------------------------------
+
+piece Term
+  term    ::= "$" ident "." term → binder
+            | "$" ident → var
+            | ident "." term → binder
+            | ident → var
+            | "_" → wildcard
+            | string → lit
+            | number → num
+            | "(" "Π" "(" ident ":" term ")" "." term ")" → piType
+            | "(" "Π" "(" "_" ":" term ")" "." term ")" → piType
+            | "(" "Σ" "(" ident ":" term ")" "." term ")" → sigmaType
+            | "(" "Σ" "(" "_" ":" term ")" "." term ")" → sigmaType
+            | "[" term ":=" term "]" term → subst
+            | "[" term ":" term "]" term → typedCtx
+            | "[" term "]" → bracket
+            | "{" termArg* "}" → brace
+            | "(" "[" term ":=" term "]" term ")" → parenSubst
+            | "(" "[" term ":" term "]" term ")" → parenTypedCtx
+            | "(" term ":" term ")" → ann
+            | "(" "$" ident "." term ")" → binderParen
+            | "(" ident "." term ")" → objBinderParen
+            | "(" conname "$" ident ":" term "." term ")" → binderCon
+            | "(" conname ident ":" term "." term ")" → binderCon
+            | "(" "(" conname termArg* ")" termArg+ ")" → app
+            | "(" conname termArg* ")" → con ;
+  -- termArg: arguments in term applications, supports typed vars ($x : A)
+  termArg ::= "$" ident "." term → binder
+            | "$" ident ":" term → typedVar
+            | "$" ident ":=" term → assign
+            | ident ":=" term → assign
+            | ident ":" term → labeledArg
+            | ident "." term → objBinder
+            | "~>" → con
+            | "→" → con
+            | "×" → con
+            | "↦" → con
+            | "=I=" → con
+            | "@@" → con
+            | "-" → con
+            | "↾" → con
+            | "@" → con
+            | "." → con
+            | "|" → con
+            | "=>" → con
+            | "←" → con
+            | "with" → con
+            | "where" → con
+            | term ;
+  -- conname: constructor names can be idents or reserved keywords (as symbols)
+  -- Multi-char operators that can appear as constructor heads
+  conname ::= "=I=" | "@@" | "~>" | "→" | "×" | "↦" | "⟨" | "⟩" | ident | <sym> ;
+
+-----------------------------------------------------
+-- Pattern: Match patterns for rules
+-- Produces clean Terms: $x → (var "$x"), (f x) → (con "f" [...])
+-- Binder notation: $x . body binds x in body
+-----------------------------------------------------
+
+piece Pattern
+  pattern ::= "$" ident "." pattern → binder
+            | "$" ident → var
+            | "[" pattern ":=" pattern "]" pattern → subst
+            | "[" patternArg* "]" → bracket
+            | "{" patternArg* "}" → brace
+            | "(" pattern "," pattern ")" → tuple
+            | "(" ")" → unit
+            | "(" "$" ident "." pattern ")" → binderParen
+            | "(" ident "." pattern ")" → objBinderParen
+            | "(" pattern ":" pattern ")" → ann
+            | "(" "(" "(" patternHead patternArg* ")" ")" patternArg+ ")" → app
+            | "(" "(" patternHead patternArg* ")" patternArg+ ")" → app
+            | "(" "(" "[" patternArg* "]" ")" patternArg+ ")" → app
+            | "(" "[" patternArg* "]" patternArg+ ")" → app
+            | "(" "(" pattern ":" pattern ")" ")" → ann
+            | "(" patternHead patternArg* ")" → con
+            | string → lit
+            | number → num
+            | ident → con ;
+  patternArg ::= "$" ident "." pattern → binder
+               | "$" ident ":" pattern → typedVar
+               | "$" ident ":=" pattern → assign
+               | ident ":=" pattern → assign
+               | ident ":" pattern → labeledArg
+               | ident "." pattern → objBinder
+               | "~>" → con
+               | "→" → con
+               | "×" → con
+               | "↦" → con
+               | "=I=" → con
+               | "@@" → con
+               | "-" → con
+               | "↾" → con
+               | "@" → con
+               | "." → con
+               | "|" → con
+               | "=>" → con
+               | "←" → con
+               | "⟨" → con
+               | "⟩" → con
+               | "," → con
+               | ":" → con
+               | ":=" → con
+               | "=" → con
+               | "in" → con
+               | "with" → con
+               | "where" → con
+               | pattern ;
+  patternHead ::= "$" ident → var
+                | number → num
+                | conname ;
+
+-----------------------------------------------------
+-- Template: Substitution templates for rules
+-- Same structure as Pattern - produces clean Terms
+-- Binder notation: $x . body binds x in body
+-----------------------------------------------------
+
+piece Template
+  template ::= "$" ident "." template → binder
+             | "$" ident → var
+             | "let" ident "=" template "in" template → letIn
+             | "let" "$" ident "=" template "in" template → letIn
+             | "let" "(" template "," template ")" "=" template "in" template → letTupleIn
+             | "case" template caseArm+ → caseExpr
+             | "[" template ":=" template "]" template → subst
+             | "[" templateArg* "]" → bracket
+             | "{" templateArg* "}" → brace
+             | "(" template "," template ("," template)+ ")" → nTuple
+             | "(" template "," template ")" → tuple
+             | "(" ")" → unit
+             | "(" "case" template caseArm+ ")" → caseExpr
+             | "(" "$" ident "." template ")" → binderParen
+             | "(" ident "." template ")" → objBinderParen
+             | "(" "λ" ident "." template ")" → lamParen
+             | "(" ident ident "." headTerm templateArg* ")" → introExpr
+             | "(" "let" ident "=" template "in" template ")" → letIn
+             | "(" "let" "$" ident "=" template "in" template ")" → letIn
+             | "(" "let" "(" template "," template ")" "=" template "in" template ")" → letTupleIn
+             | "(" headTerm templateArg* ")" → con
+             | "(" ident ":" template templateArg+ ")" → record
+             | "(" template ":" template ")" → typed
+             | "(" template ")" → paren
+             | ident parenArg+ ident+ → con
+             | ident parenArg+ → con
+             | string → lit
+             | number → num
+             | ident → con ;
+  parenArg ::= "(" template ")" → paren
+             | "(" template "," template ("," template)+ ")" → nTuple
+             | "(" template "," template ")" → tuple
+             | "(" ")" → unit
+             | "(" headTerm templateArg* ")" → con
+             | "(" template ":" template ")" → typed ;
+  caseArm ::= "(" patternHead patternArg* ")" "=>" template → arm
+            | "$" ident "=>" template → varArm
+            | ident "=>" template → arm
+            | conname "=>" template → arm ;
+  templateArg ::= "$" ident "." template → binder
+                | "$" ident ":" template → typedVar
+                | "$" ident ":=" template → assign
+                | ident ":=" template → assign
+                | ident ":" template → labeledArg
+                | string ":" template → stringLabeledArg
+                | "(" template ":" template ")" → typed
+                | ident "." template → objBinder
+                | "~>" → con
+                | "→" → con
+                | "×" → con
+                | "↦" → con
+                | "=I=" → con
+                | "@@" → con
+                | "-" → con
+                | "↾" → con
+                | "@" → con
+                | "." → con
+                | "|" → con
+                | "=>" → con
+                | "←" → con
+                | "⟨" → con
+                | "⟩" → con
+                | "," → con
+                | "with" → con
+                | "where" → con
+                | template ;
+  headTerm ::= "$" ident → var
+             | ident
+             | string
+             | number
+             | "(" template ":" template ")" → typed
+             | "(" template "," template ("," template)+ ")" → nTuple
+             | "(" template "," template ")" → tuple
+             | "(" template templateArg* ")" → app ;
+
+-----------------------------------------------------
+-- GrammarExpr: Grammar expressions
+-----------------------------------------------------
+
+piece GrammarExpr
+  expr    ::= alt ;
+  alt     ::= seq "|" alt → alt
+            | seq ;
+  seq     ::= seqBase "→" ident → annotated
+            | seqBase ;
+  seqBase ::= suffix+ → seq
+            | suffix ;
+  suffix  ::= atom "*" → star
+            | atom "+" → plus
+            | atom "?" → opt
+            | atom ;
+  atom    ::= string → lit
+            | char → chr
+            | ident → ref
+            | "(" expr ")" → group
+            | <special> → special
+            | "ε" → empty ;
+
+-----------------------------------------------------
+-- File: Top-level declarations
+-----------------------------------------------------
+
+piece File
+  legoFile   ::= decl* ;
+  decl       ::= importDecl | langDecl | tokenDecl | pieceDecl | vocabDecl | ruleDecl | typeDecl | testDecl | attrsDecl ;
+  importDecl ::= "import" modulePath ";"? → DImport ;
+  vocabDecl  ::= "vocab" ident ident* → DVocab ;
+  modulePath ::= ident ("." ident)* → modulePath ;
+  langDecl   ::= "lang" ident imports? ":=" langBody → DLang ;
+  imports    ::= "(" ident ("," ident)* ")" → DImports
+               | "(" ident+ ")" → DImports ;
+  langBody   ::= innerDecl* ;
+  innerDecl  ::= tokenDecl | pieceDecl | ruleDecl | typeDecl | testDecl | attrsDecl 
+               | deriveDecl | algebraDecl | effectDecl | opticsDecl | adjunctionDecl 
+               | kanDecl | operadDecl | natDecl | macroDecl | lawsDecl ;
+  tokenDecl  ::= "token" ident tokenItem+ → DToken ;
+  tokenItem  ::= prodDecl ;
+  pieceDecl  ::= "piece" ident pieceItem+ → DPiece ;
+  pieceItem  ::= prodDecl | ruleDecl | typeDecl | testDecl | deriveDecl | algebraDecl 
+               | effectDecl | opticsDecl | adjunctionDecl | kanDecl | operadDecl | natDecl 
+               | macroDecl | lawsDecl ;
+  prodDecl   ::= ident "::=" expr ";" → DGrammar ;
+  ruleDecl   ::= "rule" ident ":"? pattern ruleArrow template ruleGuard? ";" → DRule ;
+  ruleArrow  ::= "~~>" | "~>" ;
+  ruleGuard  ::= "when" sideCondition ("," sideCondition)* → guard ;
+  -- Derive operations from grammar (algebraic recursion schemes)
+  deriveDecl ::= "derive" deriveKind "for" ident deriveWith? ";" → DDerive ;
+  deriveKind ::= "subst" → DSubst | "shift" → DShift | "map" → DMap | "fold" → DFold
+               | "cata" → DCata | "ana" → DAna | "hylo" → DHylo | "para" → DPara
+               | "conv" → DConv | "eq" → DEq | "infer" → DInfer | "check" → DCheck
+               | "normalize" → DNormalize | "eval" → DEval ;
+  deriveWith ::= "with" deriveMod ("," deriveMod)* → deriveWith ;
+  deriveMod  ::= "binders" "=" "[" ident ("," ident)* "]" → binderList
+               | "fuel" "=" <number> → fuelMod
+               | "base" "=" pattern → baseMod ;
+  -- Macro: syntactic abbreviation (definitional expansion)
+  macroDecl  ::= "macro" ident macroParams? ":=" expr ";" → DMacro ;
+  macroParams ::= ident+ → macroParams ;
+  -- Algebra laws: named equations for a sort
+  lawsDecl   ::= "algebra" ident "for" ident "{" lawItem* "}" → DAlgebra ;
+  lawItem    ::= ident ":" expr "=" expr ";" → lawEq
+               | ident ":" expr "=" expr "," expr "=" expr ";" → lawEq2 ;
+  -- Grammar algebra: pushout, pullback, quotient
+  algebraDecl ::= "pushout" ident ident "along" ident ";" → DPushout
+                | "pullback" ident ident "over" ident ";" → DPullback
+                | "quotient" ident "by" ident ";" → DQuotient
+                | "initial" ident ";" → DInitial
+                | "terminal" ident ";" → DTerminal
+                | "coproduct" ident ident ";" → DCoproduct
+                | "product" ident ident ";" → DProduct
+                | ident "extends" ident extendWith? ";" → DExtends ;
+  extendWith ::= "with" extendMod ("," extendMod)* → extendWith ;
+  extendMod  ::= "rename" ident "to" ident → renameMod
+               | "hide" ident → hideMod
+               | "override" ident "=" expr → overrideMod ;
+  -- Effect algebra: monads, applicatives, free constructions
+  effectDecl ::= "effect" ident effectBody → DEffect
+               | "handler" ident "for" ident effectBody → DHandler
+               | "free" ident "over" ident ";" → DFree
+               | "cofree" ident "over" ident ";" → DCofree
+               | "monad" ident "=" monadSpec ";" → DMonad ;
+  effectBody ::= "{" effectOp* "}" ;
+  effectOp   ::= "op" ident ":" term "→" term ";" → DOp
+               | "return" ":" term ";" → DReturn
+               | "bind" ":" term ";" → DBind ;
+  monadSpec  ::= "State" ident → stateMonad
+               | "Reader" ident → readerMonad
+               | "Writer" ident → writerMonad
+               | "Error" ident → errorMonad
+               | "IO" → ioMonad
+               | monadSpec "×" monadSpec → productMonad
+               | monadSpec "∘" monadSpec → composeMonad ;
+  -- Optics: bidirectional transformations (van Laarhoven / profunctor)
+  opticsDecl ::= "lens" ident ":" ident "⟷" ident ";" → DLens
+               | "prism" ident ":" ident "⟷" ident ";" → DPrism
+               | "iso" ident ":" ident "≅" ident ";" → DIso
+               | "traversal" ident ":" ident "⟿" ident ";" → DTraversal
+               | "affine" ident ":" ident "⤳" ident ";" → DAffine
+               | "getter" ident ":" ident "→" ident ";" → DGetter
+               | "setter" ident ":" ident "←" ident ";" → DSetter
+               | "review" ident ":" ident "↩" ident ";" → DReview ;
+  -- Adjunctions: Free ⊣ Forgetful (generates both + unit/counit)
+  adjunctionDecl ::= ident "⊣" ident ":" ident "⇄" ident ";" → DAdjunction
+                   | "forgetful" ident ":" ident "→" ident ";" → DForgetful
+                   | "left" "adjoint" ident "to" ident ";" → DLeftAdj
+                   | "right" "adjoint" ident "to" ident ";" → DRightAdj ;
+  -- Kan extensions: the universal property
+  kanDecl ::= "lan" ident "along" ident ";" → DLan        -- Left Kan extension
+            | "ran" ident "along" ident ";" → DRan        -- Right Kan extension
+            | "yoneda" ident ";" → DYoneda                -- Yoneda embedding
+            | "coYoneda" ident ";" → DCoYoneda            -- Density comonad
+            | "codensity" ident ";" → DCodensity          -- Codensity monad
+            | "density" ident ";" → DDensity ;            -- Density comonad
+  -- Operads: multi-arity composition
+  operadDecl ::= "operad" ident operadBody → DOperad
+               | "algebra" ident "over" ident ";" → DOperadAlg ;
+  operadBody ::= "{" operadOp* "}" ;
+  operadOp   ::= "arity" <number> ":" ident ";" → DArity
+               | "compose" ":" ident ";" → DCompose
+               | "unit" ":" ident ";" → DUnit ;
+  -- Natural transformations: polymorphic functions between functors
+  natDecl ::= ident "=>" ident ":" ident "⟹" ident ";" → DNat
+            | "dinatural" ident ":" ident "⤇" ident ";" → DDinat
+            | "extranatural" ident ":" ident "⟾" ident ";" → DExtranat ;
+  typeDecl   ::= "type" ident ":" pattern ":" term whenClause? ";" → DType ;
+  whenClause ::= "when" typeConstraint ("," typeConstraint)* → whenClause ;
+  typeConstraint ::= pattern ":" term → constraint
+                   | "[" pattern ":" term "]" pattern ":" term → bracketConstraint
+                   | "[" pattern ":" term ("," pattern ":" term)+ "]" pattern ":" term → multiBracketConstraint
+                   | "[" pattern ":=" pattern "]" pattern "=" term → substConstraint
+                   | "[" pattern "=" pattern "]" pattern ":" term → eqCtxConstraint
+                   | "[" pattern "]" pattern ":" term → ctxConstraint
+                   | "[" pattern "]" term "=" term → eqConstraint
+                   | sideCondition ;
+  sideCondition ::= pattern "not" "free" "in" pattern → notFree
+                  | pattern "agree" "on" "overlaps" → agreeOverlaps
+                  | pattern "agrees" pattern → agrees
+                  | pattern "boundary" pattern → boundary
+                  | pattern "holds" → holds
+                  | pattern "declared" → declared
+                  | "bound" pattern ":" pattern → bound
+                  | pattern "=" pattern → eq
+                  | pattern → sidePattern ;
+  testDecl   ::= "test" string ":" annotatedTerm ("~~>" annotatedTerm)? ";" → DTest ;
+  annotatedTerm ::= term ":" term → ann | term ;
+  -- Attribute Grammar section (groups syn/inh declarations and rules)
+  attrsDecl  ::= "attrs" ident attrBody → DAttrs ;
+  attrBody   ::= attrItem* ;
+  attrItem   ::= attrDecl | attrRuleDecl ;
+  attrDecl   ::= attrFlow ident ":" term ";" → DAttr ;
+  attrFlow   ::= "syn" → syn | "inh" → inh ;
+  attrRuleDecl ::= attrPath "=" term ";" → DAttrRule ;
+  attrPath   ::= ident ("." ident)* → attrPath ;
+
+-----------------------------------------------------
+-- Interpreter Rules: Combining sequences
+-- These define how the parser combines parsed terms
+-----------------------------------------------------
+
+-- combineSeq: Combine two terms into a sequence
+-- seq + seq → merge lists
+rule combine-seq-seq: (combineSeq (seq $ts1) (seq $ts2)) ~~> (seq (append $ts1 $ts2)) ;
+-- seq + other → append to seq
+rule combine-seq-left: (combineSeq (seq $ts) $t) ~~> (seq (append $ts (list $t))) ;
+-- other + seq → prepend to seq  
+rule combine-seq-right: (combineSeq $t (seq $ts)) ~~> (seq (cons $t $ts)) ;
+-- unit is identity
+rule combine-seq-unit-l: (combineSeq (unit) $t) ~~> $t ;
+rule combine-seq-unit-r: (combineSeq $t (unit)) ~~> $t ;
+-- default: make a new seq
+rule combine-seq-default: (combineSeq $t1 $t2) ~~> (seq (list $t1 $t2)) ;
+
+-- splitSeq: Split first element from a sequence
+rule split-seq: (splitSeq (seq (cons $h $rest))) ~~> (pair $h (seq $rest)) ;
+rule split-single: (splitSeq $t) ~~> (pair $t (unit)) ;
+
+-- wrapNode: Wrap a term with a node name
+rule wrap-seq: (wrapNode $name (seq $ts)) ~~> (con $name $ts) ;
+rule wrap-other: (wrapNode $name $t) ~~> (con $name (list $t)) ;
+
+-- unwrapNode: Unwrap a node if name matches
+rule unwrap-match: (unwrapNode $name (con $name $ts)) ~~> (seq $ts) ;
+rule unwrap-nomatch: (unwrapNode $name $t) ~~> $t ;
+
+-----------------------------------------------------
+-- Tests (only Term syntax - not Pattern syntax)
+-----------------------------------------------------
+
+test "parse ident": x ;
+test "parse string": "hello" ;
+test "parse term var": x ;
+test "parse term con": (f x y) ;
+test "parse nested con": (app (lam x x) y) ;

@@ -1,0 +1,216 @@
+-----------------------------------------------------
+-- RedttAST: Redtt grammar with AST annotations
+--
+-- This version produces structured Terms suitable for:
+-- 1. Attribute grammar type checking
+-- 2. Conversion to/from Core IR
+--
+-- Key difference from Redtt.lego:
+-- - All productions have → annotations
+-- - AST nodes match type rule expectations
+-----------------------------------------------------
+
+lang RedttAST :=
+
+-----------------------------------------------------
+-- Token: Same as Redtt.lego
+-----------------------------------------------------
+
+token Token
+  digit  ::= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
+  lower  ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+           | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+           | 'u' | 'v' | 'w' | 'x' | 'y' | 'z' ;
+  upper  ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
+           | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
+           | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' ;
+  greek  ::= 'α' | 'β' | 'γ' | 'δ' | 'ε' | 'ζ' | 'η' | 'θ' | 'ι' | 'κ'
+           | 'λ' | 'μ' | 'ν' | 'ξ' | 'ο' | 'π' | 'ρ' | 'σ' | 'τ' | 'υ'
+           | 'φ' | 'χ' | 'ψ' | 'ω'
+           | 'Α' | 'Β' | 'Γ' | 'Δ' | 'Ε' | 'Ζ' | 'Η' | 'Θ' | 'Ι' | 'Κ'
+           | 'Λ' | 'Μ' | 'Ν' | 'Ξ' | 'Ο' | 'Π' | 'Ρ' | 'Σ' | 'Τ' | 'Υ'
+           | 'Φ' | 'Χ' | 'Ψ' | 'Ω' ;
+  mathbb ::= '𝕀' | '𝔽' | '𝕊' ;
+  mathsym ::= '≈' | '≅' | '≤' | '≥' | '∘' | '⊗' | '⊙' | '∧' | '∨' | '³' ;
+  alpha  ::= lower | upper | greek | mathbb | mathsym | '_' ;
+  symch  ::= '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+           | ':' | ';' | ',' | '.' | '|' | '!' | '?' | '@'
+           | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '-'
+           | '=' | '~' | '/' | '\\' | '→' | '←' | '↔' | '⊕'
+           | '⊢' | '×' | 'λ' | '∂' | '∀' | '∃' | '★' | '☆'
+           | '⦉' | '⦊' | '«' | '»' | '`' ;
+
+  ident   ::= alpha (alpha | digit | '-' | '/' | '\'' | '+')* ;
+  number  ::= digit digit* ;
+  string  ::= '"' strchar* '"' ;
+  strchar ::= '\\' escape | printable ;
+  escape  ::= '"' | '\\' | 'n' | 't' | 'r' | '\'' ;
+  printable ::= alpha | digit | symch | ' ' ;
+  ws      ::= ' ' | '\t' | '\n' | '\r' ;
+  comment ::= '-' '-' nonnl* ;
+  nonnl   ::= alpha | digit | symch | ' ' | '\t' | '\'' | '"' ;
+  sym     ::= symch ;
+
+-----------------------------------------------------
+-- File Structure (with AST annotations)
+-----------------------------------------------------
+piece File
+  file       ::= topdecl* → file ;
+  topdecl    ::= importdecl → import
+               | defndecl → defn
+               | datadecl → data
+               | "opaque" → opaque ;
+
+-----------------------------------------------------
+-- Imports
+-----------------------------------------------------
+piece Imports
+  importdecl ::= "public"? "import" modulepath → import ;
+  modulepath ::= name ("." name)* → path ;
+  name       ::= ident → name ;
+
+-----------------------------------------------------
+-- Definitions (produce structured def nodes)
+-----------------------------------------------------
+piece Definitions
+  defndecl   ::= "def" defname defargs ":" expr "=" expr → def
+               | "def" defname defargs "=" expr → defInfer
+               | "opaque" "def" defname defargs ":" expr "=" expr → opaqueDef
+               | "private" "def" defname defargs ":" expr "=" expr → privateDef ;
+  defname    ::= ident → name ;
+  defargs    ::= defarg* → args ;
+  defarg     ::= "(" ident+ ":" expr ")" → typedArg
+               | ident → simpleArg ;
+
+-----------------------------------------------------
+-- Expressions (all annotated for AST production)
+-----------------------------------------------------
+piece Expr
+  expr       ::= lam | letin | coeexpr | hcomexpr | piexpr | sigmaexpr | arrowexpr | appexpr ;
+
+-----------------------------------------------------
+-- Lambda (produces lam nodes)
+-----------------------------------------------------
+piece Lambda
+  lam        ::= "λ" binders "→" expr → lam ;
+  binders    ::= binder+ → binders ;
+  binder     ::= "(" ident+ ":" expr ")" → typedBinder
+               | ident → simpleBinder
+               | "_" → wildcard
+               | "*" → star ;
+
+-----------------------------------------------------
+-- Let (produces let nodes)
+-----------------------------------------------------
+piece Let
+  letin      ::= "let" ident binders? (":" expr)? "=" expr "in" expr → let ;
+
+-----------------------------------------------------
+-- Pi and Sigma Types (produce Pi/Sigma nodes)
+-----------------------------------------------------
+piece Types
+  piexpr     ::= picell+ "→" expr → Pi ;
+  picell     ::= "(" ident+ ":" expr ")" → cell ;
+  sigmaexpr  ::= "(" ident ":" expr ")" "×" expr → Sigma ;
+  arrowexpr  ::= appexpr "→" expr → Arrow
+               | appexpr "×" expr → Prod
+               | appexpr ;
+
+-----------------------------------------------------
+-- Application (produces app nodes)
+-----------------------------------------------------
+piece Application
+  appexpr    ::= atom apparg* → app ;
+  apparg     ::= projsuffix → proj
+               | atom → arg ;
+  projsuffix ::= "." ident → field
+               | "^" number → level ;
+
+-----------------------------------------------------
+-- Atomic Expressions (all produce specific nodes)
+-----------------------------------------------------
+piece Atoms
+  atom       ::= "(" expr ")" → paren
+               | pair → pair
+               | pathtype → pathType
+               -- Universes
+               | "type" "^" number → typeLevel
+               | "type" → type
+               | "𝕀" → interval
+               -- Path operations
+               | "refl" → refl
+               | "path" projexpr projexpr projexpr → path
+               | "pathd" projexpr projexpr projexpr → pathd
+               -- Coercion
+               | "coe" projexpr projexpr projexpr "in" expr → coe
+               -- Composition
+               | "hcom" projexpr projexpr projexpr "in" expr constraints → hcom
+               | "comp" projexpr projexpr projexpr "in" expr constraints → comp
+               -- Glue types
+               | "Glue" → Glue
+               | "glue" → glue
+               | "unglue" → unglue
+               -- V-types
+               | "V" projexpr projexpr projexpr projexpr → Vtype
+               | "Vin" projexpr projexpr projexpr projexpr → Vin
+               | "Vproj" projexpr projexpr projexpr projexpr → Vproj
+               -- Circle
+               | "S1" → circle
+               | "base" → base
+               | "loop" → loop
+               -- Natural numbers
+               | "nat" → nat
+               | "zero" → zero
+               | "suc" → suc
+               -- Eliminators
+               | "elim" atom "with" elimcases "end" → elim
+               -- Hole
+               | "?" ident → namedHole
+               | "?" → hole
+               -- Literals
+               | number → num
+               | ident → var ;
+
+  pair       ::= "(" expr ("," expr)+ ")" → pair ;
+  projexpr   ::= atom projsuffix* → proj ;
+
+-----------------------------------------------------
+-- Path Types (extension types)
+-----------------------------------------------------
+piece PathTypes
+  pathtype   ::= "[" dimvars "]" arrowexpr constraints? → pathAbs ;
+  dimvars    ::= ident+ → dims ;
+  constraints ::= "[" "|"? cofibclause ("|" cofibclause)* "]" → sys ;
+  cofibclause ::= face "→" expr → face ;
+  face       ::= ident "=" dimexpr → eq ;
+  dimexpr    ::= number → dim
+               | ident → dimVar ;
+
+-----------------------------------------------------
+-- Cubical Operations
+-----------------------------------------------------
+piece Cubical
+  coeexpr    ::= "coe" projexpr projexpr projexpr "in" expr → coe ;
+  hcomexpr   ::= "hcom" projexpr projexpr projexpr "in" expr constraints → hcom ;
+
+-----------------------------------------------------
+-- Eliminators
+-----------------------------------------------------
+piece Elim
+  elimcases  ::= elimcase* → cases ;
+  elimcase   ::= "|" ident elimargs "→" expr → case ;
+  elimargs   ::= elimarg* → args ;
+  elimarg    ::= "(" ident ":" expr ")" → typedArg
+               | ident → simpleArg ;
+
+-----------------------------------------------------
+-- Data Types
+-----------------------------------------------------
+piece DataTypes
+  datadecl   ::= "data" dataparams? ident "where" datacons → data ;
+  dataparams ::= picell+ "⊢" → params ;
+  datacons   ::= datacon* → cons ;
+  datacon    ::= "|" ident dataconargs constraints? → con ;
+  dataconargs ::= dataconarg* → args ;
+  dataconarg ::= "(" ident+ ":" expr ")" → arg ;
+

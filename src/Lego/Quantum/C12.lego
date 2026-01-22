@@ -1,0 +1,100 @@
+-- Equational quantum circuit calculus (C12)
+-- Based on: "Picturing Quantum Processes" (Coecke & Kissinger)
+---------------------------------------------------------
+
+import Quantum ;
+
+-----------------------------------------------------
+-- Primitive gates
+--
+-- Original Agda-style:
+--   data Gate : QTy → QTy → Set where
+--     H    : Gate QBit QBit
+--     X    : Gate QBit QBit
+--     CNOT : Gate (Tensor QBit QBit) (Tensor QBit QBit)
+-----------------------------------------------------
+
+type Gate-Set : (Gate $A $B) : Set
+  when $A : QTy, $B : QTy ;
+
+type H-intro : H : (Gate QBit QBit) ;
+type X-intro : X : (Gate QBit QBit) ;
+type CNOT-intro : CNOT : (Gate (Tensor QBit QBit) (Tensor QBit QBit)) ;
+
+-----------------------------------------------------
+-- Gate application (extends QTm)
+--
+-- Original Agda-style:
+--   data QTm where
+--     gate : Gate A B → QTm (Γ , A) B
+-----------------------------------------------------
+
+type gate-intro : (gate $g) : (QTm (ext $Γ $A) $B)
+  when $g : (Gate $A $B), $Γ : QCtx ;
+
+-----------------------------------------------------
+-- Equational laws as paths
+--
+-- Original Agda-style:
+--   H² : Unitary (gate H ∘ gate H) id
+--   H² = refl
+--   CNOT² : Unitary (gate CNOT ∘ gate CNOT) id
+--   CNOT² = refl
+-----------------------------------------------------
+
+type H²-sig : H² : (Unitary (∘ (gate H) (gate H)) id) ;
+rule H²-def : H² ~> refl ;
+
+type CNOT²-sig : CNOT² : (Unitary (∘ (gate CNOT) (gate CNOT)) id) ;
+rule CNOT²-def : CNOT² ~> refl ;
+
+-----------------------------------------------------
+-- Sequential composition (categorical)
+--
+-- Original Agda-style:
+--   *∘* : QTm Γ A → QTm Δ B → QTm (Γ , Δ) B
+--   *∘* = {!!}
+-----------------------------------------------------
+
+type compose-sig : (∘ $t $u) : (QTm (ext $Γ $Δ) $B)
+  when $t : (QTm $Γ $A), $u : (QTm $Δ $B) ;
+
+-- Composition is associative (placeholder)
+type compose-assoc : (compose-assoc $t $u $v) : (Path (QTm $Ctx $D) (∘ (∘ $t $u) $v) (∘ $t (∘ $u $v)))
+  when $t : (QTm $Γ $A), $u : (QTm $Δ $B), $v : (QTm $Ε $C) ;
+
+-----------------------------------------------------
+-- Identity circuit
+-----------------------------------------------------
+
+type id-intro : id : (QTm (ext $Γ $A) $A)
+  when $Γ : QCtx, $A : QTy ;
+
+-- id is left/right unit for composition
+type id-left : (id-left $t) : (Path (QTm $Ctx $A) (∘ id $t) $t)
+  when $t : (QTm $Γ $A) ;
+type id-right : (id-right $t) : (Path (QTm $Ctx $A) (∘ $t id) $t)
+  when $t : (QTm $Γ $A) ;
+
+-----------------------------------------------------
+-- Acceptance predicate
+--
+-- Original Agda-style:
+--   accepts : ∀{Γ A} → QTm Γ A → Set
+--   accepts t = ∃ nf , eval t ≡ nf
+-----------------------------------------------------
+
+type accepts-sig : (accepts $t) : Set
+  when $t : (QTm $Γ $A) ;
+
+-- accepts t = ∃ nf : NF A, eval t ≡ nf
+-- Using (Exists T $x . P) for dependent sum
+rule accepts-def : (accepts $t) ~> (Exists (NF $A) $nf . (Path (NF $A) (eval $t) $nf))
+  when $t : (QTm $Γ $A) ;
+
+-----------------------------------------------------
+-- Evaluation function (placeholder)
+-----------------------------------------------------
+
+type eval-sig : (eval $t) : (NF $A)
+  when $t : (QTm $Γ $A) ;

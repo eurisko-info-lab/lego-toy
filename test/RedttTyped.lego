@@ -1,0 +1,107 @@
+-----------------------------------------------------
+-- RedttTyped: A subset of redtt with AST annotations
+-- 
+-- This grammar produces structured Terms suitable for
+-- attribute grammar type checking. It covers the core
+-- cubical type theory constructs.
+-----------------------------------------------------
+
+lang RedttTyped :=
+
+-----------------------------------------------------
+-- Basic tokens
+-----------------------------------------------------
+
+token Token
+  digit  ::= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
+  lower  ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+           | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+           | 'u' | 'v' | 'w' | 'x' | 'y' | 'z' ;
+  upper  ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
+           | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
+           | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' ;
+  mathbb ::= '𝕀' ;
+  alpha  ::= lower | upper | mathbb | '_' ;
+  symch  ::= '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+           | ':' | ';' | ',' | '.' | '|' | '!' | '?' | '@'
+           | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '-'
+           | '=' | '~' | '/' | '\\' | '→' | '←' | '↔' | '⊕'
+           | '⊢' | '×' | 'λ' | '∂' | '∀' | '∃' | '★' | '☆' ;
+
+  ident   ::= alpha (alpha | digit | '-' | '/')* ;
+  number  ::= digit digit* ;
+  ws      ::= ' ' | '\t' | '\n' | '\r' ;
+  comment ::= '-' '-' nonnl* ;
+  nonnl   ::= alpha | digit | symch | ' ' | '\t' ;
+  sym     ::= symch ;
+
+-----------------------------------------------------
+-- Types with AST annotations (→ produces Terms)
+-----------------------------------------------------
+
+piece Types
+  -- Universal token matchers
+  ident  ::= <ident> → ident ;
+  number ::= <number> → number ;
+
+  -- Type expressions with AST annotations
+  type ::= "type" → type                    -- type (level 0)
+         | "type1" → type1                  -- type level 1
+         | "type2" → type2                  -- type level 2
+         | "𝕀" → interval                   -- interval type
+         | "(" typearrow ")" → typearrow    -- arrow in parens
+         | ident → typevar ;                -- type variable
+  
+  typearrow ::= type "→" type → Arrow ;     -- A → B
+
+-----------------------------------------------------
+-- Expressions with AST annotations
+-----------------------------------------------------
+
+piece Expr
+  -- Core expressions
+  expr ::= lambdaexpr
+         | piexpr  
+         | pathexpr
+         | appexpr ;
+
+  -- Lambda: λ x : A . e
+  lambdaexpr ::= "λ" ident ":" type "." expr → lam ;
+
+  -- Pi type: (x : A) → B or ∀ x : A . B
+  piexpr ::= "(" ident ":" type ")" "→" expr → Pi
+           | "∀" ident ":" type "." expr → Pi ;
+
+  -- Path expressions
+  pathexpr ::= "[" ident "]" expr "[" bdry "]" → pathAbs  -- [i] e [i=0 → a | i=1 → b]
+             | "path" type expr expr → path                -- path A a b
+             | "refl" expr → refl ;                        -- refl a
+
+  bdry ::= bdryclause ("|" bdryclause)* → boundary ;
+  bdryclause ::= ident "=" number "→" expr → face ;
+
+  -- Application
+  appexpr ::= atomexpr appexpr* → app ;
+
+  -- Atomic expressions
+  atomexpr ::= "(" expr ")"
+             | ident → var
+             | number → lit ;
+
+-----------------------------------------------------
+-- Definitions
+-----------------------------------------------------
+
+piece Definitions
+  -- def name (args) : type = body
+  def ::= "def" ident defargs ":" type "=" expr → def ;
+  defargs ::= defarg* ;
+  defarg ::= "(" ident ":" type ")" → arg ;
+
+-----------------------------------------------------
+-- File structure
+-----------------------------------------------------
+
+piece File
+  file ::= def* ;
+

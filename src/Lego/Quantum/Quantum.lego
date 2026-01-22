@@ -1,0 +1,151 @@
+-- Quantum.lego
+-- Shared quantum core for circuit calculi
+-- Linear typing, paths as equivalences, HIT measurements
+---------------------------------------------------------
+
+import CubicalTT ;
+
+-----------------------------------------------------
+-- Quantum Types
+--
+-- Original Agda-style:
+--   data QTy : Set where
+--     QUnit  : QTy
+--     QBit   : QTy
+--     Tensor : QTy → QTy → QTy
+-----------------------------------------------------
+
+type QTy-Set : QTy : Set ;
+
+type QUnit-intro : QUnit : QTy ;
+type QBit-intro  : QBit : QTy ;
+type Tensor-intro : (Tensor $A $B) : QTy
+  when $A : QTy, $B : QTy ;
+
+-----------------------------------------------------
+-- Linear Contexts
+--
+-- Original Agda-style:
+--   data QCtx : Set where
+--     ε   : QCtx
+--     *,* : QCtx → QTy → QCtx
+-----------------------------------------------------
+
+type QCtx-Set : QCtx : Set ;
+
+type ε-intro : ε : QCtx ;
+type extend-intro : (ext $Γ $A) : QCtx
+  when $Γ : QCtx, $A : QTy ;
+
+-----------------------------------------------------
+-- Variables (linear, de Bruijn)
+--
+-- Original Agda-style:
+--   data Var : QCtx → QTy → Set where
+--     vz : Var (ext Γ A) A
+--     vs : Var Γ A → Var (Γ , B) A
+-----------------------------------------------------
+
+type Var-Set : (Var $Γ $A) : Set
+  when $Γ : QCtx, $A : QTy ;
+
+type vz-intro : vz : (Var (ext $Γ $A) $A)
+  when $Γ : QCtx, $A : QTy ;
+type vs-intro : (vs $v) : (Var (ext $Γ $B) $A)
+  when $v : (Var $Γ $A), $Γ : QCtx, $A : QTy, $B : QTy ;
+
+-----------------------------------------------------
+-- Quantum Terms (circuits)
+--
+-- Original Agda-style:
+--   data QTm : QCtx → QTy → Set where
+--     qvar  : Var Γ A → QTm Γ A
+--     unit  : QTm Γ QUnit
+--     pair  : QTm Γ A → QTm Δ B → QTm (ext Γ Δ) (Tensor A B)
+-----------------------------------------------------
+
+type QTm-Set : (QTm $Γ $A) : Set
+  when $Γ : QCtx, $A : QTy ;
+
+type qvar-intro : (qvar $v) : (QTm $Γ $A)
+  when $v : (Var $Γ $A) ;
+type unit-intro : unit : (QTm $Γ QUnit)
+  when $Γ : QCtx ;
+type pair-intro : (pair $t $u) : (QTm (ext $Γ $Δ) (Tensor $A $B))
+  when $t : (QTm $Γ $A), $u : (QTm $Δ $B) ;
+
+-----------------------------------------------------
+-- Unitary paths
+--
+-- Original Agda-style:
+--   Unitary : ∀{Γ A} → QTm Γ A → QTm Γ A → Set
+--   Unitary u v = Path (QTm _ _) u v
+-----------------------------------------------------
+
+type Unitary-sig : (Unitary $u $v) : Set
+  when $u : (QTm $Γ $A), $v : (QTm $Γ $A) ;
+
+rule Unitary-def : (Unitary $u $v) ~> (Path (QTm $Γ $A) $u $v)
+  when $u : (QTm $Γ $A), $v : (QTm $Γ $A) ;
+
+-----------------------------------------------------
+-- Measurement as a HIT
+--
+-- Original Agda-style:
+--   data Meas (A : QTy) : Set where
+--     m0 : A → Meas A
+--     m1 : A → Meas A
+--     branch : (a : A) → Path (Meas A) (m0 a) (m1 a)
+-----------------------------------------------------
+
+type Meas-Set : (Meas $A) : Set
+  when $A : QTy ;
+
+type m0-intro : (m0 $a) : (Meas $A)
+  when $a : $A, $A : QTy ;
+type m1-intro : (m1 $a) : (Meas $A)
+  when $a : $A, $A : QTy ;
+-- HIT path constructor
+type branch-intro : (branch $a) : (Path (Meas $A) (m0 $a) (m1 $a))
+  when $a : $A, $A : QTy ;
+
+-----------------------------------------------------
+-- Evaluation skeleton (Normal Forms)
+--
+-- Original Agda-style:
+--   data NF : QTy → Set where
+--     nfUnit : NF QUnit
+--     nfBit  : Bool → NF QBit
+--     nfPair : NF A → NF B → NF (Tensor A B)
+-----------------------------------------------------
+
+type NF-Set : (NF $A) : Set
+  when $A : QTy ;
+
+type nfUnit-intro : nfUnit : (NF QUnit) ;
+type nfBit-intro : (nfBit $b) : (NF QBit)
+  when $b : Bool ;
+type nfPair-intro : (nfPair $nf1 $nf2) : (NF (Tensor $A $B))
+  when $nf1 : (NF $A), $nf2 : (NF $B) ;
+
+-----------------------------------------------------
+-- Soundness and completeness placeholders
+--
+-- Original Agda-style:
+--   soundness : ∀{Γ A} (t : QTm Γ A) → Set
+--   soundness t = ⊤
+--   completeness : ∀{Γ A} (t u : QTm Γ A) → Unitary t u → Set
+--   completeness t u p = ⊤
+-----------------------------------------------------
+
+type soundness-sig : (soundness $t) : Set
+  when $t : (QTm $Γ $A) ;
+
+rule soundness-def : (soundness $t) ~> ⊤
+  when $t : (QTm $Γ $A) ;
+
+type completeness-sig : (completeness $t $u $p) : Set
+  when $t : (QTm $Γ $A), $u : (QTm $Γ $A), $p : (Unitary $t $u) ;
+
+rule completeness-def : (completeness $t $u $p) ~> ⊤
+  when $t : (QTm $Γ $A), $u : (QTm $Γ $A), $p : (Unitary $t $u) ;

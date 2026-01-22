@@ -1,0 +1,115 @@
+import Lake
+open Lake DSL
+
+/-!
+# Bootstrap Chain
+
+Code generation follows a bootstrap chain with no circular dependency:
+
+    gen(V_n) = tolean_{V_{n-1}}(Bootstrap.lego)
+
+Build stages:
+  1. Stage 1: Build tolean using checked-in generated/*.lean (V_{n-1})
+  2. Stage 2: Run tolean to regenerate from Bootstrap.lego → V_n
+  3. Stage 3: Rebuild with V_n (if different)
+  4. Fixpoint check: V_n should produce V_n (self-hosting)
+
+To regenerate: ./scripts/bootstrap.sh
+To verify canonical (CI): ./scripts/bootstrap.sh --check
+-/
+
+package «lego» where
+  version := v!"0.1.0"
+
+lean_lib «Lego» where
+  srcDir := "src"
+
+-- Rosetta code generation pipeline
+lean_lib «Rosetta» where
+  srcDir := "src"
+  roots := #[`Rosetta.Rosetta]
+
+lean_exe «rosetta» where
+  root := `RosettaMain
+
+-- Generated code (from ToLean)
+-- These are build outputs conceptually, but checked in for bootstrap.
+-- Regenerate with: ./scripts/bootstrap.sh
+lean_lib «LegoGenerated» where
+  srcDir := "generated"
+  roots := #[`BootstrapGrammar, `BootstrapTokenizer, `BootstrapRules, `MinimalBootstrapTokenizer]
+
+-- Generated Rosetta output (from Red.lego and Cool.lego)
+lean_lib «RedGenerated» where
+  srcDir := "generated"
+  globs := #[.submodules `Red]
+
+lean_lib «CoolGenerated» where
+  srcDir := "generated"
+  globs := #[.submodules `Cool]
+
+-- Generated Cubical Lean code (from CubicalTT.lego and related files)
+lean_lib «CubicalGenerated» where
+  srcDir := "generated"
+  globs := #[.submodules `Cubical]
+
+-- Generated Rosetta Grammars (from Lean.lego, etc.)
+lean_lib «RosettaGenerated» where
+  srcDir := "generated"
+  globs := #[.submodules `Rosetta]
+
+@[default_target]
+lean_exe «lego» where
+  root := `Main
+
+lean_exe «lego-test» where
+  root := `Test
+  -- Ensure proper linking with Init library
+  moreLinkArgs := #["-lInit"]
+
+lean_exe «lego-test-red» where
+  root := `TestRed
+  moreLinkArgs := #["-lInit"]
+
+lean_exe «lego-test-cool» where
+  root := `TestCool
+  moreLinkArgs := #["-lInit"]
+
+lean_exe «lego-test-runtime» where
+  root := `TestRuntime
+  moreLinkArgs := #["-lInit"]
+
+lean_exe «lego-test-minimal» where
+  root := `TestMinimalBootstrap
+  moreLinkArgs := #["-lInit"]
+
+-- Tools
+lean_lib «Cubical» where
+  srcDir := "tools"
+  roots := #[`Cubical]
+
+lean_exe «toantlr» where
+  root := `tools.ToAntlr
+
+lean_exe «totreesitter» where
+  root := `tools.ToTreeSitter
+
+lean_exe «tolean» where
+  root := `tools.ToLean
+
+-- Code Generation (Single Source of Truth)
+-- Generates RedTT, CoolTT, and Lean from Grammar.sexpr
+lean_exe «lego-gen» where
+  root := `LegoGen
+
+-- Pipeline: CubicalTT → cubical2rosetta → rosetta2lean
+lean_exe «pipeline» where
+  root := `Rosetta.Pipeline
+
+-- Rosetta Pipeline: .rosetta → Rosetta.lego → rosetta2lean → Lean
+lean_exe «rosetta-pipeline» where
+  root := `Rosetta.RosettaPipeline
+
+-- Generated Pipeline: generated/*.lego → .lean
+lean_exe «generated-pipeline» where
+  root := `tools.GeneratedPipeline

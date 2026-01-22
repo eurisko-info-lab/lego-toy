@@ -1,0 +1,80 @@
+-- K.lego: K-framework style configuration and rewriting
+-- Based on the IMP language from K tutorial (kframework.org)
+-- Demonstrates: computation cells, heating/cooling, strictness
+
+lang K :=
+
+-----------------------------------------------------
+-- IMP Arithmetic Expressions (from K tutorial)
+-- In K: syntax AExp ::= Int | Id | AExp "+" AExp
+-----------------------------------------------------
+piece AExp
+  aexp ::= num | id | add | mul ;
+  num  ::= "(" "int" name ")" ;
+  id   ::= "(" "id" name ")" ;
+  add  ::= "(" "add" aexp aexp ")" ;
+  mul  ::= "(" "mul" aexp aexp ")" ;
+
+-----------------------------------------------------
+-- IMP Boolean Expressions
+-- In K: syntax BExp ::= Bool | AExp "<=" AExp
+-----------------------------------------------------
+piece BExp
+  bexp ::= true | false | leq ;
+  true  ::= "(" "true" ")" ;
+  false ::= "(" "false" ")" ;
+  leq   ::= "(" "leq" aexp aexp ")" ;
+
+-----------------------------------------------------
+-- Computation cell (the K cell)
+-- In K: configuration <k> $PGM:Stmt </k>
+-----------------------------------------------------
+piece Kell
+  kcell ::= "(" "k" comp ")" ;
+  comp  ::= aexp | seq | done ;
+  seq   ::= "(" "seq" comp comp ")" ;
+  done  ::= "(" "done" ")" ;
+
+-----------------------------------------------------
+-- Heating rules: bring computation to top
+-- In K: A1 + A2 => A1 ~> [] + A2  (heat left)
+-----------------------------------------------------
+rule seq_done:
+  (seq (done) $k) ~> $k ;
+
+-----------------------------------------------------
+-- Arithmetic evaluation (simplified)
+-- In K: rule I1 + I2 => I1 +Int I2
+-----------------------------------------------------
+rule add_int:
+  (add (int $n) (int $m)) ~> (int (plus $n $m)) ;
+
+rule mul_int:
+  (mul (int $n) (int $m)) ~> (int (times $n $m)) ;
+
+-----------------------------------------------------
+-- Boolean evaluation
+-- In K: rule I1 <= I2 => I1 <=Int I2
+-----------------------------------------------------
+rule leq_true:
+  (leq (int zero) (int $n)) ~> (true) ;
+
+rule leq_false:
+  (leq (int succ) (int zero)) ~> (false) ;
+
+-----------------------------------------------------
+-- Tests: IMP-style expressions
+-----------------------------------------------------
+test "int": (int zero) ;
+test "id": (id x) ;
+test "add": (add (int zero) (int one)) ;
+test "add_eval": (add (int zero) (int one)) ~~> (int (plus zero one)) ;
+
+-- K cell wrapping
+test "kcell": (k (int zero)) ;
+test "kcell_seq": (k (seq (done) (int x))) ;
+test "seq_done": (seq (done) (int x)) ~~> (int x) ;
+
+-- Boolean
+test "leq_true": (leq (int zero) (int one)) ~~> (true) ;
+test "leq_false": (leq (int succ) (int zero)) ~~> (false) ;

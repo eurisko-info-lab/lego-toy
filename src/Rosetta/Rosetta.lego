@@ -1,0 +1,185 @@
+-----------------------------------------------------
+-- Rosetta: Generic Code Generation Prelude
+--
+-- This is a target-agnostic intermediate language for code generation.
+-- It abstracts over implementation details like:
+-- - Variable representation (named vs. de Bruijn)
+-- - Evaluation strategy (call-by-value vs. call-by-need)
+-- - Data structures (lists vs. vectors)
+--
+-- IMPORTANT: This is GENERIC - no cubical/dimension/cofibration specifics.
+-- Domain-specific constructs (dimensions, paths, etc.) belong in
+-- the .lego specs (CubicalTT.lego, Red.lego, Cool.lego).
+--
+-- From Rosetta, target-specific translations choose concrete reps:
+-- - Lean: inductive types, reducible defs, theorems
+-- - Haskell: GADTs, pattern matching
+-- - Rust: enums, match arms
+--
+-- Key Abstractions:
+-- - Variables: 'Var' with abstract binding; impl chooses indexing
+-- - Substitution: 'Subst' primitive; impl handles capture-avoidance
+-- - Patterns: Abstract patterns with $var wildcards
+-- - Judgments: Declarative 'type' with 'when' conditions
+-- - Modules: 'module' for composition
+-----------------------------------------------------
+
+lang Rosetta :=
+
+-----------------------------------------------------
+-- Core Primitives
+-- Abstract basics: universe, variables, application
+-- These are universal to any typed language
+-----------------------------------------------------
+
+piece CorePrimitives
+  term ::= "Univ"                      → univ     -- Universe (Type in Lean/Haskell)
+         | "Var" <ident>               → var      -- Variable (String or Index)
+         | "App" term term             → app      -- Application
+         | "Subst" <ident> term term   → subst ;  -- subst x t body
+
+  rule appSubst: (App (Subst $x $s $f) $a) ~~> (Subst $x $s (App $f $a)) ;
+  
+  type univForm: Univ : Univ ;
+  type varType: (Var $x) : $T when bound $x : $T ;
+
+-----------------------------------------------------
+-- Binders
+-- Generic term binders - lambda abstraction
+-- NO dimension binders here - those are cubical-specific
+-----------------------------------------------------
+
+piece Binders
+  term ::= "Lam" <ident> "." term      → lam ;    -- BINDER: $x scopes $body
+
+  rule beta: (App (Lam $x . $body) $arg) ~~> (Subst $x $arg $body) ;
+
+  type lamForm: (Lam $x . $body) : (Arrow $A $B)
+    when [$x : $A] $body : $B ;
+
+-----------------------------------------------------
+-- Products
+-- Non-dependent pairs (generic)
+-----------------------------------------------------
+
+piece Products
+  term ::= "Pair" term term            → pair
+         | "Fst" term                  → fst
+         | "Snd" term                  → snd ;
+
+  rule fstPair: (Fst (Pair $a $b)) ~~> $a ;
+  rule sndPair: (Snd (Pair $a $b)) ~~> $b ;
+  rule pairEta: (Pair (Fst $p) (Snd $p)) ~~> $p ;
+
+  type pairType: (Pair $a $b) : (Prod $A $B)
+    when $a : $A, $b : $B ;
+  type fstType: (Fst $p) : $A when $p : (Prod $A $B) ;
+  type sndType: (Snd $p) : $B when $p : (Prod $A $B) ;
+
+-----------------------------------------------------
+-- ADT Definition
+-- Meta-construct for generating term syntax
+-- 'adt' defines constructors → enums/inductives
+-----------------------------------------------------
+
+piece ADTDef
+  decl ::= "adt" <ident> "{" constr* "}" → adtDef ;
+  constr ::= <ident> ":" type            → constr ;
+
+  -- Example: adt Term { App : Term → Term → Term }
+  type adtForm: (adtDef $name $constrs) : Univ ;
+
+-----------------------------------------------------
+-- Rewrite Rules
+-- Abstract pattern → template rules
+-- Impl generates match cases or rewrite engines
+-----------------------------------------------------
+
+piece RewriteRules
+  decl ::= "rewrite" <ident> ":" pattern "~>" term → rewriteRule ;
+  pattern ::= term                       → termPat
+            | "_"                        → wildcard ;
+
+  -- Impl generates 'step' or 'normalize' functions
+
+-----------------------------------------------------
+-- Judgment Forms
+-- Abstract typing judgments: formation, intro, elim
+-- 'type' with 'when' for premises
+-----------------------------------------------------
+
+piece Judgments
+  decl ::= "type" <ident> ":" term ":" term conds? → typeDecl ;
+  conds ::= "when" cond ("," cond)*     → conds ;
+  cond ::= term ":" term                → cond
+         | "[" bind* "]" term ":" term  → ctxCond ;
+  bind ::= <ident> ":" term             → bind ;
+
+  -- Impl generates infer/check functions
+
+-----------------------------------------------------
+-- Tests
+-- Equivalence assertions (normalized equality)
+-----------------------------------------------------
+
+piece Tests
+  decl ::= "test" <string> ":" term "~~>" term → testDecl ;
+
+  -- Impl generates unit tests or QuickCheck properties
+
+-----------------------------------------------------
+-- Modules
+-- Namespacing and composition
+-----------------------------------------------------
+
+piece Modules
+  decl ::= "module" <ident> "{" decl* "}" → moduleDecl
+         | "import" <ident>               → importDecl ;
+
+-----------------------------------------------------
+-- Errors
+-- Error handling and recovery
+-----------------------------------------------------
+
+piece Errors
+  term ::= "Error" <string>            → error
+         | "Stuck" term                → stuck ;
+
+  -- Error propagates
+  rule appError: (App (Error $msg) $a) ~~> (Error $msg) ;
+  rule fstError: (Fst (Error $msg)) ~~> (Error $msg) ;
+
+-----------------------------------------------------
+-- Annotations
+-- Source location and metadata
+-----------------------------------------------------
+
+piece Annotations
+  term ::= "Ann" term term             → ann      -- Ann t T : annotated term
+         | "Loc" <int> <int> term      → loc ;    -- Loc line col t : positioned
+
+  rule annErase: (Ann $t $T) ~~> $t ;  -- For evaluation
+
+-----------------------------------------------------
+-- Builtins
+-- Common primitives across targets
+-----------------------------------------------------
+
+piece Builtins
+  term ::= "Bool"                      → boolTy
+         | "true"                      → true
+         | "false"                     → false
+         | "if" term term term         → ifThenElse
+         | "Nat"                       → natTy
+         | "zero"                      → zero
+         | "succ" term                 → succ ;
+
+  rule ifTrue: (if true $t $f) ~~> $t ;
+  rule ifFalse: (if false $t $f) ~~> $f ;
+
+  type boolForm: Bool : Univ ;
+  type trueType: true : Bool ;
+  type falseType: false : Bool ;
+  type natForm: Nat : Univ ;
+  type zeroType: zero : Nat ;
+  type succType: (succ $n) : Nat when $n : Nat ;

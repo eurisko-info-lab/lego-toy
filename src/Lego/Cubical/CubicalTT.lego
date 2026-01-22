@@ -1,0 +1,422 @@
+-----------------------------------------------------
+-- CubicalTT: Shared Cubical Type Theory Foundation
+-- 
+-- Core CCHM cubical type theory shared by redtt and cooltt.
+-- Red.lego and Cool.lego import this as their base.
+--
+-- Mathematical Foundation: Cartesian Cubical Type Theory
+-- - Interval I: De Morgan algebra
+-- - Cofibrations φ: distributive lattice  
+-- - Kan operations: computational univalence
+--
+-- Binding Structure:
+-- Constructs that introduce binders use the pattern <ident> "." body
+-- where the identifier binds in body. This information is used by
+-- code generators to produce de Bruijn indexed terms.
+--
+-- Notation:
+--   [x := t] body  -- substitution (replace x with t in body)
+--   [$x : A] B     -- context extension (x:A in scope for B)
+-----------------------------------------------------
+
+lang CubicalTT :=
+
+-----------------------------------------------------
+-- Dimension
+-- The interval I with De Morgan algebra structure
+-- I forms a De Morgan algebra: (I, ∨, ∧, ~, 0, 1)
+-----------------------------------------------------
+
+piece Dimension
+  dim ::= "0"                          → i0
+        | "1"                          → i1
+        | <ident>                      → ivar
+        | dim "∨" dim                  → join
+        | dim "∧" dim                  → meet
+        | "~" dim                      → inv ;
+
+  -- De Morgan algebra laws
+  rule join0L: (join 0 $r) ~~> $r ;
+  rule join0R: (join $r 0) ~~> $r ;
+  rule join1L: (join 1 $r) ~~> 1 ;
+  rule join1R: (join $r 1) ~~> 1 ;
+  rule joinIdem: (join $r $r) ~~> $r ;
+  rule meet0L: (meet 0 $r) ~~> 0 ;
+  rule meet0R: (meet $r 0) ~~> 0 ;
+  rule meet1L: (meet 1 $r) ~~> $r ;
+  rule meet1R: (meet $r 1) ~~> $r ;
+  rule meetIdem: (meet $r $r) ~~> $r ;
+  rule inv0: (inv 0) ~~> 1 ;
+  rule inv1: (inv 1) ~~> 0 ;
+  rule invInv: (inv (inv $r)) ~~> $r ;
+  -- De Morgan: ~(r ∨ s) = ~r ∧ ~s
+  rule deMorganOr: (inv (join $r $s)) ~~> (meet (inv $r) (inv $s)) ;
+  rule deMorganAnd: (inv (meet $r $s)) ~~> (join (inv $r) (inv $s)) ;
+
+  type dimForm: $r : I ;
+
+  test "join-id": (join 0 i) ~~> i ;
+  test "meet-zero": (meet 0 i) ~~> 0 ;
+  test "involution": (inv (inv i)) ~~> i ;
+
+-----------------------------------------------------
+-- Cofibration
+-- Cofibrations φ : 𝔽 (face lattice)
+-- Classifies the "extent" of a partial element
+-----------------------------------------------------
+
+piece Cofibration
+  cof ::= "⊥"                          → cof0
+        | "⊤"                          → cof1
+        | dim "=" dim                  → eq
+        | cof "∨" cof                  → cofOr
+        | cof "∧" cof                  → cofAnd ;
+        
+  -- Lattice laws
+  rule cof0Or: (cofOr cof0 $φ) ~~> $φ ;
+  rule cof1Or: (cofOr cof1 $φ) ~~> cof1 ;
+  rule cofOrIdem: (cofOr $φ $φ) ~~> $φ ;
+  rule cof0And: (cofAnd cof0 $φ) ~~> cof0 ;
+  rule cof1And: (cofAnd cof1 $φ) ~~> $φ ;
+  rule cofAndIdem: (cofAnd $φ $φ) ~~> $φ ;
+  
+  -- Equation rules
+  rule eqRefl: (eq $r $r) ~~> cof1 ;
+  rule eq01: (eq 0 1) ~~> cof0 ;
+  rule eq10: (eq 1 0) ~~> cof0 ;
+
+  type cofForm: $φ : 𝔽 ;
+
+-----------------------------------------------------
+-- Core
+-- Universe, variables, basic terms
+-----------------------------------------------------
+
+piece Core
+  term ::= "U"                         → U
+         | <ident>                     → var
+         | "(" term term ")"           → app
+         | "(" term "," term ")"       → pair
+         | term ".fst"                 → fst
+         | term ".snd"                 → snd ;
+
+  rule fstPair: (fst (pair $a $b)) ~~> $a ;
+  rule sndPair: (snd (pair $a $b)) ~~> $b ;
+  -- η for pairs (requires type info in full impl)
+  -- rule pairEta: (pair (fst $p) (snd $p)) ~~> $p ;
+    
+  type univForm: U : U ;
+
+  test "fst": (fst (pair a b)) ~~> a ;
+  test "snd": (snd (pair a b)) ~~> b ;
+
+-----------------------------------------------------
+-- Lambda
+-- Lambda abstraction and dimension abstraction
+-- Binders: λ x . body binds x in body
+--          λᵢ i . body binds dimension i in body
+-----------------------------------------------------
+
+piece Lambda
+  term ::= "λ" <ident> "." term        → lam       -- binds in body
+         | "λᵢ" <ident> "." term       → dlam      -- binds dim in body
+         | term "@" dim                → dapp ;
+
+  rule beta: (app (lam $x . $body) $arg) ~~> [$x := $arg] $body ;
+  rule dbeta: (dapp (dlam $i . $body) $r) ~~> [$i := $r] $body ;
+  -- η rules (require type info)
+  -- rule lamEta: (lam $x . (app $f $x)) ~~> $f when $x not free in $f ;
+  -- rule dlamEta: (dlam $i . (dapp $f $i)) ~~> $f when $i not free in $f ;
+    
+  type lamForm: (lam $x . $body) : (Pi $x : $A . $B)
+    when [$x : $A] $body : $B ;
+  type dlamForm: (dlam $i . $body) : (PathP $i . $A . $a0 . $a1)
+    when [$i : I] $body : $A,
+         [$i := 0] $body = $a0,
+         [$i := 1] $body = $a1 ;
+
+  test "beta": (app (lam x . x) y) ~~> y ;
+  test "dbeta": (dapp (dlam i . (dapp f i)) 0) ~~> (dapp f 0) ;
+
+-----------------------------------------------------
+-- Derived Operations
+-- Automatically generate substitution and normalization
+-----------------------------------------------------
+
+derive subst for term with binders = [lam, dlam, Pi, Sigma, PathP] ;
+derive normalize for term with fuel = 1000 ;
+derive cata for term ;
+
+-----------------------------------------------------
+-- Pi
+-- Dependent function types: Π (x : A) . B
+-- Binder: x binds in B
+-----------------------------------------------------
+
+piece Pi
+  term ::= "Π" "(" <ident> ":" term ")" "." term  → Pi    -- binds in body
+         | term "→" term                          → arr ;
+
+  -- Non-dependent arrow is sugar
+  rule arrSugar: ($A → $B) ~~> (Pi _ : $A . $B) ;
+
+  type PiForm: (Pi $x : $A . $B) : U
+    when $A : U, [$x : $A] $B : U ;
+  type appType: (app $f $a) : [$x := $a] $B
+    when $f : (Pi $x : $A . $B), $a : $A ;
+
+-----------------------------------------------------
+-- Sigma  
+-- Dependent pair types: Σ (x : A) . B
+-- Binder: x binds in B
+-----------------------------------------------------
+
+piece Sigma
+  term ::= "Σ" "(" <ident> ":" term ")" "." term  → Sigma  -- binds in body
+         | term "×" term                          → prod ;
+
+  -- Non-dependent product is sugar
+  rule prodSugar: ($A × $B) ~~> (Sigma _ : $A . $B) ;
+
+  type SigmaForm: (Σ $x : $A . $B) : U
+    when $A : U, [$x : $A] $B : U ;
+  type pairType: (pair $a $b) : (Σ $x : $A . $B)
+    when $a : $A, $b : [$x := $a] $B ;
+  type fstType: (fst $p) : $A
+    when $p : (Σ $x : $A . $B) ;
+  type sndType: (snd $p) : [$x := (fst $p)] $B
+    when $p : (Σ $x : $A . $B) ;
+
+-----------------------------------------------------
+-- Path
+-- Path types: Path A a b ≅ (i : I) → A with endpoints
+-- PathP (i.A) a b : dependent paths
+-----------------------------------------------------
+
+piece Path
+  term ::= "Path" term term term       → Path
+         | "PathP" <ident> "." term term term  → PathP ;  -- binds i in A
+
+  -- Path is sugar for PathP with constant type
+  rule pathSugar: (Path $A $a $b) ~~> (PathP _ . $A . $a . $b) ;
+
+  type PathForm: (Path $A $a $b) : U
+    when $A : U, $a : $A, $b : $A ;
+  type PathPForm: (PathP $i . $A . $a0 . $a1) : U
+    when [$i : I] $A : U, $a0 : [$i := 0] $A, $a1 : [$i := 1] $A ;
+  type dappType: (dapp $p $r) : [$i := $r] $A
+    when $p : (PathP $i . $A . $a0 . $a1) ;
+    
+  test "refl-type": (dlam i . a) : (Path A a a) ;
+
+-----------------------------------------------------
+-- System
+-- Partial elements: [φ₁ ↦ u₁, φ₂ ↦ u₂, ...]
+-- Represents an element defined on faces
+-----------------------------------------------------
+
+piece System
+  system ::= "[" "]"                   → sysEmpty
+           | "[" sysbranch ("," sysbranch)* "]"  → sys ;
+  sysbranch ::= cof "↦" term           → branch ;
+
+  -- Systems must agree on overlaps
+  type sysType: (sys $branches) : (Partial $φ $A)
+    when $branches agree on overlaps ;
+
+-----------------------------------------------------
+-- Coe
+-- Coercion: coe r~>s (i.A) a
+-- Transport along a line of types
+-- Binder: i binds in A
+-----------------------------------------------------
+
+piece Coe
+  term ::= "coe" dim "~>" dim "(" <ident> "." term ")" term  → coe ;  -- binds i in A
+
+  rule coeRefl: (coe $r ~> $r ($i . $A) $a) ~~> $a ;
+  -- Coercion in constant type
+  rule coeConst: (coe $r ~> $s ($i . $A) $a) ~~> $a
+    when $i not free in $A ;
+    
+  type coeType: (coe $r ~> $s ($i . $A) $a) : [$i := $s] $A
+    when $a : [$i := $r] $A ;
+      
+  test "coe-refl": (coe 0 ~> 0 (i . A) a) ~~> a ;
+
+-----------------------------------------------------
+-- Hcom
+-- Homogeneous composition: hcom r~>s A [φ ↦ u] a
+-- Fill a partial tube with a cap
+-----------------------------------------------------
+
+piece Hcom
+  term ::= "hcom" dim "~>" dim term system term  → hcom ;
+
+  rule hcomRefl: (hcom $r ~> $r $A $sys $a) ~~> $a ;
+  -- When φ = ⊤, the system determines the result
+  rule hcomTotal: (hcom $r ~> $s $A (sys [(cof1 ↦ $u)]) $a) ~~> [$j := $s] $u ;
+    
+  type hcomType: (hcom $r ~> $s $A $sys $a) : $A
+    when $a : $A, 
+         $sys : (Partial $φ (I → $A)),
+         [$φ] (dapp $sys $r) = $a ;  -- tube agrees with cap at r
+
+-----------------------------------------------------
+-- Com
+-- Heterogeneous composition: com r~>s (i.A) [φ ↦ u] a
+-- Combines coercion and hcom
+-- Binder: i binds in A
+-----------------------------------------------------
+
+piece Com
+  term ::= "com" dim "~>" dim "(" <ident> "." term ")" system term  → com ;  -- binds i in A
+
+  rule comRefl: (com $r ~> $r ($i . $A) $sys $a) ~~> $a ;
+  -- Com can be defined in terms of coe and hcom
+  -- com r~>s (i.A) [φ ↦ u] a = hcom r~>s A[s/i] [φ ↦ coe j~>s (i.A) u(j)] (coe r~>s (i.A) a)
+
+  type comType: (com $r ~> $s ($i . $A) $sys $a) : [$i := $s] $A
+    when $a : [$i := $r] $A,
+         $sys : (Partial $φ ([$i : I] $A)) ;
+
+-----------------------------------------------------
+-- VType
+-- V-types for univalence: V r A B e
+-- Glue types that realize univalence
+-----------------------------------------------------
+
+piece VType
+  term ::= "V" dim term term term      → V
+         | "Vin" dim term              → Vin
+         | "Vproj" dim term term       → Vproj ;
+
+  -- At r=0: V 0 A B e ≅ A, at r=1: V 1 A B e ≅ B
+  rule V0: (V 0 $A $B $e) ~~> $A ;
+  rule V1: (V 1 $A $B $e) ~~> $B ;
+  rule Vin0: (Vin 0 $a) ~~> (fst $a) ;
+  rule Vin1: (Vin 1 $a) ~~> $a ;
+  rule Vproj0: (Vproj 0 $v $e) ~~> (app $e (snd $v)) ;
+  rule Vproj1: (Vproj 1 $v $e) ~~> $v ;
+    
+  type VForm: (V $r $A $B $e) : U
+    when $A : U, $B : U, $e : (Equiv $A $B) ;
+  type VinType: (Vin $r $a) : (V $r $A $B $e)
+    when [$r = 0] $a : ($A × Fiber $e (snd $a)),
+         [$r = 1] $a : $B ;
+
+-----------------------------------------------------
+-- Sub
+-- Subtypes: Sub A φ u
+-- Elements of A that equal u when φ holds
+-----------------------------------------------------
+
+piece Sub
+  term ::= "Sub" term cof term         → Sub
+         | "inS" term                  → inS
+         | "outS" term                 → outS ;
+
+  rule outInS: (outS (inS $a)) ~~> $a ;
+    
+  type SubForm: (Sub $A $φ $u) : U
+    when $A : U, [$φ] $u : $A ;
+  type inSType: (inS $a) : (Sub $A $φ $u)
+    when $a : $A, [$φ] $a = $u ;
+  type outSType: (outS $s) : $A
+    when $s : (Sub $A $φ $u) ;
+-----------------------------------------------------
+-- Glue
+-- Glue types (generalized V-types)
+-- Glue [φ ↦ (T, e)] A : glue partial equivalences
+-----------------------------------------------------
+
+piece Glue
+  term ::= "Glue" system term          → Glue
+         | "glue" system term          → glue
+         | "unglue" cof term           → unglue ;
+
+  -- When φ holds, Glue [φ ↦ (T,e)] A ≅ T
+  rule unglueGlue: (unglue $φ (glue $sys $a)) ~~> $a when $φ ;
+
+  type GlueForm: (Glue $sys $A) : U
+    when $A : U, $sys : (Partial $φ (Σ T : U . Equiv T A)) ;
+
+-----------------------------------------------------
+-- Conversion
+-- Judgmental equality for type checking
+-----------------------------------------------------
+
+piece Conversion
+  -- Conversion is checked by normalization then comparison
+  -- conv A B : true iff A and B are definitionally equal
+  
+  -- Structural rules
+  rule convRefl: (conv $A $A) ~~> true ;
+  rule convSym: (conv $A $B) ~~> (conv $B $A) ;
+  
+  -- Universe conversion
+  rule convU: (conv U U) ~~> true ;
+  
+  -- Pi conversion (contravariant in domain)
+  rule convPi: (conv (Pi $x : $A1 . $B1) (Pi $x : $A2 . $B2)) 
+    ~~> (and (conv $A2 $A1) (conv $B1 $B2)) ;
+  
+  -- Sigma conversion
+  rule convSigma: (conv (Σ $x : $A1 . $B1) (Σ $x : $A2 . $B2))
+    ~~> (and (conv $A1 $A2) (conv $B1 $B2)) ;
+    
+  -- Path conversion
+  rule convPath: (conv (PathP $i . $A1 . $a01 . $a11) (PathP $i . $A2 . $a02 . $a12))
+    ~~> (and (conv $A1 $A2) (and (conv $a01 $a02) (conv $a11 $a12))) ;
+
+-----------------------------------------------------
+-- Neutral
+-- Neutral terms (stuck computation)
+-- These don't reduce further without more information
+-----------------------------------------------------
+
+piece Neutral
+  -- A term is neutral if it's blocked on a variable
+  -- Variables, applications to neutrals, projections from neutrals
+  
+  rule isNeutralVar: (neutral (var $x)) ~~> true ;
+  rule isNeutralApp: (neutral (app $f $a)) ~~> (neutral $f) ;
+  rule isNeutralFst: (neutral (fst $p)) ~~> (neutral $p) ;
+  rule isNeutralSnd: (neutral (snd $p)) ~~> (neutral $p) ;
+  rule isNeutralDApp: (neutral (dapp $p $r)) ~~> (neutral $p) ;
+  rule isNeutralCoe: (neutral (coe $r ~> $s ($i . $A) $a)) 
+    ~~> (or (neutral $A) (neutral $a)) ;
+  rule isNeutralHcom: (neutral (hcom $r ~> $s $A $sys $a))
+    ~~> (or (neutral $A) (neutral $a)) ;
+
+-----------------------------------------------------
+-- Equiv
+-- Equivalences for univalence
+-- Equiv A B : A and B are equivalent types
+-----------------------------------------------------
+
+piece Equiv
+  term ::= "Equiv" term term           → Equiv
+         | "idEquiv" term              → idEquiv
+         | "equivFun" term             → equivFun ;
+
+  -- Identity equivalence
+  rule equivFunId: (equivFun (idEquiv $A)) ~~> (lam x . x) ;
+
+  type EquivForm: (Equiv $A $B) : U
+    when $A : U, $B : U ;
+  type idEquivType: (idEquiv $A) : (Equiv $A $A)
+    when $A : U ;
+
+-----------------------------------------------------
+-- Fiber
+-- Fibers for contractibility
+-- Fiber f b : the fiber of f over b
+-----------------------------------------------------
+
+piece Fiber
+  term ::= "Fiber" term term           → Fiber ;
+
+  type FiberForm: (Fiber $f $b) : U
+    when $f : ($A → $B), $b : $B ;
+derive eq for term ;

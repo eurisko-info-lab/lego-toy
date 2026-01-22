@@ -1,0 +1,37 @@
+-----------------------------------------------------
+-- AttrTest: Test attribute grammar syntax
+--
+-- Demonstrates synthesized and inherited attributes
+-- for a simple expression language.
+-----------------------------------------------------
+
+lang AttrTest :=
+
+piece Expr
+  expr ::= number → num
+         | ident → var
+         | "(" expr "+" expr ")" → add
+         | "(" expr "*" expr ")" → mul ;
+
+-- Attribute section: groups declarations and rules
+attrs ExprAttrs
+  -- Attribute declarations
+  syn type : Type ;
+  syn value : Int ;
+  inh env : Env ;
+
+  -- Attribute rules (synthesized)
+  num.type = IntType ;
+  var.type = (lookup env name) ;
+  add.type = IntType ;
+  mul.type = IntType ;
+
+  -- Attribute rules (inherited - flow to children)
+  add.child0.env = env ;
+  add.child1.env = env ;
+  mul.child0.env = env ;
+  mul.child1.env = env ;
+
+-- Tests
+test "parse num": 42 ;
+test "parse add": (add 1 2) ;

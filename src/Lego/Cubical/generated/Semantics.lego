@@ -1,0 +1,326 @@
+-----------------------------------------------------
+-- Semantics.lego: Full Evaluation with Kan Operations
+--
+-- Mathematical Structure:
+-- - Normalization by evaluation (NbE)
+-- - Rigid coe/hcom computation
+-- - Splicing for constructing intermediate terms
+--
+-- Key insight:
+-- "The heart of the semantic domain is the handling of 'rigid' Kan operations:
+--  coe and hcom that cannot reduce further. These must be computed
+--  according to the specific type constructor (Pi, Sigma, Path, etc.)."
+-----------------------------------------------------
+
+import Core ;
+import Cofibration ;
+import TermBuilder ;
+import Visitor ;
+
+lang Semantics (Core, Cofibration, TermBuilder, Visitor) :=
+
+-----------------------------------------------------
+-- EvalCtx
+-- Evaluation context: variable environment + fuel
+-----------------------------------------------------
+piece EvalCtx
+  evalCtx ::= "evalCtx" "env:" <expr>* "fuel:" <number> → evalCtx ;
+  
+  rule evalCtxEmpty: evalCtxEmpty ~> (evalCtx env: () fuel: 1000) ;
+  
+  rule evalCtxExtend: (evalCtxExtend (evalCtx env: $env fuel: $f) $v) ~>
+    (evalCtx env: ($env $v) fuel: $f) ;
+  
+  rule evalCtxLookup: (evalCtxLookup (evalCtx env: $env fuel: $f) $ix) ~>
+    (lookupAt $env (minus (length $env) 1 $ix)) ;
+  
+  rule evalCtxDecFuel: (evalCtxDecFuel (evalCtx env: $env fuel: (suc $f))) ~>
+    (evalCtx env: $env fuel: $f) ;
+  rule evalCtxDecFuel0: (evalCtxDecFuel (evalCtx env: $env fuel: 0)) ~>
+    (evalCtx env: $env fuel: 0) ;
+
+-----------------------------------------------------
+-- DispatchResult
+-- Result of dispatching a rigid operation
+-----------------------------------------------------
+piece DispatchResult
+  dispatchDone ::= "done" → dispatchResult ;
+  dispatchReduce ::= "reduce" → dispatchResult ;
+
+-----------------------------------------------------
+-- StableCode
+-- Check if a code is stable (always canonical)
+-----------------------------------------------------
+piece StableCode
+  rule isStablePi: (isStableCode (pi $A $B)) ~> true ;
+  rule isStableSigma: (isStableCode (sigma $A $B)) ~> true ;
+  rule isStablePath: (isStableCode (path $A $l $r)) ~> true ;
+  rule isStableNat: (isStableCode nat) ~> true ;
+  rule isStableCircle: (isStableCode circle) ~> true ;
+  rule isStableUniv: (isStableCode (univ $l)) ~> true ;
+  rule isStableSub: (isStableCode (sub $A $φ $a)) ~> true ;
+  rule isStableOther: (isStableCode $other) ~> false ;
+  
+  rule isVCode: (isVCode (vtype $r $A $B $equiv)) ~> true ;
+  rule isVCodeOther: (isVCode $other) ~> false ;
+  
+  rule isHComCode: (isHComCode (hcom $r $s $A $φ $u)) ~> true ;
+  rule isHComCodeOther: (isHComCode $other) ~> false ;
+
+-----------------------------------------------------
+-- DimEq
+-- Check dimension equality
+-----------------------------------------------------
+piece DimEq
+  rule dimEq00: (dimEq dim0 dim0) ~> true ;
+  rule dimEq11: (dimEq dim1 dim1) ~> true ;
+  rule dimEqIx: (dimEq (ix $n) (ix $n)) ~> true ;
+  rule dimEqOther: (dimEq $r $s) ~> false ;
+
+-----------------------------------------------------
+-- CofTrue
+-- Check if cofibration is trivially true
+-----------------------------------------------------
+piece CofTrue
+  rule cofTrueTop: (cofTrue cof_top) ~> true ;
+  rule cofTrueEq: (cofTrue (cof_eq $r $s)) ~> (dimEq $r $s) ;
+  rule cofTrueOrL: (cofTrue (cof_or $φ $ψ)) ~> (or (cofTrue $φ) (cofTrue $ψ)) ;
+  rule cofTrueOther: (cofTrue $φ) ~> false ;
+
+-----------------------------------------------------
+-- Eval
+-- Core evaluation to weak head normal form
+-----------------------------------------------------
+piece Eval
+  -- Fuel exhausted: stop
+  rule evalNoFuel: (eval (evalCtx env: $env fuel: 0) $e) ~> $e ;
+  
+  -- Variable lookup
+  rule evalIx: (eval $ctx (ix $n)) ~>
+    (case (evalCtxLookup $ctx $n)
+      (some $v) => (eval (evalCtxDecFuel $ctx) $v)
+      none => (ix $n)) ;
+  
+  -- Lambda: value
+  rule evalLam: (eval $ctx (lam $body)) ~> (lam $body) ;
+  
+  -- Application: beta reduce
+  rule evalApp: (eval $ctx (app (lam $body) $arg)) ~>
+    (eval (evalCtxDecFuel $ctx) (subst 0 (eval (evalCtxDecFuel $ctx) $arg) $body)) ;
+  rule evalAppNeutral: (eval $ctx (app $f $arg)) ~>
+    (app (eval (evalCtxDecFuel $ctx) $f) (eval (evalCtxDecFuel $ctx) $arg)) ;
+  
+  -- Pair: value
+  rule evalPair: (eval $ctx (pair $a $b)) ~> (pair (eval (evalCtxDecFuel $ctx) $a) (eval (evalCtxDecFuel $ctx) $b)) ;
+  
+  -- Projections
+  rule evalFst: (eval $ctx (fst (pair $a $b))) ~> (eval (evalCtxDecFuel $ctx) $a) ;
+  rule evalFstNeutral: (eval $ctx (fst $p)) ~> (fst (eval (evalCtxDecFuel $ctx) $p)) ;
+  
+  rule evalSnd: (eval $ctx (snd (pair $a $b))) ~> (eval (evalCtxDecFuel $ctx) $b) ;
+  rule evalSndNeutral: (eval $ctx (snd $p)) ~> (snd (eval (evalCtxDecFuel $ctx) $p)) ;
+  
+  -- Path lambda/application
+  rule evalPlam: (eval $ctx (plam $body)) ~> (plam $body) ;
+  rule evalPapp: (eval $ctx (papp (plam $body) $r)) ~>
+    (eval (evalCtxDecFuel $ctx) (dimSubst 0 $r $body)) ;
+  rule evalPappNeutral: (eval $ctx (papp $p $r)) ~>
+    (papp (eval (evalCtxDecFuel $ctx) $p) $r) ;
+  
+  -- Coe: check degeneracy
+  rule evalCoe: (eval $ctx (coe $line $r $s $t)) ~>
+    (case (dimEq $r $s)
+      true => (eval (evalCtxDecFuel $ctx) $t)
+      false => (doRigidCoe (evalCtxDecFuel $ctx) (eval (evalCtxDecFuel $ctx) $line) $r $s (eval (evalCtxDecFuel $ctx) $t))) ;
+  
+  -- HCom: check degeneracy and constraint
+  rule evalHCom: (eval $ctx (hcom $A $r $s $φ $u)) ~>
+    (case (or (dimEq $r $s) (cofTrue $φ))
+      true => (eval (evalCtxDecFuel $ctx) (app (app $u $s) prf))
+      false => (doRigidHCom (evalCtxDecFuel $ctx) (eval (evalCtxDecFuel $ctx) $A) $r $s $φ (eval (evalCtxDecFuel $ctx) $u))) ;
+
+-----------------------------------------------------
+-- RigidCoe
+-- Compute rigid coercion based on type structure
+-----------------------------------------------------
+piece RigidCoe
+  -- Degenerate: nat, circle, univ don't need coercion
+  rule doRigidCoeNat: (doRigidCoe $ctx (lam nat) $r $s $con) ~> $con ;
+  rule doRigidCoeCircle: (doRigidCoe $ctx (lam circle) $r $s $con) ~> $con ;
+  rule doRigidCoeUniv: (doRigidCoe $ctx (lam (univ $l)) $r $s $con) ~> $con ;
+  
+  -- Pi type: coe (λi. Π(A i)(B i)) r s f
+  --   = λx. coe (λi. B i (coe (λi. A i) s i x)) r s (f (coe (λi. A i) s r x))
+  rule doRigidCoePi: (doRigidCoe $ctx (lam (pi $A $B)) $r $s $f) ~>
+    (lam (coe 
+      (lam (app (shift 0 1 $B) (coe (lam $A) $s (ix 0) (ix 0))))
+      $r $s 
+      (app $f (coe (lam $A) $s $r (ix 0))))) ;
+  
+  -- Sigma type: coe (λi. Σ(A i)(B i)) r s ⟨a, b⟩
+  --   = ⟨coe A r s a, coe (λi. B i (coe A r i a)) r s b⟩
+  rule doRigidCoeSigma: (doRigidCoe $ctx (lam (sigma $A $B)) $r $s (pair $a $b)) ~>
+    (pair 
+      (coe (lam $A) $r $s $a)
+      (coe (lam (app (shift 0 1 $B) (coe (lam $A) $r (ix 0) (shift 0 1 $a)))) $r $s $b)) ;
+  
+  -- Path type: coe (λi. Path (A i) (l i) (r i)) r s p
+  --   = λj. com A r s (∂j) [j=0 ↦ l, j=1 ↦ r] (p j)
+  rule doRigidCoePath: (doRigidCoe $ctx (lam (path $A $l $r)) $r' $s' $p) ~>
+    (plam (com (lam $A) $r' $s' 
+      (cof_or (cof_eq (ix 0) dim0) (cof_eq (ix 0) dim1))
+      (lam (lam (case (ix 1) dim0 => $l dim1 => $r)))
+      (papp $p (ix 0)))) ;
+  
+  -- Default: stuck
+  rule doRigidCoeDefault: (doRigidCoe $ctx $line $r $s $con) ~> (coe $line $r $s $con) ;
+
+-----------------------------------------------------
+-- RigidHCom
+-- Compute rigid hcom based on type structure
+-----------------------------------------------------
+piece RigidHCom
+  -- Pi type: hcom (Π A B) r s φ u = λx. hcom (B x) r s φ (λi p. u i p x)
+  rule doRigidHComPi: (doRigidHCom $ctx (pi $A $B) $r $s $φ $u) ~>
+    (lam (hcom (app (shift 0 1 $B) (ix 0)) $r $s $φ 
+      (lam (lam (app (app (app (shift 0 2 $u) (ix 1)) (ix 0)) (ix 2)))))) ;
+  
+  -- Sigma type: component-wise
+  rule doRigidHComSigma: (doRigidHCom $ctx (sigma $A $B) $r $s $φ $u) ~>
+    (pair
+      (hcom $A $r $s $φ (lam (lam (fst (app (app (shift 0 2 $u) (ix 1)) (ix 0))))))
+      (com (lam (app (shift 0 1 $B) (hcom $A $r (ix 0) $φ (lam (lam (fst (app (app (shift 0 2 $u) (ix 1)) (ix 0))))))))
+        $r $s $φ
+        (lam (lam (snd (app (app (shift 0 2 $u) (ix 1)) (ix 0)))))
+        (snd (app (app $u $r) prf)))) ;
+  
+  -- Path type
+  rule doRigidHComPath: (doRigidHCom $ctx (path $A $l $ep) $r $s $φ $u) ~>
+    (plam (hcom $A $r $s (cof_or $φ (cof_or (cof_eq (ix 0) dim0) (cof_eq (ix 0) dim1)))
+      (lam (lam (case (meetsCof (ix 1) $φ)
+        true => (papp (app (app (shift 0 2 $u) (ix 1)) (ix 0)) (ix 2))
+        false => (case (ix 2) dim0 => $l dim1 => $ep)))))) ;
+  
+  -- Nat: fhcom (frozen hcom)
+  rule doRigidHComNat: (doRigidHCom $ctx nat $r $s $φ $u) ~>
+    (hcom nat $r $s $φ $u) ;
+  
+  -- Circle: fhcom
+  rule doRigidHComCircle: (doRigidHCom $ctx circle $r $s $φ $u) ~>
+    (hcom circle $r $s $φ $u) ;
+  
+  -- Universe: hcom in Univ creates an unstable HCom code
+  rule doRigidHComUniv: (doRigidHCom $ctx (univ $l) $r $s $φ $u) ~>
+    (hcom (univ $l) $r $s $φ $u) ;
+  
+  -- Default: stuck
+  rule doRigidHComDefault: (doRigidHCom $ctx $code $r $s $φ $u) ~>
+    (hcom $code $r $s $φ $u) ;
+
+-----------------------------------------------------
+-- SpliceCtx
+-- Context for splicing during Kan computation
+-----------------------------------------------------
+piece SpliceCtx
+  spliceCtx ::= "spliceCtx" <binding>* "level:" <number> → spliceCtx ;
+  binding ::= "(" <symbol> "," <expr> ")" → binding ;
+  
+  rule spliceCtxEmpty: spliceCtxEmpty ~> (spliceCtx () level: 0) ;
+  
+  rule spliceCtxBind: (spliceCtxBind (spliceCtx $bindings level: $l) $name $v) ~>
+    (result: (spliceCtx ($bindings ($name , $v)) level: (suc $l)) var: (ix $l)) ;
+
+-----------------------------------------------------
+-- SpliceDim
+-- Splice a dimension into a term
+-----------------------------------------------------
+piece SpliceDim
+  rule spliceDim0: (spliceDim $ctx dim0 $k) ~> ($k $ctx dim0) ;
+  rule spliceDim1: (spliceDim $ctx dim1 $k) ~> ($k $ctx dim1) ;
+  rule spliceDimVar: (spliceDim $ctx $d $k) ~>
+    (case (spliceCtxBind $ctx "i" $d)
+      (result: $ctx' var: $var) => ($k $ctx' $var)) ;
+
+-----------------------------------------------------
+-- SpliceCof
+-- Splice a cofibration into a term
+-----------------------------------------------------
+piece SpliceCof
+  rule spliceCofTop: (spliceCof $ctx cof_top $k) ~> ($k $ctx cof_top) ;
+  rule spliceCofBot: (spliceCof $ctx cof_bot $k) ~> ($k $ctx cof_bot) ;
+  rule spliceCofVar: (spliceCof $ctx $φ $k) ~>
+    (case (spliceCtxBind $ctx "φ" $φ)
+      (result: $ctx' var: $var) => ($k $ctx' $var)) ;
+
+-----------------------------------------------------
+-- SpliceCon
+-- Splice a general value into a term
+-----------------------------------------------------
+piece SpliceCon
+  rule spliceCon: (spliceCon $ctx $con $k) ~>
+    (case (spliceCtxBind $ctx "x" $con)
+      (result: $ctx' var: $var) => ($k $ctx' $var)) ;
+
+-----------------------------------------------------
+-- DoOps
+-- Semantic operations: apply, project, etc.
+-----------------------------------------------------
+piece DoOps
+  rule doAp: (doAp $ctx $f $a) ~> (eval $ctx (app $f $a)) ;
+  rule doAp2: (doAp2 $ctx $f $a $b) ~> (doAp $ctx (doAp $ctx $f $a) $b) ;
+  rule doFst: (doFst $ctx $p) ~> (eval $ctx (fst $p)) ;
+  rule doSnd: (doSnd $ctx $p) ~> (eval $ctx (snd $p)) ;
+  rule doPApp: (doPApp $ctx $p $r) ~> (eval $ctx (papp $p $r)) ;
+  rule doSubOut: (doSubOut $ctx $t) ~> (eval $ctx (subOut $t)) ;
+
+-----------------------------------------------------
+-- El
+-- Universe decoding
+-----------------------------------------------------
+piece El
+  rule doElNat: (doEl $ctx (lit "nat-code")) ~> nat ;
+  rule doElCircle: (doEl $ctx (lit "circle-code")) ~> circle ;
+  rule doElDefault: (doEl $ctx $code) ~> (eval $ctx $code) ;
+
+-----------------------------------------------------
+-- RigidCap
+-- Extract cap from box or create neutral
+-----------------------------------------------------
+piece RigidCap
+  rule doRigidCap: (doRigidCap $ctx $r $s $φ $code $box) ~>
+    (lit (concat "cap(" $r "," $s "," $φ "," $code "," (eval $ctx $box) ")")) ;
+
+-----------------------------------------------------
+-- RigidVProj
+-- Project from V type
+-----------------------------------------------------
+piece RigidVProj
+  rule doRigidVProjVIn: (doRigidVProj $ctx $r $pcode $code $pequiv (vin $r' $a $base)) ~> $base ;
+  rule doRigidVProjDefault: (doRigidVProj $ctx $r $pcode $code $pequiv $v) ~>
+    (vproj $r $pcode $code $pequiv (eval $ctx $v)) ;
+
+-----------------------------------------------------
+-- TopLevel
+-- Top-level evaluation functions
+-----------------------------------------------------
+piece TopLevel
+  rule evaluate: (evaluate $e) ~> (eval evalCtxEmpty $e) ;
+  rule whnf: (whnf $e) ~> (eval evalCtxEmpty $e) ;
+  rule whnfTp: (whnfTp $tp) ~> (whnf $tp) ;
+
+-----------------------------------------------------
+-- Instantiation
+-- Instantiate closures with values
+-----------------------------------------------------
+piece Instantiation
+  rule instClo: (instClo $ctx $body $v) ~> (eval $ctx (subst 0 $v $body)) ;
+  rule instTpClo: (instTpClo $ctx $body $v) ~> (instClo $ctx $body $v) ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

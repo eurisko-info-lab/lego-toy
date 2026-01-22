@@ -1,0 +1,269 @@
+-----------------------------------------------------
+-- Signature.lego: Signature Types (Records with named fields)
+--
+-- Mathematical Structure:
+-- - Telescopes: dependent sequences of types
+-- - Signatures: named telescopes forming record types  
+-- - Structs: introduction form (record values)
+-- - Projections: elimination form (field access)
+--
+-- Algebra:
+-- - Signatures form a category with morphisms being projections
+-- - Structs are generalized n-ary products
+-- - Empty signature is the terminal object (Unit)
+-----------------------------------------------------
+
+import Core ;
+
+lang Signature (Core) :=
+
+-----------------------------------------------------
+-- Label
+-- Field labels
+-----------------------------------------------------
+piece Label
+  label ::= "userLabel" <name> → userLabel
+         | "anonLabel" <nat> → anonLabel ;
+  
+  rule labelToString: (labelToString (userLabel $s)) ~> $s ;
+  rule labelToStringAnon: (labelToString (anonLabel $n)) ~> (strConcat "_" (natToString $n)) ;
+  
+  rule isAnonLabel: (isAnonLabel (anonLabel $n)) ~> true ;
+  rule isAnonLabelUser: (isAnonLabel (userLabel $s)) ~> false ;
+  
+  rule labelEq: (labelEq (userLabel $s1) (userLabel $s2)) ~> (eq $s1 $s2) ;
+  rule labelEqAnon: (labelEq (anonLabel $n1) (anonLabel $n2)) ~> (eq $n1 $n2) ;
+  rule labelEqMix: (labelEq $l1 $l2) ~> false ;
+
+-----------------------------------------------------
+-- Cell
+-- Telescope cell: (label, type)
+-----------------------------------------------------
+piece Cell
+  teleCell ::= "teleCell" "label:" <label> "ty:" <expr> → teleCell ;
+  
+  rule cellLabel: (cellLabel (teleCell label: $l ty: $t)) ~> $l ;
+  rule cellTy: (cellTy (teleCell label: $l ty: $t)) ~> $t ;
+
+-----------------------------------------------------
+-- Telescope
+-- Dependent sequence of types
+-----------------------------------------------------
+piece Telescope
+  telescope ::= "telescope" <teleCell>* → telescope ;
+  
+  rule telescopeEmpty: telescopeEmpty ~> (telescope) ;
+  
+  rule telescopeExtend: (telescopeExtend (telescope $cells) $lbl $ty) ~>
+    (telescope $cells (teleCell label: $lbl ty: $ty)) ;
+  
+  rule telescopeLength: (telescopeLength (telescope)) ~> 0 ;
+  rule telescopeLengthCons: (telescopeLength (telescope $cells $c)) ~>
+    (succ (telescopeLength (telescope $cells))) ;
+  
+  rule telescopeLabels: (telescopeLabels (telescope)) ~> () ;
+  rule telescopeLabelsCons: (telescopeLabels (telescope $cells $c)) ~>
+    ((telescopeLabels (telescope $cells)) (cellLabel $c)) ;
+  
+  rule telescopeFindByLabel: (telescopeFindByLabel (telescope) $lbl) ~> none ;
+  rule telescopeFindByLabelMatch: (telescopeFindByLabel (telescope $cells (teleCell label: $lbl ty: $t)) $lbl) ~>
+    (some ((telescopeLength (telescope $cells)) , (teleCell label: $lbl ty: $t))) ;
+  rule telescopeFindByLabelMiss: (telescopeFindByLabel (telescope $cells $c) $lbl) ~>
+    (telescopeFindByLabel (telescope $cells) $lbl) ;
+  
+  rule telescopeTypeAt: (telescopeTypeAt (telescope) $idx) ~> none ;
+  rule telescopeTypeAtHit: (telescopeTypeAt (telescope $cells $c) 0) ~> (some (cellTy $c)) ;
+  rule telescopeTypeAtMiss: (telescopeTypeAt (telescope $cells $c) (succ $n)) ~>
+    (telescopeTypeAt (telescope $cells) $n) ;
+  
+  rule telescopeShiftAll: (telescopeShiftAll $delta (telescope)) ~> (telescope) ;
+  rule telescopeShiftAllCons: (telescopeShiftAll $delta (telescope $cells $c)) ~>
+    (telescope 
+      (telescopeShiftAll $delta (telescope $cells)) 
+      (teleCell label: (cellLabel $c) ty: (shift 0 $delta (cellTy $c)))) ;
+
+-----------------------------------------------------
+-- KCell
+-- Kan telescope cell (codes in universe)
+-----------------------------------------------------
+piece KCell
+  kCell ::= "kCell" "label:" <label> "code:" <expr> → kCell ;
+  
+  rule kCellLabel: (kCellLabel (kCell label: $l code: $c)) ~> $l ;
+  rule kCellCode: (kCellCode (kCell label: $l code: $c)) ~> $c ;
+
+-----------------------------------------------------
+-- KTelescope
+-- Kan telescope for Kan operations on signatures
+-----------------------------------------------------
+piece KTelescope
+  kTelescope ::= "kTelescope" <kCell>* → kTelescope ;
+  
+  rule kTelescopeEmpty: kTelescopeEmpty ~> (kTelescope) ;
+  
+  rule kTelescopeExtend: (kTelescopeExtend (kTelescope $cells) $lbl $code) ~>
+    (kTelescope $cells (kCell label: $lbl code: $code)) ;
+  
+  rule kTelescopeLength: (kTelescopeLength (kTelescope)) ~> 0 ;
+  rule kTelescopeLengthCons: (kTelescopeLength (kTelescope $cells $c)) ~>
+    (succ (kTelescopeLength (kTelescope $cells))) ;
+  
+  rule kTelescopeToTelescope: (kTelescopeToTelescope (kTelescope)) ~> (telescope) ;
+  rule kTelescopeToTelescopeCons: (kTelescopeToTelescope (kTelescope $cells $c)) ~>
+    (telescope 
+      (kTelescopeToTelescope (kTelescope $cells))
+      (teleCell label: (kCellLabel $c) ty: (kCellCode $c))) ;
+
+-----------------------------------------------------
+-- SignatureType
+-- Named product type with dependent fields
+-----------------------------------------------------
+piece SignatureType
+  signatureType ::= "sigType" <telescope> → sigType ;
+  
+  rule sigTypeEmpty: sigTypeEmpty ~> (sigType telescopeEmpty) ;
+  
+  rule sigTypeSingle: (sigTypeSingle $lbl $ty) ~>
+    (sigType (telescopeExtend telescopeEmpty $lbl $ty)) ;
+  
+  rule sigTypeExtend: (sigTypeExtend (sigType $tele) $lbl $ty) ~>
+    (sigType (telescopeExtend $tele $lbl $ty)) ;
+  
+  rule sigTypeNumFields: (sigTypeNumFields (sigType $tele)) ~> (telescopeLength $tele) ;
+  
+  rule sigTypeLabels: (sigTypeLabels (sigType $tele)) ~> (telescopeLabels $tele) ;
+  
+  rule sigTypeFindField: (sigTypeFindField (sigType $tele) $lbl) ~>
+    (case (telescopeFindByLabel $tele $lbl)
+      (some ($idx , $cell)) => (some $idx)
+      none => none) ;
+  
+  rule sigTypeFieldType: (sigTypeFieldType (sigType $tele) $idx) ~>
+    (telescopeTypeAt $tele $idx) ;
+  
+  -- Convert to nested sigma type
+  rule sigTypeToSigma: (sigTypeToSigma (sigType (telescope))) ~> (univ 0) ;
+  rule sigTypeToSigmaSingle: (sigTypeToSigma (sigType (telescope ($c)))) ~> (cellTy $c) ;
+  rule sigTypeToSigmaMulti: (sigTypeToSigma (sigType (telescope $cells $c))) ~>
+    (sigma (cellTy (head $cells)) (sigTypeToSigma (sigType (telescope (tail $cells) $c)))) ;
+  
+  rule head: (head ($x $rest)) ~> $x ;
+  rule tail: (tail ($x $rest)) ~> $rest ;
+
+-----------------------------------------------------
+-- Field
+-- Field value in a struct
+-----------------------------------------------------
+piece Field
+  field ::= "field" "label:" <label> "value:" <expr> → field ;
+  
+  rule fieldLabel: (fieldLabel (field label: $l value: $v)) ~> $l ;
+  rule fieldValue: (fieldValue (field label: $l value: $v)) ~> $v ;
+
+-----------------------------------------------------
+-- Struct
+-- Record value (introduction for signature types)
+-----------------------------------------------------
+piece Struct
+  struct ::= "struct" <field>* → struct ;
+  
+  rule structEmpty: structEmpty ~> (struct) ;
+  
+  rule structSingle: (structSingle $lbl $val) ~>
+    (struct (field label: $lbl value: $val)) ;
+  
+  rule structExtend: (structExtend (struct $fields) $lbl $val) ~>
+    (struct $fields (field label: $lbl value: $val)) ;
+  
+  rule structNumFields: (structNumFields (struct)) ~> 0 ;
+  rule structNumFieldsCons: (structNumFields (struct $fields $f)) ~>
+    (succ (structNumFields (struct $fields))) ;
+  
+  rule structLabels: (structLabels (struct)) ~> () ;
+  rule structLabelsCons: (structLabels (struct $fields $f)) ~>
+    ((structLabels (struct $fields)) (fieldLabel $f)) ;
+  
+  rule structValues: (structValues (struct)) ~> () ;
+  rule structValuesCons: (structValues (struct $fields $f)) ~>
+    ((structValues (struct $fields)) (fieldValue $f)) ;
+  
+  rule structFindField: (structFindField (struct) $lbl) ~> none ;
+  rule structFindFieldMatch: (structFindField (struct $fields (field label: $lbl value: $v)) $lbl) ~>
+    (some (field label: $lbl value: $v)) ;
+  rule structFindFieldMiss: (structFindField (struct $fields $f) $lbl) ~>
+    (structFindField (struct $fields) $lbl) ;
+  
+  rule structGetField: (structGetField $s $lbl) ~>
+    (case (structFindField $s $lbl)
+      (some $f) => (some (fieldValue $f))
+      none => none) ;
+  
+  rule structGetAt: (structGetAt (struct) $idx) ~> none ;
+  rule structGetAtHit: (structGetAt (struct $fields $f) 0) ~> (some (fieldValue $f)) ;
+  rule structGetAtMiss: (structGetAt (struct $fields $f) (succ $n)) ~>
+    (structGetAt (struct $fields) $n) ;
+  
+  -- Convert to nested pair
+  rule structToPair: (structToPair (struct)) ~> (lit "unit") ;
+  rule structToPairSingle: (structToPair (struct ($f))) ~> (fieldValue $f) ;
+  rule structToPairMulti: (structToPair (struct $fields $f)) ~>
+    (pair (fieldValue (head $fields)) (structToPair (struct (tail $fields) $f))) ;
+  
+  rule structFromList: (structFromList ()) ~> structEmpty ;
+  rule structFromListCons: (structFromList (($lbl , $val) $rest)) ~>
+    (structExtend (structFromList $rest) $lbl $val) ;
+
+-----------------------------------------------------
+-- Projection
+-- Field access (elimination for signature types)
+-----------------------------------------------------
+piece Projection
+  rule projAt: (projAt $e 0) ~> (fst $e) ;
+  rule projAtSucc: (projAt $e (succ $n)) ~> (projAt (snd $e) $n) ;
+  
+  rule mkProj: (mkProj $struct $lbl $idx) ~> (projAt $struct $idx) ;
+
+-----------------------------------------------------
+-- Unpack
+-- Extract all fields from a struct
+-----------------------------------------------------
+piece Unpack
+  rule unpack: (unpack $s) ~> (structValues $s) ;
+
+-----------------------------------------------------
+-- SignatureKan
+-- Kan operations for signature types (mcoe, mcom)
+-----------------------------------------------------
+piece SignatureKan
+  -- Coercion through a telescope
+  rule mcoeTele: (mcoeTele $r $r' (kTelescope) $struct) ~> $struct ;
+  rule mcoeTeleCons: (mcoeTele $r $r' (kTelescope $cells $c) $struct) ~>
+    (let $coedFirst = (coe $r $r' (kCellCode $c) (structGetAt $struct 0))
+     in (structExtend 
+          (mcoeTele $r $r' (kTelescope $cells) (structTail $struct))
+          (kCellLabel $c)
+          $coedFirst)) ;
+  
+  rule structTail: (structTail (struct $f $rest)) ~> (struct $rest) ;
+  
+  -- Composition through a telescope
+  rule mcomTele: (mcomTele $r $r' (kTelescope) $φ $tubes $cap) ~> $cap ;
+  rule mcomTeleCons: (mcomTele $r $r' (kTelescope $cells $c) $φ $tubes $cap) ~>
+    (let $comFirst = (com (kCellCode $c) $r $r' $φ 
+                       (lam (lam (structGetAt (app (app (shift 0 2 $tubes) (ix 1)) (ix 0)) 0)))
+                       (structGetAt $cap 0))
+     in (structExtend
+          (mcomTele $r $r' (kTelescope $cells) $φ 
+            (lam (lam (structTail (app (app (shift 0 2 $tubes) (ix 1)) (ix 0)))))
+            (structTail $cap))
+          (kCellLabel $c)
+          $comFirst)) ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

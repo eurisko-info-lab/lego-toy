@@ -1,0 +1,419 @@
+-----------------------------------------------------
+-- Cooltt: A modular parser for cooltt (.cooltt) files
+--
+-- Grammar for parsing .cooltt files from the cooltt library.
+-- Organized into logical pieces for maintainability.
+-- Cross-piece references work via parse-time name resolution.
+--
+-- Based on: https://github.com/RedPRL/cooltt
+--
+-- cooltt is a proof assistant implementing cartesian cubical type theory
+-- with higher inductive types (circle, nat), records, sections,
+-- and sophisticated module system.
+--
+-- Key features:
+-- - Cartesian cubical type theory with interval 𝕀
+-- - Extension types: ext i => A with [i=0 => a | i=1 => b]
+-- - Sub types: sub A φ a
+-- - V types for univalence
+-- - First-class records (sig/struct) with patches
+-- - Equational reasoning proofs
+-- - Module sections with views/exports/repacks
+-----------------------------------------------------
+
+lang Cooltt :=
+
+-----------------------------------------------------
+-- Token: Character-level lexer for CoolTT files
+-----------------------------------------------------
+
+token Token
+  -- Character classes
+  digit  ::= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
+  lower  ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+           | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+           | 'u' | 'v' | 'w' | 'x' | 'y' | 'z' ;
+  upper  ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
+           | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
+           | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' ;
+  greek  ::= 'α' | 'β' | 'γ' | 'δ' | 'ε' | 'ζ' | 'η' | 'θ' | 'ι' | 'κ'
+           | 'λ' | 'μ' | 'ν' | 'ξ' | 'ο' | 'π' | 'ρ' | 'σ' | 'τ' | 'υ'
+           | 'φ' | 'χ' | 'ψ' | 'ω'
+           | 'Α' | 'Β' | 'Γ' | 'Δ' | 'Ε' | 'Ζ' | 'Η' | 'Θ' | 'Ι' | 'Κ'
+           | 'Λ' | 'Μ' | 'Ν' | 'Ξ' | 'Ο' | 'Π' | 'Ρ' | 'Σ' | 'Τ' | 'Υ'
+           | 'Φ' | 'Χ' | 'Ψ' | 'Ω' ;
+  -- Double-struck letters for type theory
+  mathbb ::= '𝕀' | '𝔽' | '𝕊' ;
+  -- Math symbols
+  mathsym ::= '≈' | '≅' | '≤' | '≥' | '∘' | '⊗' | '⊙' | '∧' | '∨' | '∂' | '∷' 
+            | '≡' | '⋆' | '¯' | '¹' | '₀' | '₁' | '₂' | '₃' | '₄' | '₅' | '₆' | '₇' | '₈' | '₉' ;
+  alpha  ::= lower | upper | greek | mathbb | mathsym | '_' | '+' ;
+  symch  ::= '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+           | ':' | ';' | ',' | '.' | '|' | '!' | '?' | '@'
+           | '#' | '$' | '%' | '^' | '&' | '*' | '-'
+           | '=' | '~' | '/' | '\\' | '→' | '←' | '↔' | '⊕'
+           | '⊢' | '×' | 'λ' | '∀' | '∃' | '★' | '☆'
+           | '⦉' | '⦊' | '«' | '»' | '`' | '⊤' | '⊥' ;
+
+  -- Cooltt-specific token patterns
+  -- '/' allowed in identifiers for hierarchical names (e.g., trans/filler)
+  -- '\'' allowed as suffix for primed identifiers (e.g., symm')
+  -- '-' allowed in identifiers (e.g., path-p, coe-fwd)
+  ident   ::= alpha (alpha | digit | '-' | '/' | '\'' | '+')* ;
+  number  ::= digit digit* ;
+  string  ::= '"' strchar* '"' ;
+  strchar ::= '\\' escape | printable ;
+  escape  ::= '"' | '\\' | 'n' | 't' | 'r' | '\'' ;
+  printable ::= alpha | digit | symch | ' ' ;
+
+  -- Whitespace and comments (to skip)
+  ws      ::= ' ' | '\t' | '\n' | '\r' ;
+  comment ::= '-' '-' nonnl* ;
+  nonnl   ::= alpha | digit | symch | ' ' | '\t' | '\'' | '"' ;
+
+  -- Multi-character operators (must be checked BEFORE single sym)
+  -- These are ordered longest-first for proper tokenization
+  op10    ::= '#' 'n' 'o' 'r' 'm' 'a' 'l' 'i' 'z' 'e' ;  -- #normalize
+  op7     ::= '#' 'p' 'r' 'i' 'n' 't'                    -- #print
+            | '#' 'd' 'e' 'b' 'u' 'g' ;                  -- #debug
+  op5     ::= '#' 'f' 'a' 'i' 'l'                        -- #fail
+            | '#' 'q' 'u' 'i' 't' ;                      -- #quit
+  op3     ::= ':' ':' '='          -- ::= (assignment with type)
+            | '=' '[' ']' ;        -- =[] (equation step, empty)
+  op2     ::= ':' '='              -- := (assignment)
+            | ':' ':'              -- :: (qualified name separator)
+            | '-' '>'              -- -> (arrow)
+            | '<' '-'              -- <- (back arrow)
+            | '<' '='              -- <= (less than or equal)
+            | '=' '>'              -- => (fat arrow)
+            | '{' '!'              -- {! (hole start)
+            | '!' '}'              -- !} (hole end)
+            | '?' '_'              -- ?_ (hole)
+            | '=' '[' ;            -- =[ (equation step start)
+
+  -- Single symbol (fallback)
+  sym     ::= symch ;
+
+-----------------------------------------------------
+-- File Structure
+-----------------------------------------------------
+piece File
+  file       ::= topdecl* ;
+  topdecl    ::= importdecl | defndecl | axiomdecl | printcmd | normcmd 
+               | failcmd | debugcmd | quitcmd | sectiondecl | viewdecl 
+               | exportdecl | repackdecl | abstractmod | unfoldmod ;
+
+-----------------------------------------------------
+-- Imports: import path.to.module [modifier]
+-----------------------------------------------------
+piece Imports
+  importdecl ::= "import" modulepath bracketmod? ;
+  modulepath ::= name ("." name)* ;
+  -- NOTE: "in" and "with" are NOT valid names - they're delimiters!
+  -- NOTE: "def" is NOT a valid name - it's a keyword that starts definitions!
+  -- NOTE: "sig" and "struct" are NOT valid names - they start signature/struct types!
+  name       ::= ident | "import" | "let" | "elim" | "type" 
+               | "nat" | "circle" | "+" | "-" | "set" | "tp"
+               | "path" | "path-p" | "empty" | "trans" ;
+
+-----------------------------------------------------
+-- Definitions: def name (args) : type := body
+-----------------------------------------------------
+piece Definitions
+  defndecl   ::= modifiers? "def" defname telecells? ":" expr ":=" expr ;
+  defname    ::= opname | path ;
+  opname     ::= "+" | "-" | "*" ;
+  path       ::= name ("::" name)* ;
+  telecells  ::= telecell+ ;
+  telecell   ::= "(" plainnames ":" expr ")" ;
+  -- plainnames allows qualified names and underscore in parameter position
+  plainnames ::= plainname+ ;
+  plainname  ::= path | "_" ;
+  names      ::= name+ ;
+  
+  modifiers  ::= modifier+ ;
+  -- "!" is shorthand for "shadowing" in cooltt
+  modifier   ::= "shadowing" | "!" | "abstract" | unfoldspec ;
+  -- unfoldspec uses unfoldnames; keywords become sym tokens via vocab
+  -- so ident will NOT match "abstract", "def", etc.
+  unfoldspec ::= "unfold" unfoldnames ;
+  unfoldnames ::= unfoldname+ ;
+  -- unfoldname matches identifiers (but not keywords which are sym tokens)
+  -- and operators like + -
+  unfoldname ::= ident "::" unfoldname | ident | "+" | "-" ;
+  
+  -- Standalone modifiers (appear as separate "declarations")
+  abstractmod ::= "abstract" ;
+  unfoldmod   ::= "unfold" unfoldnames ;
+
+-----------------------------------------------------
+-- Axioms: axiom name (args) : type
+-----------------------------------------------------
+piece Axioms
+  axiomdecl  ::= modifiers? "axiom" defname telecells? ":" expr ;
+
+-----------------------------------------------------
+-- Commands
+-----------------------------------------------------
+piece Commands
+  printcmd   ::= "#print" plainname ;
+  normcmd    ::= "#normalize" expr ;
+  failcmd    ::= "#fail" topdecl ;
+  debugcmd   ::= "#debug" flag ;
+  quitcmd    ::= "#quit" ;
+  flag       ::= "on" | "off" ;
+
+-----------------------------------------------------
+-- Module System: section, view, export, repack
+-----------------------------------------------------
+piece ModuleSystem
+  sectiondecl ::= modifiers? "section" path? "begin" topdecl* "end" bracketmod? ;
+  viewdecl    ::= modifiers? "view" bracketmod ;
+  exportdecl  ::= modifiers? "export" bracketmod
+                | modifiers? "export" path ;
+  repackdecl  ::= modifiers? "repack" bracketmod ;
+  
+  bracketmod  ::= "[" moditems? "]" | "{" moditems? "}" ;
+  -- moditems uses ; or , as separators. Single item also valid.
+  moditems    ::= moditem ((";" | ",") moditem)* ;
+  -- moditem Grammar.mly reference:
+  --   :: alone                    → ModAll
+  --   path :: atomicmod           → ModInSubtree
+  --   -> alone                    → ModRename([], [])
+  --   path -> ::?                 → ModRename(path, [])
+  --   ::? -> path                 → ModRename([], path)  ← this needs explicit :: option
+  --   path -> path                → ModRename(path1, path2)
+  --   path alone                  → ModOnly
+  --   !path                       → removal
+  --   atomicmod                   → passthrough
+  -- CRITICAL ORDERING: More specific patterns before less specific!
+  --   ":: -> path" BEFORE "::" (else :: matches and leaves -> path)
+  --   "-> path" BEFORE "->" alone
+  --   "! path" BEFORE "!" alone (which handles !)
+  moditem     ::= "::" ("->" | "→") path | "::" | path "::" atomicmod | path ("->" | "→") path? 
+                | ("->" | "→") path | ("->" | "→") 
+                | "!" path | atomicmod | path ;
+  -- atomicmod: what can appear after "path ::" or nested in brackets
+  -- Grammar.mly: bracketed | ! ::? | ! path | hole
+  -- ORDERING: "! path" before "! ::?" (else ! matches and leaves path)
+  atomicmod   ::= bracketmod | "!" path | "!" "::"? | hole ;
+
+-----------------------------------------------------
+-- Expressions (priority: low to high)
+-- Note: Arrow/product parsed after appexpr to avoid left recursion
+-- IMPORTANT: Order matters for performance!
+--   Check keyword-triggered expressions first (fast fail on first token)
+--   Then fall back to arrowexpr (most common case for identifiers)
+-----------------------------------------------------
+piece Expr
+  expr       ::= letexpr       -- starts with "let"
+               | openexpr      -- starts with "open"
+               | generalize    -- starts with "generalize"
+               | unfoldexpr    -- starts with "unfold"
+               | abstractexpr  -- starts with "abstract"
+               | elimexpr      -- starts with "elim"
+               | equationexpr  -- starts with "equation"
+               | piexpr        -- starts with "("
+               | sigmaexpr     -- starts with "("
+               | lambda        -- starts with name followed by "=>"
+               | arrowexpr ;   -- everything else (identifiers, apps, etc)
+
+-----------------------------------------------------
+-- Lambda and Eliminators
+-----------------------------------------------------
+piece Lambda
+  lambda     ::= plainnames "=>" expr ;
+  elimexpr   ::= "elim" atomicexpr? motive? "with"? cases
+               | "elim" cases ;
+  motive     ::= "as" atomicexpr ;
+  cases      ::= "[" caseopt* "]" ;
+  caseopt    ::= "|"? case ;
+  case       ::= pattern "=>" expr ;
+  pattern    ::= patlabel patargs? ;
+  patlabel   ::= "zero" | "suc" | "base" | "loop" | path ;
+  patargs    ::= patarg+ ;
+  -- patarg: underscore, inductive pattern {n => ih}, or single name 
+  patarg     ::= "{" name "=>" name "}" | "_" | name ;
+
+-----------------------------------------------------
+-- Let, Open, Generalize, Unfold, Abstract
+-----------------------------------------------------
+piece Binding
+  letexpr    ::= "let" name ":" expr ":=" expr "in" expr
+               | "let" name ":=" expr "in" expr ;
+  openexpr   ::= "open" expr renaming? "in" expr ;
+  generalize ::= "generalize" name "in" expr ;
+  unfoldexpr ::= "unfold" names "in" expr ;
+  -- Accept both ASCII and Unicode arrows for abstract
+  -- Name can be qualified (e.g., abs-test::foo)
+  abstractexpr ::= "abstract" qname? ("<-" | "←") expr ;
+  qname      ::= ident "::" qname | ident ;
+  renaming   ::= "renaming" "[" renamelist "]" ;
+  renamelist ::= renamepair (";" renamepair)* ;
+  renamepair ::= path ("->" | "→") path ;
+
+-----------------------------------------------------
+-- Pi, Sigma, and Arrow Types
+-- Uses appexpr as base to avoid left recursion
+-- Accepts both -> and → for arrows
+-----------------------------------------------------
+piece Types
+  piexpr     ::= telecells ("->" | "→") expr ;
+  sigmaexpr  ::= telecells ("*" | "×") expr ;
+  arrowexpr  ::= appexpr (("->" | "→") expr)? (("*" | "×") expr)? ;
+
+-----------------------------------------------------
+-- Application
+-----------------------------------------------------
+piece Application
+  -- Grammar.mly: t = term; DOT; lbl = plain_name; spine = list(atomic_term)
+  -- Projection with optional arguments: expr.field args...
+  -- Patch postfix: expr # [patches]
+  appexpr    ::= projexpr
+               | baseexpr postfix?
+               | "suc" atomicexpr
+               | "loop" atomicexpr
+               | "fst" atomicexpr
+               | "snd" atomicexpr
+               | "vproj" atomicexpr
+               | "cap" atomicexpr ;
+  -- Projection: base.fieldname args* (fieldname can be qualified like foo::x)
+  -- Chained projections: a.x.y.z = ((a.x).y).z
+  projexpr   ::= baseexpr ("." plainname atomicexpr*)+ ;
+  baseexpr   ::= atomicexpr atomicexpr* ;
+  postfix    ::= "#" "[" patches "]" ;   -- patch only (projection moved to projexpr)
+
+-----------------------------------------------------
+-- Atomic Expressions
+-----------------------------------------------------
+piece Atomic
+  atomicexpr ::= var | literal | parenexpr | bracketexpr | braceexpr
+               | bangbracket | hole | underscore | builtin
+               | sigtype | structexpr | extexpr | subexpr
+               | coeexpr | hcomexpr | hfillexpr | comexpr | vexpr
+               | equationexpr ;
+  
+  var        ::= path ;
+  underscore ::= "_" ;
+  literal    ::= number ;
+  parenexpr  ::= "(" expr ")" ;
+  bracketexpr ::= "[" bracketcontent "]" ;
+  braceexpr  ::= "{" coforterm "}" ;
+  bangbracket ::= "{!" expr? "!}" ;
+  
+  bracketcontent ::= pairexpr | cofsplit | prfexpr ;
+  pairexpr   ::= expr "," expr ;
+  cofsplit   ::= "|"? cofcase ("|" cofcase)* ;
+  cofcase    ::= cof "=>" expr ;
+  -- prfexpr handles both expressions AND cofibrations (like [i=0 ∨ φ])
+  prfexpr    ::= cofexceptterm | expr ;
+
+-----------------------------------------------------
+-- Holes
+-----------------------------------------------------
+piece Holes
+  hole       ::= "?" holename? | "?_" holename? ;
+  holename   ::= ident ;
+
+-----------------------------------------------------
+-- Built-in Types
+-----------------------------------------------------
+piece Builtins
+  builtin    ::= "type" | dimtype | coftype | "nat" | "circle"
+               | "zero" | "base" | topcof | botcof | "#viz" ;
+  dimtype    ::= "dim" | "𝕀" ;
+  coftype    ::= "cof" | "𝔽" ;
+  topcof     ::= "true" | "⊤" ;
+  botcof     ::= "false" | "⊥" ;
+
+-----------------------------------------------------
+-- Cofibrations
+-- Key insight from Grammar.mly: separate "cofibration-only" constructs
+-- from "could be either cof or term". This allows unified parsing.
+-----------------------------------------------------
+piece Cofibrations
+  -- cof that is NOT a plain term (has explicit cof syntax)
+  -- Order: joincof/meetcof first because cofeq can match their prefix
+  cofexceptterm ::= joincof | meetcof | cofeq | cofle | cofbdry ;
+  -- unified: try cof-specific syntax first, then fall back to expr
+  -- Order matters! cofexceptterm first because expr can match prefix of cof
+  coforterm  ::= cofexceptterm | expr ;
+  
+  cof        ::= joincof | meetcof | atomiccof ;
+  atomiccof  ::= cofeq | cofle | cofbdry | atomicexpr ;
+  cofeq      ::= atomicexpr "=" atomicexpr ;
+  cofle      ::= atomicexpr "<=" atomicexpr
+               | atomicexpr "≤" atomicexpr ;
+  cofbdry    ::= "∂" atomicexpr ;
+  joincof    ::= atomiccof (("\\/" | "∨") atomiccof)+ ;
+  meetcof    ::= atomiccof (("/\\" | "∧") atomiccof)+ ;
+
+-----------------------------------------------------
+-- Extension Types
+-----------------------------------------------------
+piece ExtTypes
+  extexpr    ::= "ext" names? "=>" expr "with" extbdy ;
+  extbdy     ::= "[" "]" | "[" "|"? extcase ("|" extcase)* "]" ;
+  extcase    ::= cof "=>" expr ;
+
+-----------------------------------------------------
+-- Sub Types
+-----------------------------------------------------
+piece SubTypes
+  subexpr    ::= "sub" atomicexpr atomicexpr atomicexpr ;
+
+-----------------------------------------------------
+-- Cubical Operations
+-----------------------------------------------------
+piece CubicalOps
+  coeexpr    ::= "coe" atomicexpr atomicexpr atomicexpr atomicexpr ;
+  hcomexpr   ::= "hcom" atomicexpr atomicexpr atomicexpr atomicexpr atomicexpr
+               | "hcom" atomicexpr atomicexpr atomicexpr ;
+  hfillexpr  ::= "hfill" atomicexpr atomicexpr atomicexpr atomicexpr
+               | "hfill" atomicexpr atomicexpr ;
+  comexpr    ::= "com" atomicexpr atomicexpr atomicexpr atomicexpr atomicexpr ;
+
+-----------------------------------------------------
+-- V Types
+-----------------------------------------------------
+piece VTypes
+  vexpr      ::= "V" atomicexpr atomicexpr atomicexpr atomicexpr ;
+
+-----------------------------------------------------
+-- Records: sig and struct
+-----------------------------------------------------
+piece Records
+  sigtype    ::= "sig" sigbody ;
+  sigbody    ::= sigfields "end" | "[" barefieldspecs? "]" ;
+  sigfields  ::= sigfield* ;
+  sigfield   ::= "def" barefielddspec | "include" expr renaming? ;
+  barefielddspec ::= path ":" expr ;
+  barefieldspecs ::= barefielddspec ("," barefielddspec)* ;
+  
+  structexpr ::= "struct" structbody ;
+  structbody ::= structfields "end" | "[" barefields? "]" ;
+  structfields ::= structfield* ;
+  structfield ::= "def" barefield | "include" expr renaming? ;
+  barefield  ::= path ":=" expr ;
+  barefields ::= barefield ("," barefield)* ;
+  
+  patches    ::= patch ("," patch)* ;
+  patch      ::= path ":=" expr | path "::=" expr ;
+
+-----------------------------------------------------
+-- Equations (Stepped Proofs)
+-----------------------------------------------------
+piece Equations
+  equationexpr ::= "equation" expr "begin" eqnsteps "end" ;
+  eqnsteps   ::= eqnstep* eqnfinal ;
+  -- eqnstep handles both =[ expr ] and =[] (empty/trivial)
+  eqnstep    ::= expr ("=[]" | "=[" expr? "]") ;
+  eqnfinal   ::= expr ;
+
+-----------------------------------------------------
+-- Constraints (for extensions, sub types)
+-----------------------------------------------------
+piece Constraints
+  constraints ::= "[" "|"? constraint ("|" constraint)* "]" ;
+  constraint  ::= cof "=>" expr ;
+

@@ -1,0 +1,95 @@
+-----------------------------------------------------
+-- prelude.rosetta: Rosetta Prelude/Foundationals
+--
+-- This file provides the foundational constructs in Rosetta syntax,
+-- imported by all generated Rosetta specs. It includes abstract primitives
+-- for universe, variables, substitution, binders, lists (for systems),
+-- and basic meta-ops. This ensures generated code has access to dependencies
+-- like Univ, Var, Subst, List, etc., without redefining them.
+-- Composed from Rosetta's core pieces (CorePrimitives, Binders, etc.).
+-- No specific cubical features—pure abstractions for implementation.
+-----------------------------------------------------
+lang PreludeRosetta :=
+
+-----------------------------------------------------
+-- UnivAndTypes
+-- Abstract universe and type judgments.
+-----------------------------------------------------
+module UnivAndTypes {
+  adt Type { Univ : Type } ;
+  judge univForm: Univ : Univ ;
+}
+
+-----------------------------------------------------
+-- VariablesAndSubst
+-- Abstract vars and substitution primitive.
+-----------------------------------------------------
+module VariablesAndSubst {
+  import UnivAndTypes ;
+  adt Ident { StringLit : String → Ident } ;  -- Abstract ident (impl: String).
+  adt Term { Var : Ident → Term ;
+             Subst : Ident → Term → Term → Term } ;  -- subst x t body
+  judge varType: (Var $x) : $T when bound $x : $T ;
+  test "substId": (Subst x (Var x) (Var x)) ~~> (Var x) ;
+}
+
+-----------------------------------------------------
+-- ApplicationsAndPairs
+-- Abstract app, pair, fst/snd.
+-----------------------------------------------------
+module ApplicationsAndPairs {
+  import VariablesAndSubst ;
+  adt Term { App : Term → Term → Term ;
+             Pair : Term → Term → Term ;
+             Fst : Term → Term ;
+             Snd : Term → Term } ;
+  rewrite fstPair: (Fst (Pair $a $b)) ~> $a ;
+  rewrite sndPair: (Snd (Pair $a $b)) ~> $b ;
+}
+
+-----------------------------------------------------
+-- BindersAbstract
+-- Abstract lam/dlam, app/dapp, beta/dbeta.
+-----------------------------------------------------
+module BindersAbstract {
+  import ApplicationsAndPairs ;
+  adt Term { Lam : Ident → Term → Term ;  -- Lam x . body
+             DLam : Ident → Term → Term ;
+             DApp : Term → Term → Term } ;
+  rewrite beta: (App (Lam $x . $body) $arg) ~> (Subst $x $arg $body) ;
+  rewrite dbeta: (DApp (DLam $i . $body) $r) ~> (Subst $i $r $body) ;
+  judge lamForm: (Lam $x . $body) : (Pi $x : $A $B)
+    when $A : Univ, ctx [$x : $A] $body : $B ;
+}
+
+-----------------------------------------------------
+-- ListsAndConstants
+-- Abstract lists (for systems, branches, constrs) and constants.
+-----------------------------------------------------
+module ListsAndConstants {
+  import BindersAbstract ;
+  adt Term { Const : Lit → Term ;  -- Const 0, Const "⊥"
+             List : List Term → Term ;  -- Abstract list
+             Cons : Term → Term → Term ;
+             Nil : Term } ;
+  adt Lit { IntLit : Int → Lit ; StrLit : String → Lit ; BoolLit : Bool → Lit } ;
+  -- Ops like map can be meta in impl.
+}
+
+-----------------------------------------------------
+-- MetaOps
+-- Abstract helpers like capitalize, concat (impl-defined).
+-----------------------------------------------------
+module MetaOps {
+  import ListsAndConstants ;
+  rewrite capitalize: (Capitalize $str) ~> $upper ;  -- Meta.
+  rewrite concat: (Concat $a $b) ~> $combined ;
+}
+
+-- Full prelude: All modules imported for use in generated specs.
+import UnivAndTypes ;
+import VariablesAndSubst ;
+import ApplicationsAndPairs ;
+import BindersAbstract ;
+import ListsAndConstants ;
+import MetaOps ;

@@ -1,0 +1,226 @@
+-----------------------------------------------------
+-- Quote.lego: Quotation - Reading Back Semantic Values to Syntax
+--
+-- Given a semantic value (in normal form), quotation produces a syntactic term.
+--
+-- Key Operations:
+-- 1. quote - Convert a value to syntax at a given type
+-- 2. quoteNeu - Convert a neutral term to syntax
+-- 3. quoteTy - Convert a type (value) to syntax
+--
+-- De Bruijn Levels vs Indices:
+-- During quotation, we track de Bruijn *levels* (counting from the bottom of
+-- the context) rather than indices (counting from the top).
+-- To convert level to index: index = envSize - level - 1
+--
+-- Algorithm (NbE style):
+-- Quotation is the right adjoint to evaluation in NbE:
+-- - eval : Syntax → Value
+-- - quote : Value → Syntax
+-- - quote (eval t) ≡ t (up to β-normalization)
+-----------------------------------------------------
+
+import Core ;
+import Domain ;
+
+lang Quote (Core, Domain) :=
+
+-----------------------------------------------------
+-- QuoteEnv
+-- Quotation environment: tracks current de Bruijn level
+-----------------------------------------------------
+piece QuoteEnv
+  qenv ::= "qenv" <number> <number> → qenv ;  -- (level, dimLevel)
+  
+  -- Empty environment
+  rule qenvEmpty: qenvEmpty ~> (qenv 0 0) ;
+  
+  -- Increment level
+  rule qenvSucc: (qenvSucc (qenv $l $dl)) ~> (qenv (suc $l) $dl) ;
+  
+  -- Increment dimension level
+  rule qenvSuccDim: (qenvSuccDim (qenv $l $dl)) ~> (qenv $l (suc $dl)) ;
+  
+  -- Convert de Bruijn level to index
+  rule levelToIndex: (levelToIndex (qenv $l $dl) $lvl) ~> (sub (sub $l $lvl) 1) ;
+  
+  -- Convert dimension level to index
+  rule dimLevelToIndex: (dimLevelToIndex (qenv $l $dl) $lvl) ~> (sub (sub $dl $lvl) 1) ;
+  
+  test "level-to-index": (levelToIndex (qenv 3 0) 0) ~~> 2 ;
+
+-----------------------------------------------------
+-- Generic
+-- Generic variables for quotation under binders
+-----------------------------------------------------
+piece Generic
+  -- Create a generic variable at the current level
+  rule generic: (generic (qenv $l $dl)) ~> (ix $l) ;
+  
+  -- Create a generic dimension variable
+  rule genericDim: (genericDim (qenv $l $dl)) ~> (dimVar $dl) ;
+
+-----------------------------------------------------
+-- Shift
+-- Shift helpers for manipulating de Bruijn indices
+-----------------------------------------------------
+piece Shift
+  -- Shift free variables (≥ cutoff) by n
+  rule shiftFromIx: (shiftFrom (ix $k) $n $cutoff) ~> (if (geq $k $cutoff) (ix (add $k $n)) (ix $k)) ;
+  rule shiftFromLam: (shiftFrom (lam $body) $n $cutoff) ~> (lam (shiftFrom $body $n (suc $cutoff))) ;
+  rule shiftFromApp: (shiftFrom (app $f $a) $n $cutoff) ~> (app (shiftFrom $f $n $cutoff) (shiftFrom $a $n $cutoff)) ;
+  rule shiftFromPi: (shiftFrom (pi $A $B) $n $cutoff) ~> (pi (shiftFrom $A $n $cutoff) (shiftFrom $B $n (suc $cutoff))) ;
+  rule shiftFromSigma: (shiftFrom (sigma $A $B) $n $cutoff) ~> (sigma (shiftFrom $A $n $cutoff) (shiftFrom $B $n (suc $cutoff))) ;
+  rule shiftFromPair: (shiftFrom (pair $a $b) $n $cutoff) ~> (pair (shiftFrom $a $n $cutoff) (shiftFrom $b $n $cutoff)) ;
+  rule shiftFromFst: (shiftFrom (fst $p) $n $cutoff) ~> (fst (shiftFrom $p $n $cutoff)) ;
+  rule shiftFromSnd: (shiftFrom (snd $p) $n $cutoff) ~> (snd (shiftFrom $p $n $cutoff)) ;
+  rule shiftFromPlam: (shiftFrom (plam $body) $n $cutoff) ~> (plam (shiftFrom $body $n $cutoff)) ;
+  rule shiftFromPapp: (shiftFrom (papp $p $r) $n $cutoff) ~> (papp (shiftFrom $p $n $cutoff) $r) ;
+  rule shiftFromLit: (shiftFrom (lit $s) $n $cutoff) ~> (lit $s) ;
+  rule shiftFromUniv: (shiftFrom (univ $l) $n $cutoff) ~> (univ $l) ;
+  rule shiftFromDim: (shiftFrom $d $n $cutoff) ~> $d when (isDim $d) ;
+
+-----------------------------------------------------
+-- QuoteCon
+-- Quote a semantic value back to syntax
+-----------------------------------------------------
+piece QuoteCon
+  -- Literal
+  rule quoteLit: (quoteCon $env (dlit $s)) ~> (lit $s) ;
+  
+  -- Lambda: extend environment and quote body
+  rule quoteLam: (quoteCon $env (dlam (dclo $body $cloEnv))) ~>
+    (lam (quoteCon (qenvSucc $env) 
+                   (deval (denvCons (dneu (dcut (dneuVar (qenvLevel $env)) dtpUnknown)) $cloEnv) $body))) ;
+  
+  -- Pair
+  rule quotePair: (quoteCon $env (dpair $a $b)) ~> (pair (quoteCon $env $a) (quoteCon $env $b)) ;
+  
+  -- Universe
+  rule quoteUniv: (quoteCon $env (duniv $l)) ~> (univ (quoteLevel $l)) ;
+  
+  -- Pi type
+  rule quotePi: (quoteCon $env (dpi $A (dclo $B $cloEnv))) ~>
+    (pi (quoteTp $env $A)
+        (quoteCon (qenvSucc $env)
+                  (deval (denvCons (dneu (dcut (dneuVar (qenvLevel $env)) $A)) $cloEnv) $B))) ;
+  
+  -- Sigma type
+  rule quoteSigma: (quoteCon $env (dsigma $A (dclo $B $cloEnv))) ~>
+    (sigma (quoteTp $env $A)
+           (quoteCon (qenvSucc $env)
+                     (deval (denvCons (dneu (dcut (dneuVar (qenvLevel $env)) $A)) $cloEnv) $B))) ;
+  
+  -- Path type
+  rule quotePath: (quoteCon $env (dpath $A $a $b)) ~>
+    (path (quoteTp $env $A) (quoteCon $env $a) (quoteCon $env $b)) ;
+  
+  -- Path lambda
+  rule quotePlam: (quoteCon $env (dplam (dclo $body $cloEnv))) ~>
+    (plam (quoteCon (qenvSuccDim $env)
+                    (deval (denvCons (dneu (dcut (dneuVar (qenvDimLevel $env)) dtpI)) $cloEnv) $body))) ;
+  
+  -- Reflexivity
+  rule quoteRefl: (quoteCon $env (drefl $a)) ~> (refl (quoteCon $env $a)) ;
+  
+  -- Nat
+  rule quoteNat: (quoteCon $env dnat) ~> nat ;
+  rule quoteZero: (quoteCon $env dzeroN) ~> zero ;
+  rule quoteSuc: (quoteCon $env (dsucN $n)) ~> (suc (quoteCon $env $n)) ;
+  
+  -- Circle
+  rule quoteCircle: (quoteCon $env dcircle) ~> circle ;
+  rule quoteBase: (quoteCon $env dbase) ~> base ;
+  rule quoteLoop: (quoteCon $env (dloop $d)) ~> (loop (quoteDim $d)) ;
+  
+  -- Neutral
+  rule quoteNeu: (quoteCon $env (dneu $cut)) ~> (quoteNeutral $env $cut) ;
+
+-----------------------------------------------------
+-- QuoteTp
+-- Quote a semantic type back to syntax
+-----------------------------------------------------
+piece QuoteTp
+  rule quoteTpUniv: (quoteTp $env (dtpUniv $l)) ~> (univ (quoteLevel $l)) ;
+  rule quoteTpPi: (quoteTp $env (dtpPi $A $clo)) ~>
+    (pi (quoteTp $env $A) (quoteTpClo (qenvSucc $env) $clo)) ;
+  rule quoteTpSigma: (quoteTp $env (dtpSigma $A $clo)) ~>
+    (sigma (quoteTp $env $A) (quoteTpClo (qenvSucc $env) $clo)) ;
+  rule quoteTpPath: (quoteTp $env (dtpPath $A $a $b)) ~>
+    (path (quoteTp $env $A) (quoteCon $env $a) (quoteCon $env $b)) ;
+  rule quoteTpNat: (quoteTp $env dtpNat) ~> nat ;
+  rule quoteTpCircle: (quoteTp $env dtpCircle) ~> circle ;
+  rule quoteTpNeu: (quoteTp $env (dtpNeu $cut)) ~> (quoteNeutral $env $cut) ;
+
+-----------------------------------------------------
+-- QuoteNeutral
+-- Quote a neutral term back to syntax
+-----------------------------------------------------
+piece QuoteNeutral
+  rule quoteNeuVar: (quoteNeutral $env (dcut (dneuVar $l) $tp)) ~>
+    (ix (levelToIndex $env $l)) ;
+  
+  rule quoteNeuApp: (quoteNeutral $env (dcut (dneuApp $neu $arg) $tp)) ~>
+    (app (quoteNeutral $env (dcut $neu dtpUnknown)) (quoteCon $env $arg)) ;
+  
+  rule quoteNeuFst: (quoteNeutral $env (dcut (dneuFst $neu) $tp)) ~>
+    (fst (quoteNeutral $env (dcut $neu dtpUnknown))) ;
+  
+  rule quoteNeuSnd: (quoteNeutral $env (dcut (dneuSnd $neu) $tp)) ~>
+    (snd (quoteNeutral $env (dcut $neu dtpUnknown))) ;
+  
+  rule quoteNeuPApp: (quoteNeutral $env (dcut (dneuPApp $neu $d) $tp)) ~>
+    (papp (quoteNeutral $env (dcut $neu dtpUnknown)) (quoteDim $d)) ;
+  
+  rule quoteNeuNatElim: (quoteNeutral $env (dcut (dneuNatElim $P $z $s $neu) $tp)) ~>
+    (natElim (quoteCon $env $P) (quoteCon $env $z) (quoteCon $env $s)
+             (quoteNeutral $env (dcut $neu dtpNat))) ;
+  
+  rule quoteNeuCircleElim: (quoteNeutral $env (dcut (dneuCircleElim $P $b $l $neu) $tp)) ~>
+    (circleElim (quoteCon $env $P) (quoteCon $env $b) (quoteCon $env $l)
+                (quoteNeutral $env (dcut $neu dtpCircle))) ;
+
+-----------------------------------------------------
+-- QuoteLevel
+-- Quote universe levels back to syntax
+-----------------------------------------------------
+piece QuoteLevel
+  rule quoteLevelConst: (quoteLevel (dconst $n)) ~> (ofNat $n) ;
+  rule quoteLevelVar: (quoteLevel (dlvar $n)) ~> (lvar $n) ;
+  rule quoteLevelMax: (quoteLevel (dmax $l1 $l2)) ~> (lmax (quoteLevel $l1) (quoteLevel $l2)) ;
+  rule quoteLevelSuc: (quoteLevel (dsuc $l)) ~> (lsuc (quoteLevel $l)) ;
+  
+  rule ofNat0: (ofNat 0) ~> lzero ;
+  rule ofNatS: (ofNat (suc $n)) ~> (lsuc (ofNat $n)) ;
+
+-----------------------------------------------------
+-- QuoteDim
+-- Quote dimensions back to syntax
+-----------------------------------------------------
+piece QuoteDim
+  rule quoteDim0: (quoteDim ddim0) ~> dim0 ;
+  rule quoteDim1: (quoteDim ddim1) ~> dim1 ;
+  rule quoteDimVar: (quoteDim (dvar $n)) ~> (dimVar $n) ;
+
+-----------------------------------------------------
+-- NbE
+-- Normalization by Evaluation: normalize = quote ∘ eval
+-----------------------------------------------------
+piece NbE
+  rule nbe: (nbe $t) ~> (quoteCon qenvEmpty (deval denvNil $t)) ;
+  
+  -- With specified environment
+  rule nbeEnv: (nbeWithEnv $env $t) ~> (quoteCon qenvEmpty (deval $env $t)) ;
+  
+  test "nbe-lit": (nbe (lit "x")) ~~> (lit "x") ;
+  test "nbe-beta": (nbe (app (lam (ix 0)) (lit "y"))) ~~> (lit "y") ;
+  test "nbe-pair-fst": (nbe (fst (pair (lit "a") (lit "b")))) ~~> (lit "a") ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

@@ -1,0 +1,62 @@
+-- Arith.lego: Natural numbers with arithmetic
+
+lang Arith :=
+
+piece Term
+  term ::= zero | succ | add | mul | pred ;
+  zero ::= "(" "Z" ")" ;
+  succ ::= "(" "S" term ")" ;
+  add  ::= "(" "add" term term ")" ;
+  mul  ::= "(" "mul" term term ")" ;
+  pred ::= "(" "pred" term ")" ;
+
+piece Rec
+  rec ::= fib | fact ;
+  fib  ::= "(" "fib" term ")" ;
+  fact ::= "(" "fact" term ")" ;
+
+rule add_zero:
+  (add (Z) $n) ~> $n ;
+
+rule add_succ:
+  (add (S $m) $n) ~> (S (add $m $n)) ;
+
+rule mul_zero:
+  (mul (Z) $n) ~> (Z) ;
+
+rule mul_succ:
+  (mul (S $m) $n) ~> (add $n (mul $m $n)) ;
+
+rule pred_zero:
+  (pred (Z)) ~> (Z) ;
+
+rule pred_succ:
+  (pred (S $n)) ~> $n ;
+
+rule fib_zero:
+  (fib (Z)) ~> (Z) ;
+
+rule fib_one:
+  (fib (S (Z))) ~> (S (Z)) ;
+
+rule fib_succ:
+  (fib (S (S $n))) ~> (add (fib (S $n)) (fib $n)) ;
+
+rule fact_zero:
+  (fact (Z)) ~> (S (Z)) ;
+
+rule fact_succ:
+  (fact (S $n)) ~> (mul (S $n) (fact $n)) ;
+
+test "add_0_0": (add (Z) (Z)) ~~> (Z) ;
+test "add_1_2": (add (S (Z)) (S (S (Z)))) ~~> (S (S (S (Z)))) ;
+test "mul_2_3": (mul (S (S (Z))) (S (S (S (Z))))) ~~> (S (S (S (S (S (S (Z))))))) ;
+test "pred_3": (pred (S (S (S (Z))))) ~~> (S (S (Z))) ;
+test "fib_0": (fib (Z)) ~~> (Z) ;
+test "fib_1": (fib (S (Z))) ~~> (S (Z)) ;
+test "fib_2": (fib (S (S (Z)))) ~~> (S (Z)) ;
+test "fib_3": (fib (S (S (S (Z))))) ~~> (S (S (Z))) ;
+test "fact_0": (fact (Z)) ~~> (S (Z)) ;
+test "fact_1": (fact (S (Z))) ~~> (S (Z)) ;
+test "fact_2": (fact (S (S (Z)))) ~~> (S (S (Z))) ;
+test "fact_3": (fact (S (S (S (Z))))) ~~> (S (S (S (S (S (S (Z))))))) ;

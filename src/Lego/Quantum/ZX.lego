@@ -1,0 +1,129 @@
+-- ZX-calculus as a HIT-based language
+-- Based on: "ZX-calculus for the working quantum computer scientist"
+---------------------------------------------------------
+
+import Quantum ;
+
+-----------------------------------------------------
+-- Phases
+--
+-- Original Agda-style:
+--   data Phase : Set where
+--     zero  : Phase
+--     pi    : Phase
+-----------------------------------------------------
+
+type Phase-Set : Phase : Set ;
+
+type zero-intro : zero : Phase ;
+type pi-intro : pi : Phase ;
+
+-- Phase addition (for fusion rules)
+type phase-add : (+ $α $β) : Phase
+  when $α : Phase, $β : Phase ;
+
+rule phase-add-zero-l : (+ zero $α) ~> $α ;
+rule phase-add-zero-r : (+ $α zero) ~> $α ;
+rule phase-add-pi-pi : (+ pi pi) ~> zero ;  -- 2π = 0
+
+-----------------------------------------------------
+-- ZX spiders
+--
+-- Original Agda-style:
+--   data ZX : Nat → Nat → Set where
+--     Z : Phase → ZX m n
+--     X : Phase → ZX m n
+-----------------------------------------------------
+
+type ZX-Set : (ZX $m $n) : Set
+  when $m : Nat, $n : Nat ;
+
+type Z-intro : (Z $α) : (ZX $m $n)
+  when $α : Phase, $m : Nat, $n : Nat ;
+type X-intro : (X $α) : (ZX $m $n)
+  when $α : Phase, $m : Nat, $n : Nat ;
+
+-----------------------------------------------------
+-- Diagram terms
+--
+-- Original Agda-style:
+--   data ZXTm : QCtx → QCtx → Set where
+--     wire   : ZXTm (Γ , A) (Δ , A)
+--     spider : ZX m n → ZXTm Γ Δ
+--     tensor : ZXTm Γ Δ → ZXTm Γ' Δ' → ZXTm (Γ , Γ') (Δ , Δ')
+-----------------------------------------------------
+
+type ZXTm-Set : (ZXTm $Γ $Δ) : Set
+  when $Γ : QCtx, $Δ : QCtx ;
+
+type wire-intro : wire : (ZXTm (ext $Γ $A) (ext $Δ $A))
+  when $Γ : QCtx, $Δ : QCtx, $A : QTy ;
+type spider-intro : (spider $s) : (ZXTm $Γ $Δ)
+  when $s : (ZX $m $n), $Γ : QCtx, $Δ : QCtx ;
+type tensor-intro : (⊗ $d1 $d2) : (ZXTm (ext $Γ $Γ') (ext $Δ $Δ'))
+  when $d1 : (ZXTm $Γ $Δ), $d2 : (ZXTm $Γ' $Δ') ;
+
+-----------------------------------------------------
+-- Spider fusion as paths (HIT structure)
+--
+-- Original Agda-style:
+--   fusionZ : Path (ZXTm Γ Δ)
+--             (spider (Z α) ⊗ spider (Z β))
+--             (spider (Z (α + β)))
+--   fusionZ = refl
+-----------------------------------------------------
+
+-- Z-spider fusion: two Z spiders of phases α and β fuse to Z(α+β)
+type fusionZ-intro : fusionZ : (Path (ZXTm $Γ $Δ) (⊗ (spider (Z $α)) (spider (Z $β))) (spider (Z (+ $α $β))))
+  when $α : Phase, $β : Phase, $Γ : QCtx, $Δ : QCtx ;
+
+-- X-spider fusion: same for X spiders
+type fusionX-intro : fusionX : (Path (ZXTm $Γ $Δ) (⊗ (spider (X $α)) (spider (X $β))) (spider (X (+ $α $β))))
+  when $α : Phase, $β : Phase, $Γ : QCtx, $Δ : QCtx ;
+
+-- Color change (Hadamard conjugation)
+type color-change : (color-change $α) : (Path (ZXTm $Γ $Δ) (∘ H (∘ (spider (Z $α)) H)) (spider (X $α)))
+  when $α : Phase, $Γ : QCtx, $Δ : QCtx ;
+
+-----------------------------------------------------
+-- Interpretation into Quantum core
+--
+-- Original Agda-style:
+--   interp : ZXTm Γ Δ → QTm Γ Δ
+--   interp = {!!}
+-----------------------------------------------------
+
+type interp-sig : (interp $d) : (QTm $Γ $Δ)
+  when $d : (ZXTm $Γ $Δ) ;
+
+-- Interpretation preserves composition
+type interp-compose : (interp-compose $d1 $d2) : (Path (QTm $Γ $Δ') (interp (∘ $d1 $d2)) (∘ (interp $d1) (interp $d2)))
+  when $d1 : (ZXTm $Γ $Δ), $d2 : (ZXTm $Δ $Δ') ;
+
+-- Interpretation preserves tensor
+type interp-tensor : (interp-tensor $d1 $d2) : (Path (QTm (ext $Γ $Γ') (ext $Δ $Δ')) (interp (⊗ $d1 $d2)) (pair (interp $d1) (interp $d2)))
+  when $d1 : (ZXTm $Γ $Δ), $d2 : (ZXTm $Γ' $Δ') ;
+
+-----------------------------------------------------
+-- Completeness theorem (ZX)
+--
+-- Original Agda-style:
+--   zx-complete : ∀ d₁ d₂ → interp d₁ ≡ interp d₂ → Path _ d₁ d₂
+--   zx-complete d₁ d₂ p = {!!}
+-----------------------------------------------------
+
+-- ZX-calculus is complete: equal interpretations imply path-equal diagrams
+type zx-complete-sig : (zx-complete $d1 $d2 $p) : (Path (ZXTm $Γ $Δ) $d1 $d2)
+  when $d1 : (ZXTm $Γ $Δ), $d2 : (ZXTm $Γ $Δ), $p : (Path (QTm $Γ $Δ) (interp $d1) (interp $d2)) ;
+
+-----------------------------------------------------
+-- Additional ZX laws (bialgebra structure)
+-----------------------------------------------------
+
+-- Copy rule: Z(0) copies classical data
+type copy-rule : copy-rule : (Path (ZXTm $Γ (ext $Δ $Δ)) (spider (Z zero)) (⊗ wire wire))
+  when $Γ : QCtx, $Δ : QCtx ;
+
+-- Hopf law (fundamental bialgebra relation)
+type hopf-law : hopf-law : (Path (ZXTm $Γ $Δ) (∘ (spider (Z zero)) (spider (X zero))) wire)
+  when $Γ : QCtx, $Δ : QCtx ;

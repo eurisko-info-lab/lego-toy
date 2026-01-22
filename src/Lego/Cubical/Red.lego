@@ -1,0 +1,226 @@
+-----------------------------------------------------
+-- Red: redtt-specific Extensions
+-- 
+-- Extensions to CubicalTT specific to redtt.
+-- Reference: https://github.com/RedPRL/redtt
+--
+-- Key additions:
+-- - Extension types (Ext)
+-- - Generalized hcom/com (ghcom, gcom)
+-- - User-defined data types with HIT constructors
+-- - Twin variables for boundary coherence
+-- - Restriction types
+--
+-- BINDING STRUCTURE:
+-- - `<ident> "." body` : dimension variable binding
+-- - `"(" <ident> ":" type ")"` : typed parameter binding
+-- - System bindings inherit from CubicalTT
+-----------------------------------------------------
+
+import CubicalTT ;
+
+lang Red (CubicalTT) :=
+
+-----------------------------------------------------
+-- ExtType
+-- Extension types: Ext_x.A [φ ↦ u]
+-- BINDER: `<ident> "."` binds dimension variable in A
+-- Extension types internalize the partial constraint
+-----------------------------------------------------
+
+piece ExtType
+  -- `Ext $x . $A $sys`: type family over dimension
+  -- The system constrains $A on the boundary
+  term ::= "Ext" <ident> "." term system  → Ext        -- BINDER: $x scope $A
+         | "extLam" <ident> "." term      → extLam     -- BINDER: $x scope $body  
+         | "extApp" term dim              → extApp ;
+
+  -- Beta reduction with explicit substitution notation
+  rule extBeta: (extApp (extLam $x . $body) $r) ~~> [$x := $r] $body ;
+  
+  -- extApp preserves endpoints
+  rule extApp0: (extApp (extLam $x . $body) 0) ~~> [$x := 0] $body ;
+  rule extApp1: (extApp (extLam $x . $body) 1) ~~> [$x := 1] $body ;
+
+  type ExtForm: (Ext $x . $A $sys) : U
+    when [$x : I] $A : U, $sys : (Partial $φ $A) ;
+  type extLamType: (extLam $x . $body) : (Ext $x . $A $sys)
+    when [$x : I] $body : $A, $sys agrees $body ;
+  type extAppType: (extApp $e $r) : [$x := $r] $A
+    when $e : (Ext $x . $A $sys) ;
+
+  test "ext-beta": (extApp (extLam i . (f i)) 0) ~~> (f 0) ;
+
+-----------------------------------------------------
+-- GCom
+-- Generalized composition (ghcom, gcom)
+-- BINDER: `<ident> "."` binds dimension in type family
+-- ghcom is type-constant, gcom varies the type
+-----------------------------------------------------
+
+piece GCom
+  term ::= "ghcom" dim "~>" dim term system term         → ghcom
+         | "gcom" dim "~>" dim "(" <ident> "." term ")" system term  → gcom ;  -- BINDER
+
+  -- Reflexivity: when r = s, we get the base point
+  rule ghcomRefl: (ghcom $r ~> $r $A $sys $a) ~~> $a ;
+  rule gcomRefl: (gcom $r ~> $r ($i . $A) $sys $a) ~~> $a ;
+  
+  -- Boundary: when φ holds, we get the tube value
+  rule ghcomBdy: (ghcom $r ~> $s $A [$φ ↦ $i . $u] $a) ~~> [$i := $s] $u when $φ ;
+  rule gcomBdy: (gcom $r ~> $s ($i . $A) [$φ ↦ $j . $u] $a) ~~> [$j := $s] $u when $φ ;
+
+  type ghcomType: (ghcom $r ~> $s $A $sys $a) : $A
+    when $A : U, $sys : (PartialP $φ ($i : $r =I= $s . $A)), $a : $A, [$φ] $a = ($sys @@ $r) ;
+  type gcomType: (gcom $r ~> $s ($i . $A) $sys $a) : [$i := $s] $A
+    when [$i : I] $A : U, $sys : (PartialP $φ ($j : $r =I= $s . [$i := $j] $A)), $a : [$i := $r] $A ;
+
+-----------------------------------------------------
+-- Data
+-- User-defined data types (HITs)
+-- DATA TYPE DEFINITION SYNTAX:
+-- - `data Name (params) where | Con : Type [boundary]`
+-- - Boundary constraints make it a HIT
+-----------------------------------------------------
+
+piece Data
+  decl ::= "data" <ident> params "where" constrs  → data ;
+  params ::= "(" <ident> ":" term ")"*             → params ;  -- BINDERS: each param in scope
+  constrs ::= constr*                              → constrs ;
+  constr ::= "|" <ident> ":" term bounds?          → constr ;
+  bounds ::= "[" bound* "]"                        → bounds ;
+  bound ::= cof "↦" term                           → bound ;    -- boundary constraint
+
+  -- Introduction: (intro c as) constructs a term of data type
+  -- Elimination: (elim e (C ms)) pattern matches
+  rule introElim: (elim $e ($C $ms) (intro $c $as)) ~~> (($ms $c) $as) ;
+  
+  -- Boundary of path constructor: when φ holds, get endpoint
+  rule introBdy: (intro $c $as) ~~> $bdy when $c boundary $φ, $φ holds ;
+
+  type introType: (intro $c $as) : (D $ps)
+    when (data D $ps where ($c : $T)) declared, $as : $T ;
+  type elimType: (elim $e ($C $ms) $t) : ($C $t)
+    when $t : (D $ps), $C : ((D $ps) → U), $ms : (methods for $C) ;
+
+-----------------------------------------------------
+-- Twin
+-- Twin variables for boundary coherence
+-- BINDER: twin binds two variables coherently
+-- twin x y i a : use x when i=0, use y when i=1
+-----------------------------------------------------
+
+piece Twin
+  term ::= "twin" <ident> <ident> dim term  → twin ;  -- BINDERS: $x $y scope $a
+
+  -- Twin degeneration
+  rule twin0: (twin $x $y 0 $a) ~~> [$y := $x] $a ;
+  rule twin1: (twin $x $y 1 $a) ~~> $a ;
+  
+  -- Twin is symmetric in a sense
+  rule twinSym: (twin $x $y $i (twin $y $x (1 - $i) $a)) ~~> $a ;
+
+  type twinType: (twin $x $y $i $a) : $A
+    when [$x : $T, $y : $T, $i : I] $a : $A ;
+
+-----------------------------------------------------
+-- Restrict
+-- Restriction types: A ↾ φ
+-- Restricts inhabitants of A to those satisfying φ
+-----------------------------------------------------
+
+piece Restrict
+  term ::= term "↾" cof                → restrict ;
+
+  type restrictForm: ($A ↾ $φ) : U
+    when $A : U, $φ : Cof ;
+  type restrictIntro: $a : ($A ↾ $φ)
+    when $a : $A, [$φ] ;
+
+-----------------------------------------------------
+-- FHcom
+-- Fibrant homogeneous composition
+-- Like hcom but in fibrant (Kan) types only
+-----------------------------------------------------
+
+piece FHcom
+  term ::= "fhcom" dim "~>" dim term system term  → fhcom ;
+
+  rule fhcomRefl: (fhcom $r ~> $r $A $sys $a) ~~> $a ;
+  rule fhcomBdy: (fhcom $r ~> $s $A [$φ ↦ $i . $u] $a) ~~> [$i := $s] $u when $φ ;
+
+  type fhcomType: (fhcom $r ~> $s $A $sys $a) : $A
+    when $A : (U fibrant), $sys : (PartialP $φ ($i : $r =I= $s . $A)), $a : $A ;
+
+-----------------------------------------------------
+-- BoxCap
+-- Box-cap structure for fhcom
+-- Box wraps values, Cap unwraps them
+-----------------------------------------------------
+
+piece BoxCap
+  term ::= "box" dim "~>" dim system term  → box
+         | "cap" dim "~>" dim system term  → cap ;
+
+  rule capBox: (cap $r ~> $s $sys (box $r ~> $s $sys' $a)) ~~> $a
+    when $r = $s ;
+  
+  -- Box is boundary: when φ holds, box degenerates
+  rule boxBdy: (box $r ~> $s [$φ ↦ $u] $a) ~~> $u when $φ, $r = $s ;
+
+  type boxType: (box $r ~> $s $sys $a) : (Box $r ~> $s $A $sys)
+    when $a : $A ;
+  type capType: (cap $r ~> $s $sys $b) : $A
+    when $b : (Box $r ~> $s $A $sys) ;
+
+-----------------------------------------------------
+-- Coeq
+-- Coequalizers (quotient types)
+-----------------------------------------------------
+
+piece Coeq
+  term ::= "Coeq" term term term       → Coeq
+         | "coeqIn" term               → coeqIn
+         | "coeqGlue" term dim         → coeqGlue
+         | "coeqElim" term term term term  → coeqElim ;
+
+  -- Glue is a path constructor: coeqGlue a i : Id (coeqIn (f a)) (coeqIn (g a))
+  rule coeqGlue0: (coeqGlue $a 0) ~~> (coeqIn ($f $a)) ;
+  rule coeqGlue1: (coeqGlue $a 1) ~~> (coeqIn ($g $a)) ;
+  rule coeqElimIn: (coeqElim $P $h $p (coeqIn $b)) ~~> ($h $b) ;
+
+  type CoeqForm: (Coeq $A $B $f $g) : U
+    when $A : U, $B : U, $f : ($A → $B), $g : ($A → $B) ;
+  type coeqInType: (coeqIn $b) : (Coeq $A $B $f $g)
+    when $b : $B ;
+
+-----------------------------------------------------
+-- Pushout
+-- Pushouts (generalized coproducts)
+-----------------------------------------------------
+
+piece Pushout
+  term ::= "Pushout" term term term term term  → Pushout
+         | "inl" term                          → inl
+         | "inr" term                          → inr
+         | "push" term dim                     → push
+         | "pushElim" term term term term term → pushElim ;
+
+  -- push a i : Path (inl (f a)) (inr (g a))
+  rule push0: (push $a 0) ~~> (inl ($f $a)) ;
+  rule push1: (push $a 1) ~~> (inr ($g $a)) ;
+  rule pushElimInl: (pushElim $P $l $r $p (inl $a)) ~~> ($l $a) ;
+  rule pushElimInr: (pushElim $P $l $r $p (inr $b)) ~~> ($r $b) ;
+
+  type PushoutForm: (Pushout $C $A $B $f $g) : U
+    when $C : U, $A : U, $B : U, $f : ($C → $A), $g : ($C → $B) ;
+
+-----------------------------------------------------
+-- Derived Operations for Red
+-----------------------------------------------------
+
+derive subst for term with binders = [lam, dlam, extLam, Pi, Sigma, PathP, Ext, twin] ;
+derive normalize for term with fuel = 1000 ;
+derive cata for term ;
+
+derive eq for term ;

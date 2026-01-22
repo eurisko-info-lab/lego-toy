@@ -1,0 +1,229 @@
+-----------------------------------------------------
+-- Cubical.lego
+-- Cubical extension to Rosetta: dimensions, cofibrations, Kan ops
+-- Import: Rosetta.lego (for generic primitives)
+-----------------------------------------------------
+
+vocab CubicalKeywords
+  dim0 dim1 dimVar dimAnd dimOr dimNeg
+  cofTop cofBot cofEq cofAnd cofOr
+  path plam papp
+  coe hcom com fhcom box cap
+  sub subIn subOut
+  vtype vin vproj
+  ext extLam extApp
+  glue glueEl unglue
+  S1 base loop nat zero suc
+  elim
+
+-----------------------------------------------------
+-- Dimensions
+-- The interval 𝕀 with 0, 1, de Morgan algebra
+-----------------------------------------------------
+piece Dimensions
+  grammar dim ::= 
+    | "dim0"
+    | "dim1"  
+    | "(" "dimVar" name ")"
+    | "(" "dim_and" dim dim ")"
+    | "(" "dim_or" dim dim ")"
+    | "(" "dim_neg" dim ")" ;
+
+-----------------------------------------------------
+-- Cofibrations
+-- Face lattice φ ∈ 𝔽 over 𝕀
+-----------------------------------------------------
+piece Cofibrations
+  grammar cof ::=
+    | "cof_top"
+    | "cof_bot"
+    | "(" "cof_eq" dim dim ")"
+    | "(" "cof_and" cof cof ")"
+    | "(" "cof_disj" cof cof ")" ;
+
+-----------------------------------------------------
+-- PathTypes
+-- Identity types as functions from 𝕀
+-----------------------------------------------------
+piece PathTypes
+  grammar pathExpr ::=
+    | "(" "path" term term term ")"     -- Path A a b
+    | "(" "plam" term ")"               -- path abstraction
+    | "(" "papp" term dim ")" ;         -- path application
+
+-----------------------------------------------------
+-- KanOperations
+-- Coercion and composition for fibrant types
+-----------------------------------------------------
+piece KanOperations
+  grammar kanExpr ::=
+    | "(" "coe" dim dim term term ")"   -- coe r r' A a
+    | "(" "hcom" term dim dim cof system term ")"  -- hcom A r r' φ sys cap
+    | "(" "com" term dim dim cof system term ")" ; -- com A r r' φ sys cap
+
+-----------------------------------------------------
+-- FibrantHCom  
+-- FHCom with box/cap adjunction
+-----------------------------------------------------
+piece FibrantHCom
+  grammar fhcomExpr ::=
+    | "(" "fhcom" dim dim term system ")"  -- fhcom r r' cap sys
+    | "(" "box" dim dim term system ")"    -- box r r' cap sys
+    | "(" "cap" dim dim term system term ")"; -- cap r r' ty sys el
+
+-----------------------------------------------------
+-- SubTypes
+-- Restriction types { a : A | φ ↦ t }
+-----------------------------------------------------
+piece SubTypes
+  grammar subExpr ::=
+    | "(" "sub" term cof term ")"    -- Sub A φ t
+    | "(" "subIn" term ")"           -- sub intro
+    | "(" "subOut" term ")" ;        -- sub elim
+
+-----------------------------------------------------
+-- VTypes
+-- Univalence via V-types
+-----------------------------------------------------
+piece VTypes
+  grammar vtypeExpr ::=
+    | "(" "vtype" dim term term term ")"  -- V r A B equiv
+    | "(" "vin" dim term term ")"         -- Vin r a b
+    | "(" "vproj" dim term term term term ")"; -- Vproj r A B e v
+
+-----------------------------------------------------
+-- ExtTypes
+-- Extension types [Φ] A [ φ ↦ sys ]
+-----------------------------------------------------
+piece ExtTypes
+  grammar extExpr ::=
+    | "(" "ext" nat term cof system ")"  -- Ext n A φ sys
+    | "(" "extLam" term ")"              -- extension intro
+    | "(" "extApp" term dims ")" ;       -- extension elim
+
+-----------------------------------------------------
+-- GlueTypes
+-- Glue types for univalence
+-----------------------------------------------------
+piece GlueTypes
+  grammar glueExpr ::=
+    | "(" "glue" term cof term term ")"  -- Glue A φ T equiv
+    | "(" "glueEl" term term ")"         -- glue element
+    | "(" "unglue" term ")" ;            -- unglue
+
+-----------------------------------------------------
+-- Systems
+-- Tube systems [ φ₁ ↦ t₁, φ₂ ↦ t₂, ... ]
+-----------------------------------------------------
+piece Systems
+  grammar system ::=
+    | "(" ")"                            -- empty system
+    | "(" entry system ")" ;             -- cons
+  
+  grammar entry ::= "[" cof "↦" term "]" ;
+  
+  grammar dims ::=
+    | "(" ")"                            -- empty dims
+    | "(" dim dims ")" ;                 -- cons
+
+-----------------------------------------------------
+-- HITs
+-- Higher inductive types: Circle, Nat
+-----------------------------------------------------
+piece HITs
+  grammar hitExpr ::=
+    -- Circle
+    | "S1"
+    | "base"
+    | "(" "loop" dim ")"
+    -- Nat
+    | "nat"
+    | "zero"
+    | "(" "suc" term ")"
+    -- Eliminator
+    | "(" "elim" hitKind term cases term ")" ;
+  
+  grammar hitKind ::= "circleHIT" | "natHIT" ;
+  
+  grammar cases ::=
+    | "(" ")"
+    | "(" caseEntry cases ")" ;
+  
+  grammar caseEntry ::= "[" name "↦" term "]" ;
+
+-----------------------------------------------------
+-- InfoStructures
+-- Metadata structures for Kan operations
+-----------------------------------------------------
+piece InfoStructures
+  grammar info ::=
+    | "(" "vtypeInfo" "dim:" dim "ty0:" term "ty1:" term "equiv:" term ")"
+    | "(" "subInfo" "base:" term "cof:" cof "bdry:" term ")"
+    | "(" "fhcomInfo" "r:" dim "r':" dim "cap:" term "sys:" system ")"
+    | "(" "boxInfo" "r:" dim "r':" dim "cap:" term "sys:" system ")"
+    | "(" "capInfo" "r:" dim "r':" dim "ty:" term "sys:" system ")" ;
+
+-----------------------------------------------------
+-- MonadConstructs
+-- Monadic results for elaboration
+-----------------------------------------------------
+piece MonadConstructs
+  grammar result ::=
+    | "(" "refineOk" term term ")"      -- ok value state
+    | "(" "refineErr" term term ")"     -- error msg loc
+    | "(" "tacOk" term ")"              -- tactic success
+    | "(" "tacError" term ")"           -- tactic failure
+    | "(" "some" term ")"               -- option some
+    | "none" ;                          -- option none
+
+-----------------------------------------------------
+-- CubicalTerm
+-- Complete grammar combining all cubical constructs
+-----------------------------------------------------
+piece CubicalTerm
+  grammar term ::=
+    -- Core (from Rosetta)
+    | "(" "univ" nat ")"
+    | "(" "pi" term term ")"
+    | "(" "sigma" term term ")"
+    | "(" "lam" term ")"
+    | "(" "app" term term ")"
+    | "(" "pair" term term ")"
+    | "(" "fst" term ")"
+    | "(" "snd" term ")"
+    | "(" "ix" nat ")"
+    | "(" "let" name term term term ")"
+    -- Dimensions
+    | dim
+    -- Cofibrations
+    | cof
+    -- Path types
+    | pathExpr
+    -- Kan operations
+    | kanExpr
+    -- Fibrant hcom
+    | fhcomExpr
+    -- Sub types
+    | subExpr
+    -- V-types
+    | vtypeExpr
+    -- Extension types
+    | extExpr
+    -- Glue types
+    | glueExpr
+    -- HITs
+    | hitExpr
+    -- Info structures
+    | info
+    -- Monadic
+    | result ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+test "parseDim": dim0 : dim ;
+test "parseCof": cof_eq dim0 dim1 : cof ;
+test "parsePath": (path (univ 0) nat nat) : pathExpr ;
+test "parseCoe": (coe dim0 dim1 (lam nat) zero) : kanExpr ;
+test "parseVType": (vtype dim0 nat nat (pair (lam (ix 0)) (lam (ix 0)))) : vtypeExpr ;
+test "parseHIT": (loop (dimVar i)) : hitExpr ;

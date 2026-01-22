@@ -1,0 +1,282 @@
+-----------------------------------------------------
+-- Datatype.lego: User-defined Inductive Types
+--
+-- Mathematical Structure:
+-- - Datatypes are initial algebras in the category of algebras
+-- - Constructors are the algebra structure maps
+-- - Eliminators give the universal property (recursion/induction)
+--
+-- Key pieces:
+-- 1. DataType - Type former parameterized by type arguments
+-- 2. Intro - Constructor application (builds data values)
+-- 3. Elim - Pattern matching/elimination (consumes data values)
+-----------------------------------------------------
+
+import Core ;
+import GlobalEnv ;
+
+lang Datatype (Core, GlobalEnv) :=
+
+-----------------------------------------------------
+-- DataType
+-- Type formation for user-defined datatypes
+--
+-- `mkData dlbl params` represents datatype applied to parameters:
+-- - mkData "List" [A] = List A
+-- - mkData "Vec" [A, n] = Vec A n
+-- - mkData "Nat" [] = Nat
+-----------------------------------------------------
+piece DataType
+  rule mkData: (mkData $dlbl ()) ~> (lit (concat "data." $dlbl)) ;
+  rule mkDataParams: (mkData $dlbl ($p $rest)) ~>
+    (app (mkData $dlbl $rest) $p) ;
+  
+  -- Check if expression is a datatype type
+  rule isData: (isData $e) ~> (getDataHead $e ()) ;
+  
+  rule getDataHeadLit: (getDataHead (lit $s) $acc) ~>
+    (case (startsWith $s "data.")
+      true => (some ((drop 5 $s) , $acc))
+      false => none) ;
+  rule getDataHeadApp: (getDataHead (app $f $a) $acc) ~>
+    (getDataHead $f ($a $acc)) ;
+  rule getDataHeadOther: (getDataHead $e $acc) ~> none ;
+
+-----------------------------------------------------
+-- Intro
+-- Constructor introduction
+--
+-- `mkIntro dlbl clbl params args` represents constructor application:
+-- - mkIntro "List" "nil" [A] [] = nil {A}
+-- - mkIntro "List" "cons" [A] [x, xs] = cons {A} x xs
+-- - mkIntro "Nat" "zero" [] [] = zero
+-- - mkIntro "Nat" "suc" [] [n] = suc n
+-----------------------------------------------------
+piece Intro
+  rule mkIntro: (mkIntro $dlbl $clbl $params $args) ~>
+    (mkIntro' $dlbl $clbl (length $params) $params $args) ;
+  
+  rule mkIntro': (mkIntro' $dlbl $clbl $paramCount () ()) ~>
+    (lit (concat "intro." $dlbl "." $clbl "." $paramCount)) ;
+  rule mkIntro'Params: (mkIntro' $dlbl $clbl $paramCount ($p $rest) $args) ~>
+    (app (mkIntro' $dlbl $clbl $paramCount $rest $args) $p) ;
+  rule mkIntro'Args: (mkIntro' $dlbl $clbl $paramCount () ($a $rest)) ~>
+    (app (mkIntro' $dlbl $clbl $paramCount () $rest) $a) ;
+  
+  -- Check if expression is a constructor
+  rule isIntro: (isIntro $e) ~>
+    (let headArgs = (collectArgs $e ()) in
+     parseIntro (fst headArgs) (snd headArgs)) ;
+  
+  rule collectArgsApp: (collectArgs (app $f $a) $acc) ~> (collectArgs $f ($a $acc)) ;
+  rule collectArgsOther: (collectArgs $e $acc) ~> ($e , $acc) ;
+  
+  rule parseIntro: (parseIntro (lit $s) $allArgs) ~>
+    (case (startsWith $s "intro.")
+      true => (parseIntroRest (drop 6 $s) $allArgs)
+      false => none) ;
+  rule parseIntroOther: (parseIntro $e $args) ~> none ;
+  
+  rule parseIntroRest: (parseIntroRest $rest $allArgs) ~>
+    (case (splitOn $rest ".")
+      ($dlbl $clbl $countStr) =>
+        (let paramCount = (toNat $countStr) in
+         let params = (take paramCount $allArgs) in
+         let args = (drop paramCount $allArgs) in
+         (some ($dlbl , $clbl , params , args)))
+      ($dlbl $clbl) => (some ($dlbl , $clbl , () , $allArgs))
+      _ => none) ;
+
+-----------------------------------------------------
+-- ElimClause
+-- A clause in an eliminator
+-----------------------------------------------------
+piece ElimClause
+  elimClause ::= "clause" "clbl:" <string> "body:" <expr> → elimClause ;
+  
+  rule elimClauseClbl: (elimClauseClbl (clause clbl: $c body: $b)) ~> $c ;
+  rule elimClauseBody: (elimClauseBody (clause clbl: $c body: $b)) ~> $b ;
+
+-----------------------------------------------------
+-- Elim
+-- Eliminator application
+--
+-- `mkElim dlbl params mot clauses scrut` eliminates a datatype value.
+-- The motive `mot` is a type family indexed by the datatype.
+-- Each clause handles one constructor.
+-----------------------------------------------------
+piece Elim
+  rule mkElim: (mkElim $dlbl $params $mot $clauses $scrut) ~>
+    (let base = (lit (concat "elim." $dlbl)) in
+     let withParams = (foldl app base $params) in
+     let withMot = (app withParams $mot) in
+     let clauseExpr = (encodeClauseList $clauses) in
+     let withClauses = (app withMot clauseExpr) in
+     (app withClauses $scrut)) ;
+  
+  rule encodeClauseListNil: (encodeClauseList ()) ~> (lit "clauses.nil") ;
+  rule encodeClauseListCons: (encodeClauseList ((clause clbl: $c body: $b) $rest)) ~>
+    (let tag = (lit (concat "clause." $c)) in
+     let thisClause = (app tag $b) in
+     (app (app (lit "clauses.cons") thisClause) (encodeClauseList $rest))) ;
+  
+  -- Check if expression is an eliminator
+  rule isElim: (isElim $e) ~>
+    (let headArgs = (collectArgs $e ()) in
+     parseElim (fst headArgs) (snd headArgs)) ;
+  
+  rule parseElim: (parseElim (lit $s) $args) ~>
+    (case (startsWith $s "elim.")
+      true => (some (drop 5 $s))
+      false => none) ;
+  rule parseElimOther: (parseElim $e $args) ~> none ;
+
+-----------------------------------------------------
+-- EvalIntro
+-- Evaluate constructor applications
+-----------------------------------------------------
+piece EvalIntro
+  -- zero and suc for Nat
+  rule evalIntroZero: (evalIntro (lit "intro.Nat.zero.0") ()) ~> zero ;
+  rule evalIntroSuc: (evalIntro (lit "intro.Nat.suc.0") ($n)) ~> (suc $n) ;
+  
+  -- nil and cons for List
+  rule evalIntroNil: (evalIntro (lit "intro.List.nil.1") ($A)) ~> (nil $A) ;
+  rule evalIntroCons: (evalIntro (lit "intro.List.cons.1") ($A $x $xs)) ~> (cons $A $x $xs) ;
+  
+  -- base and loop for Circle
+  rule evalIntroBase: (evalIntro (lit "intro.Circle.base.0") ()) ~> base ;
+  rule evalIntroLoop: (evalIntro (lit "intro.Circle.loop.0") ($r)) ~> (loop $r) ;
+  
+  -- Default: keep as is
+  rule evalIntroDefault: (evalIntro $head $args) ~> (foldl app $head $args) ;
+
+-----------------------------------------------------
+-- EvalElim
+-- Evaluate eliminator applications (pattern matching)
+-----------------------------------------------------
+piece EvalElim
+  -- Nat elimination
+  rule evalElimNatZero: (evalElim "Nat" $mot $clauses zero) ~>
+    (lookupClause $clauses "zero") ;
+  rule evalElimNatSuc: (evalElim "Nat" $mot $clauses (suc $n)) ~>
+    (let sucClause = (lookupClause $clauses "suc") in
+     let ih = (evalElim "Nat" $mot $clauses $n) in
+     (app (app sucClause $n) ih)) ;
+  
+  -- List elimination
+  rule evalElimListNil: (evalElim "List" $mot $clauses (nil $A)) ~>
+    (lookupClause $clauses "nil") ;
+  rule evalElimListCons: (evalElim "List" $mot $clauses (cons $A $x $xs)) ~>
+    (let consClause = (lookupClause $clauses "cons") in
+     let ih = (evalElim "List" $mot $clauses $xs) in
+     (app (app (app consClause $x) $xs) ih)) ;
+  
+  -- Circle elimination (HIT)
+  rule evalElimCircleBase: (evalElim "Circle" $mot $clauses base) ~>
+    (lookupClause $clauses "base") ;
+  -- loop requires special handling with path
+  
+  -- Default: stuck
+  rule evalElimDefault: (evalElim $dlbl $mot $clauses $scrut) ~>
+    (mkElim $dlbl () $mot $clauses $scrut) ;
+  
+  -- Clause lookup
+  rule lookupClauseNil: (lookupClause (lit "clauses.nil") $clbl) ~> (lit "clause-not-found") ;
+  rule lookupClauseCons: (lookupClause (app (app (lit "clauses.cons") $clause) $rest) $clbl) ~>
+    (let clauseTag = (getClauseTag $clause) in
+     case (eq clauseTag $clbl)
+       true => (getClauseBody $clause)
+       false => (lookupClause $rest $clbl)) ;
+  
+  rule getClauseTag: (getClauseTag (app (lit $tag) $body)) ~>
+    (drop 7 $tag) ;  -- drop "clause."
+  rule getClauseBody: (getClauseBody (app (lit $tag) $body)) ~> $body ;
+
+-----------------------------------------------------
+-- TypeOfIntro
+-- Get the type of a constructor application
+-----------------------------------------------------
+piece TypeOfIntro
+  rule typeOfIntro: (typeOfIntro $env $dlbl $clbl $params $args) ~>
+    (case (globalEnvLookupDatatype $env (gnameNamed $dlbl))
+      (some $desc) => (typeOfIntro' $desc $clbl $params $args)
+      none => none) ;
+  
+  rule typeOfIntro': (typeOfIntro' $desc $clbl $params $args) ~>
+    (case (findConstructor (gdataDescConstrs $desc) $clbl)
+      (some $constr) => (some (computeConstrType $desc $constr $params $args))
+      none => none) ;
+  
+  rule findConstructorNil: (findConstructor () $clbl) ~> none ;
+  rule findConstructorMatch: (findConstructor ((constructor name: $clbl args: $a boundary: $b) $rest) $clbl) ~>
+    (some (constructor name: $clbl args: $a boundary: $b)) ;
+  rule findConstructorMiss: (findConstructor ($c $rest) $clbl) ~> (findConstructor $rest $clbl) ;
+  
+  -- Result type is the datatype applied to params
+  rule computeConstrType: (computeConstrType $desc $constr $params $args) ~>
+    (mkData (gnameName (gdataDescName $desc)) $params) ;
+
+-----------------------------------------------------
+-- TypeOfElim
+-- Get the type of an eliminator application
+-----------------------------------------------------
+piece TypeOfElim
+  rule typeOfElim: (typeOfElim $env $dlbl $params $mot $clauses $scrut) ~>
+    (app $mot $scrut) ;
+
+-----------------------------------------------------
+-- BuiltinDatatypes
+-- Built-in datatype descriptors
+-----------------------------------------------------
+piece BuiltinDatatypes
+  -- Nat datatype
+  rule natDesc: natDesc ~>
+    (dataDesc name: (gnameNamed "Nat") params: () level: lzero
+      constrs: ((constructor name: "zero" args: () boundary: ())
+                (constructor name: "suc" args: (("n" : recursive)) boundary: ()))) ;
+  
+  -- List datatype
+  rule listDesc: listDesc ~>
+    (dataDesc name: (gnameNamed "List") params: (("A" : (univ lzero))) level: lzero
+      constrs: ((constructor name: "nil" args: () boundary: ())
+                (constructor name: "cons" args: (("x" : (const (ix 0))) ("xs" : recursive)) boundary: ()))) ;
+  
+  -- Circle HIT
+  rule circleDesc: circleDesc ~>
+    (dataDesc name: (gnameNamed "Circle") params: () level: lzero
+      constrs: ((constructor name: "base" args: () boundary: ())
+                (constructor name: "loop" args: (("i" : dim)) boundary: ((cof_eq (ix 0) dim0 , base) (cof_eq (ix 0) dim1 , base))))) ;
+  
+  -- Bool datatype
+  rule boolDesc: boolDesc ~>
+    (dataDesc name: (gnameNamed "Bool") params: () level: lzero
+      constrs: ((constructor name: "true" args: () boundary: ())
+                (constructor name: "false" args: () boundary: ()))) ;
+  
+  -- Unit datatype
+  rule unitDesc: unitDesc ~>
+    (dataDesc name: (gnameNamed "Unit") params: () level: lzero
+      constrs: ((constructor name: "tt" args: () boundary: ()))) ;
+
+-----------------------------------------------------
+-- StdEnv
+-- Standard environment with builtin datatypes
+-----------------------------------------------------
+piece StdEnv
+  rule stdEnv: stdEnv ~>
+    (let env0 = globalEnvEmpty in
+     let env1 = (globalEnvDeclareDatatype env0 natDesc) in
+     let env2 = (globalEnvDeclareDatatype env1 listDesc) in
+     let env3 = (globalEnvDeclareDatatype env2 circleDesc) in
+     let env4 = (globalEnvDeclareDatatype env3 boolDesc) in
+     let env5 = (globalEnvDeclareDatatype env4 unitDesc) in
+     env5) ;
+
+
+
+-- Derived operations
+derive subst for term ;
+derive normalize for term ;
+derive cata for term ;
+derive eq for term ;

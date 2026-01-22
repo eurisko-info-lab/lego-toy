@@ -1,0 +1,40 @@
+-----------------------------------------------------
+-- TypedLambda: Lambda calculus with typing rules
+--
+-- Demonstrates the new `type` construct for typing rules.
+-----------------------------------------------------
+
+lang TypedLambda :=
+
+-----------------------------------------------------
+-- Terms
+-----------------------------------------------------
+
+piece Term
+  term ::= "(" "var" ident ")"         → var
+         | "(" "lam" ident term term ")" → lam
+         | "(" "app" term term ")"     → app
+         | "(" "Pi" ident term term ")" → Pi
+         | "Type"                       → Type ;
+
+-----------------------------------------------------
+-- Reduction Rules
+-----------------------------------------------------
+
+rule beta: (app (lam $x $t $body) $arg) ~~> (subst $x $arg $body) ;
+
+-----------------------------------------------------
+-- Typing Rules
+-----------------------------------------------------
+
+type TypeType: Type : Type ;
+type PiForm: (Pi $x $A $B) : Type when $A : Type, $B : Type ;
+type LamIntro: (lam $x $A $body) : (Pi $x $A $B) when $A : Type, $body : $B ;
+type AppElim: (app $f $a) : (subst $x $a $B) when $f : (Pi $x $A $B), $a : $A ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "identity function": (lam x Type (var x)) ;
+test "beta reduction": (app (lam x Type (var x)) (var y)) ~~> (subst x (var y) (var x)) ;

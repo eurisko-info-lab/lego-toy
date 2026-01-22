@@ -1,0 +1,162 @@
+-----------------------------------------------------
+-- RedttElab: Attribute Grammar for Redtt Elaboration
+--
+-- Type-checking as Attribute Grammar:
+-- - Synthesized (↑): type inference (catamorphism)
+-- - Inherited (↓): context propagation (paramorphism)
+--
+-- Mathematical foundation:
+--   check : Γ ⊢ e ⇐ A   (inherited type, check mode)
+--   infer : Γ ⊢ e ⇒ A   (synthesized type, infer mode)
+--
+-- The bidirectional typing discipline maps directly to
+-- attribute flow: inh = check, syn = infer.
+-----------------------------------------------------
+
+lang RedttElab :=
+
+import Redtt ;
+
+-----------------------------------------------------
+-- Core Type Checking Attributes
+--
+-- Bidirectional typing as attribute flow:
+--   Γ ⊢ e ⇒ A  (inference)  → syn type
+--   Γ ⊢ e ⇐ A  (checking)   → inh expected
+-----------------------------------------------------
+
+attrs TypeCheck
+  -- Inherited: typing context flows down
+  inh ctx : Ctx ;
+  
+  -- Inherited: expected type (check mode)
+  inh expected : MaybeTerm ;
+  
+  -- Synthesized: inferred type flows up
+  syn type : Term ;
+  
+  -- Synthesized: elaborated term flows up
+  syn elab : Term ;
+
+  -----------------------------------------------------
+  -- Variable: Γ(x) = A  ⟹  Γ ⊢ x ⇒ A
+  -----------------------------------------------------
+  ident.type = (lookupCtx ctx) ;
+  ident.elab = (mkVar) ;
+  
+  -----------------------------------------------------
+  -- Lambda: Γ, x:A ⊢ e ⇒ B  ⟹  Γ ⊢ λx.e ⇒ (x:A) → B
+  -----------------------------------------------------
+  lam.binder.ctx = ctx ;
+  lam.body.ctx = (extendCtx ctx) ;
+  lam.type = mkPi ;
+  lam.elab = mkLam ;
+  
+  -----------------------------------------------------
+  -- Application: Γ ⊢ f ⇒ (x:A) → B   Γ ⊢ a ⇐ A
+  --              ⟹ Γ ⊢ f a ⇒ B[a/x]
+  -----------------------------------------------------
+  appexpr.fn.ctx = ctx ;
+  appexpr.arg.ctx = ctx ;
+  appexpr.arg.expected = (domainOf fnType) ;
+  appexpr.type = (codomain fnType argElab) ;
+  appexpr.elab = mkApp ;
+  
+  -----------------------------------------------------
+  -- Pi type: Γ ⊢ A : type^i   Γ, x:A ⊢ B : type^j
+  --          ⟹ Γ ⊢ (x:A) → B : type^max(i,j)
+  -----------------------------------------------------
+  piexpr.dom.ctx = ctx ;
+  piexpr.cod.ctx = (extendCtx ctx) ;
+  piexpr.type = mkTypeLevel ;
+  piexpr.elab = mkPiType ;
+  
+  -----------------------------------------------------
+  -- Universe:  Γ ⊢ type^n : type^(n+1)
+  -----------------------------------------------------
+  type.type = (mkType (succ level)) ;
+  type.elab = (mkType level) ;
+  
+  -----------------------------------------------------
+  -- Let: Γ ⊢ e : A   Γ, x:A ⊢ body ⇒ B
+  --      ⟹ Γ ⊢ let x = e in body ⇒ B
+  -----------------------------------------------------
+  letin.def.ctx = ctx ;
+  letin.body.ctx = (extendCtx ctx) ;
+  letin.type = bodyType ;
+  letin.elab = mkLet ;
+
+-----------------------------------------------------
+-- Cubical-Specific Attributes
+-- 
+-- Interval 𝕀 and dimension variables need special handling
+-----------------------------------------------------
+
+attrs CubicalCheck
+  -- Dimension context (separate from term context)
+  inh dimctx : DimCtx ;
+  
+  -- Is this a cofibration constraint?
+  syn isCofib : Bool ;
+  
+  -----------------------------------------------------
+  -- Interval type: 𝕀 : IType
+  -----------------------------------------------------
+  interval.type = IType ;
+  interval.elab = Interval ;
+  
+  -----------------------------------------------------
+  -- Path type: [i] A [| i=0 → M | i=1 → N]
+  -----------------------------------------------------
+  pathtype.body.dimctx = (extendDim dimctx) ;
+  pathtype.body.ctx = ctx ;
+  pathtype.left.ctx = ctx ;
+  pathtype.right.ctx = ctx ;
+  pathtype.type = mkTypeLevel ;
+  pathtype.elab = mkPathType ;
+  
+  -----------------------------------------------------
+  -- Coercion: coe r r' a in λ i → A
+  -----------------------------------------------------
+  coeexpr.src.ctx = ctx ;
+  coeexpr.tgt.ctx = ctx ;
+  coeexpr.tm.ctx = ctx ;
+  coeexpr.line.ctx = ctx ;
+  coeexpr.line.dimctx = (extendDim dimctx) ;
+  coeexpr.type = (substDim lineType tgt) ;
+  coeexpr.elab = mkCoe ;
+
+-----------------------------------------------------
+-- Mode Switching (Bidirectional)
+-----------------------------------------------------
+
+attrs Bidirectional
+  -- Mode: Check vs Infer
+  inh mode : Mode ;
+  
+  -- Check mode: compare against expected
+  syn ok : Bool ;
+  
+  -----------------------------------------------------
+  -- Application argument uses check mode
+  -----------------------------------------------------
+  appexpr.arg.mode = Check ;
+  
+  -----------------------------------------------------
+  -- Annotation switches to check mode
+  -----------------------------------------------------
+  annotated.tm.mode = Check ;
+  annotated.tm.expected = (Some annType) ;
+  
+  -----------------------------------------------------
+  -- Lambda body mode depends on annotation
+  -----------------------------------------------------
+  lam.body.mode = (modeFromAnnotation) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "identity": (lam x x) ;
+test "const": (lam x (lam y x)) ;
+

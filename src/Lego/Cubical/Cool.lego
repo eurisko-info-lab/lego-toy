@@ -1,0 +1,303 @@
+-----------------------------------------------------
+-- Cool: cooltt-specific Extensions
+-- 
+-- Extensions to CubicalTT specific to cooltt.
+-- Reference: https://github.com/RedPRL/cooltt
+--
+-- Key additions:
+-- - Built-in HITs (Nat, Circle)
+-- - Signatures and structures
+-- - El types (universe decoding)
+-- - Extended cofibration operations
+--
+-- BINDING STRUCTURE:
+-- - `<ident> "." body` : variable binding in motives
+-- - `<ident> ":" type` : field declarations in signatures
+-- - `<ident> ":=" term` : field assignments in structures
+-----------------------------------------------------
+
+import CubicalTT ;
+
+lang Cool (CubicalTT) :=
+
+-----------------------------------------------------
+-- Nat
+-- Natural numbers as inductive type
+-- The prototypical inductive type
+-----------------------------------------------------
+
+piece Nat
+  term ::= "Nat"                       → Nat
+         | "zero"                      → zero
+         | "suc" term                  → suc
+         | "natElim" term term term term  → natElim ;
+
+  -- Elimination rules: dependent eliminator
+  rule natElimZero: (natElim $P $z $s zero) ~~> $z ;
+  rule natElimSuc: (natElim $P $z $s (suc $n)) ~~> ($s $n (natElim $P $z $s $n)) ;
+  
+  -- Derived: primitive recursion (non-dependent)
+  rule natRec: (natRec $z $s zero) ~~> $z ;
+  rule natRecSuc: (natRec $z $s (suc $n)) ~~> ($s $n (natRec $z $s $n)) ;
+
+  type NatForm: Nat : U ;
+  type zeroType: zero : Nat ;
+  type sucType: (suc $n) : Nat when $n : Nat ;
+  type natElimType: (natElim $P $z $s $n) : ($P $n)
+    when $P : (Nat → U), $z : ($P zero), 
+         $s : (Π (k : Nat) . (($P k) → ($P (suc k)))), $n : Nat ;
+
+  test "natElim-zero": (natElim P z s zero) ~~> z ;
+  test "natElim-suc": (natElim P z s (suc n)) ~~> (s n (natElim P z s n)) ;
+
+-----------------------------------------------------
+-- Circle
+-- Circle S¹ as HIT
+-- The simplest higher inductive type
+-- base : S¹, loop : Path S¹ base base
+-----------------------------------------------------
+
+piece Circle
+  term ::= "S¹"                        → S1
+         | "base"                      → base
+         | "loop" dim                  → loop
+         | "S¹Elim" term term term term  → S1Elim ;
+
+  -- loop is a path: endpoints are base
+  rule loopBase0: (loop 0) ~> base ;
+  rule loopBase1: (loop 1) ~> base ;
+  
+  -- Elimination: how to map out of S¹
+  rule S1ElimBase: (S¹Elim $P $b $l base) ~> $b ;
+  rule S1ElimLoop: (S¹Elim $P $b $l (loop $i)) ~> ($l @ $i) ;
+
+  type S1Form: S¹ : U ;
+  type baseType: base : S¹ ;
+  type loopType: (loop $i) : S¹ when $i : I ;
+  type S1ElimType: (S¹Elim $P $b $l $x) : ($P $x)
+    when $P : (S¹ → U), $b : ($P base), 
+         $l : (PathP ($i . $P (loop $i)) $b $b), $x : S¹ ;
+
+  test "loop-0": (loop 0) ~~> base ;
+  test "loop-1": (loop 1) ~~> base ;
+  test "S1Elim-base": (S¹Elim P b l base) ~~> b ;
+
+-----------------------------------------------------
+-- Signature
+-- Signatures (record types)
+-- BINDERS: field names scope over later fields (telescope)
+-- Like Σ-types but with named projections
+-----------------------------------------------------
+
+piece Signature
+  term ::= "sig" "{" fields "}"        → sig
+         | "struct" "{" assigns "}"    → struct
+         | term "." <ident>            → proj ;
+  fields ::= field*                    → fields ;       -- telescope
+  field ::= <ident> ":" term           → field ;        -- BINDER: name in scope after
+  assigns ::= assign*                  → assigns ;
+  assign ::= <ident> ":=" term         → assign ;
+
+  -- Projection: extract field from struct
+  rule projStruct: ((struct { $x := $a $rest }) . $x) ~~> $a ;
+  
+  -- Eta for structs: a struct equals its projections reassembled
+  rule sigEta: (struct { $fs }) ~~> $r when $r = (reassemble $fs) ;
+
+  type sigForm: (sig { $f1 : $A1 $fs }) : U
+    when $A1 : U, [$f1 : $A1] (sig { $fs }) : U ;
+  type structType: (struct { $x := $a $rest }) : (sig { $x : $A $rest' })
+    when $a : $A, [$x := $a] (struct { $rest }) : (sig { $rest' }) ;
+  type projType: ($r . $x) : [$y := ($r . $y) for $y < $x] $A
+    when $r : (sig { ... $x : $A ... }) ;
+
+  test "proj": ((struct { x := a }) . x) ~~> a ;
+
+-----------------------------------------------------
+-- El
+-- Universe decoding: El A
+-- Tarski-style universe with codes
+-----------------------------------------------------
+
+piece El
+  term ::= "El" term                   → El
+         | "code" term                 → code ;
+
+  -- Decode then encode is identity
+  rule ElCode: (El (code $A)) ~~> $A ;
+
+  type ElForm: (El $a) : U
+    when $a : (Code U) ;
+  type codeType: (code $A) : (Code U)
+    when $A : U ;
+
+  test "El-code": (El (code A)) ~~> A ;
+
+-----------------------------------------------------
+-- CofExt
+-- Extended cofibration operations
+-- ∂ i : boundary of interval (i=0 ∨ i=1)
+-- strict φ : cofibration is decidable
+-----------------------------------------------------
+
+piece CofExt
+  cof ::= "∂" dim                      → boundary
+        | "strict" cof                 → strict ;
+
+  -- Boundary of endpoints is bottom (vacuously true)
+  rule boundary0: (∂ 0) ~> cof0 ;
+  rule boundary1: (∂ 1) ~> cof0 ;
+  -- Boundary of variable is disjunction
+  rule boundaryVar: (∂ $i) ~~> (($i = 0) ∨ ($i = 1)) ;
+  
+  -- Strict: marks cofibration as decidable (for evaluation)
+  rule strictEval: (strict $φ) ~~> $φ when $φ decidable ;
+
+  test "boundary-0": (∂ 0) ~~> cof0 ;
+  test "boundary-var": (∂ i) ~~> ((i = 0) ∨ (i = 1)) ;
+
+-----------------------------------------------------
+-- Gel
+-- Gel types (generalized extension)
+-- Gel i A B e : when i=0 get A, when i=1 get B,
+-- e : Equiv A B witnesses the identification
+-----------------------------------------------------
+
+piece Gel
+  term ::= "Gel" dim term term term    → Gel
+         | "gel" dim term              → gel
+         | "ungel" dim term            → ungel ;
+
+  -- gel degenerates at endpoints
+  rule gel0: (gel 0 $a) ~> (fst $a) ;
+  rule gel1: (gel 1 $a) ~> (snd $a) ;
+  
+  -- ungel extracts via equivalence
+  rule ungel0: (ungel 0 $g) ~> (($g .equiv) ($g .val)) ;
+  rule ungel1: (ungel 1 $g) ~> ($g .val) ;
+
+  type GelForm: (Gel $i $A $B $e) : U
+    when $i : I, $A : U, $B : U, $e : (Equiv $A $B) ;
+  type gelType: (gel $i $ab) : (Gel $i $A $B $e)
+    when [i = 0] $ab = ($a, ($e .fun) $a), [i = 1] $ab = ($a, $a) ;
+
+-----------------------------------------------------
+-- LockedCof
+-- Locked cofibrations for modalities
+-- lock φ a : hide a behind φ
+-- unlock φ (lock φ a) = a when φ holds
+-----------------------------------------------------
+
+piece LockedCof
+  term ::= "lock" cof term             → lock
+         | "unlock" cof term           → unlock ;
+
+  rule unlockLock: (unlock $φ (lock $φ $a)) ~~> $a when $φ ;
+
+  type lockType: (lock $φ $a) : (Locked $φ $A)
+    when [$φ] $a : $A ;
+  type unlockType: (unlock $φ $l) : $A
+    when $l : (Locked $φ $A) ;
+
+-----------------------------------------------------
+-- Int
+-- Integers (positive and negative naturals)
+-----------------------------------------------------
+
+piece Int
+  term ::= "Int"                       → Int
+         | "pos" term                  → pos
+         | "neg" term                  → neg  -- neg (suc n) = -(n+1)
+         | "intElim" term term term term  → intElim ;
+
+  rule intElimPos: (intElim $P $p $n (pos $k)) ~~> ($p $k) ;
+  rule intElimNeg: (intElim $P $p $n (neg $k)) ~~> ($n $k) ;
+
+  type IntForm: Int : U ;
+  type posType: (pos $n) : Int when $n : Nat ;
+  type negType: (neg $n) : Int when $n : Nat ;
+  type intElimType: (intElim $P $p $n $z) : ($P $z)
+    when $P : Int → U, $p : Π (k : Nat) . ($P (pos k)),
+         $n : Π (k : Nat) . ($P (neg (suc k))), $z : Int ;
+
+-----------------------------------------------------
+-- Torus
+-- Torus T² as HIT
+-- base, p : Path base base, q : Path base base
+-- surf : PathP (λ i . Path (p @ i) (p @ i)) q q
+-----------------------------------------------------
+
+piece Torus
+  term ::= "T²"                        → T2
+         | "tbase"                     → tbase
+         | "tpathp" dim                → tpathp
+         | "tpathq" dim                → tpathq
+         | "tsurf" dim dim             → tsurf
+         | "T²Elim" term term term term term term  → T2Elim ;
+
+  -- Paths degenerate at endpoints
+  rule tpathp0: (tpathp 0) ~> tbase ;
+  rule tpathp1: (tpathp 1) ~> tbase ;
+  rule tpathq0: (tpathq 0) ~> tbase ;
+  rule tpathq1: (tpathq 1) ~> tbase ;
+  
+  -- Surface boundaries
+  rule tsurf0j: (tsurf 0 $j) ~> (tpathq $j) ;
+  rule tsurf1j: (tsurf 1 $j) ~> (tpathq $j) ;
+  rule tsurfi0: (tsurf $i 0) ~> (tpathp $i) ;
+  rule tsurfi1: (tsurf $i 1) ~> (tpathp $i) ;
+
+  type T2Form: T² : U ;
+  type tbaseType: tbase : T² ;
+  type tpathpType: (tpathp $i) : T² when $i : I ;
+  type tpathqType: (tpathq $i) : T² when $i : I ;
+  type tsurfType: (tsurf $i $j) : T² when $i : I, $j : I ;
+
+-----------------------------------------------------
+-- Susp
+-- Suspensions: Σ A (suspension of A)
+-- north, south : Σ A
+-- merid : A → Path (Σ A) north south
+-----------------------------------------------------
+
+piece Susp
+  term ::= "Susp" term                 → Susp
+         | "north"                     → north
+         | "south"                     → south
+         | "merid" term dim            → merid
+         | "SuspElim" term term term term term  → SuspElim ;
+
+  rule merid0: (merid $a 0) ~> north ;
+  rule merid1: (merid $a 1) ~> south ;
+  rule SuspElimNorth: (SuspElim $P $n $s $m north) ~~> $n ;
+  rule SuspElimSouth: (SuspElim $P $n $s $m south) ~~> $s ;
+
+  type SuspForm: (Susp $A) : U when $A : U ;
+  type northType: north : (Susp $A) ;
+  type southType: south : (Susp $A) ;
+  type meridType: (merid $a $i) : (Susp $A) when $a : $A, $i : I ;
+
+-----------------------------------------------------
+-- Trunc
+-- Truncation ∥A∥ₙ
+-- For n=-1: propositional truncation (squash)
+-- For n=0: set truncation
+-----------------------------------------------------
+
+piece Trunc
+  term ::= "Trunc" term term           → Trunc   -- Trunc n A
+         | "trIn" term                 → trIn
+         | "squash" term term dim      → squash  -- squash a b i : Id a b in prop trunc
+         | "TruncElim" term term term term  → TruncElim ;
+
+  -- squash is a path
+  rule squash0: (squash $a $b 0) ~> $a ;
+  rule squash1: (squash $a $b 1) ~> $b ;
+  rule TruncElimIn: (TruncElim $P $h $t (trIn $a)) ~~> ($h $a) ;
+
+  type TruncForm: (Trunc $n $A) : U
+    when $n : Level, $A : U ;
+  type trInType: (trIn $a) : (Trunc $n $A)
+    when $a : $A ;
+  type squashType: (squash $a $b $i) : (Trunc -1 $A)
+    when $a : (Trunc -1 $A), $b : (Trunc -1 $A), $i : I ;

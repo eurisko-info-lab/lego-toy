@@ -1,0 +1,48 @@
+-- INet.lego: Interaction Net Language
+-- Core primitives for optimal reduction
+
+lang INet :=
+
+-----------------------------------------------------
+-- Agents (nodes with ports)
+-----------------------------------------------------
+piece Agents
+  agent ::= "(" "agent" name nat ")" ;
+  port  ::= "(" "port" name nat ")" | "(" "principal" name ")" ;
+
+-----------------------------------------------------
+-- Wiring (connections between ports)
+-----------------------------------------------------
+piece Wiring
+  wire ::= "(" "wire" port port ")" ;
+  net  ::= "(" "net" ")" ;
+
+-----------------------------------------------------
+-- Lafont's Fundamental Agents
+-----------------------------------------------------
+piece Lafont
+  era ::= "(" "era" ")" ;
+  dup ::= "(" "dup" ")" ;
+  con ::= "(" "con" ")" ;
+
+-----------------------------------------------------
+-- Interaction Rules
+-----------------------------------------------------
+piece Interaction
+  interact ::= "(" "interact" agent agent ")" ;
+
+-- Annihilation: same type agents
+rule annihilate_con:
+  (interact (con) (con)) ~> (net) ;
+
+rule annihilate_dup:
+  (interact (dup) (dup)) ~> (net) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+test "era_agent": (era) ;
+test "dup_agent": (dup) ;
+test "con_agent": (con) ;
+test "wire": (wire (port a 0) (port b 0)) ;
+test "annihilate": (interact (con) (con)) ~~> (net) ;

@@ -1,0 +1,150 @@
+// Lego.Cubical Module Dependency Graph
+// Generated: 2026-01-19
+// Render with: dot -Tpng dependencies.dot -o dependencies.png
+//          or: dot -Tsvg dependencies.dot -o dependencies.svg
+
+digraph CubicalModules {
+    rankdir=BT;  // Bottom to top (dependencies point upward)
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [color="#666666"];
+    
+    // === Foundation Layer ===
+    subgraph cluster_foundation {
+        label="Foundation";
+        style=dashed;
+        color="#cccccc";
+        Core [style="rounded,filled", fillcolor="#e8f5e9"];
+    }
+    
+    // === Core Extensions Layer ===
+    subgraph cluster_core_ext {
+        label="Core Extensions";
+        style=dashed;
+        color="#cccccc";
+        Quote [style="rounded,filled", fillcolor="#e3f2fd"];
+        Visitor [style="rounded,filled", fillcolor="#e3f2fd"];
+        Cofibration [style="rounded,filled", fillcolor="#e3f2fd"];
+        Domain [style="rounded,filled", fillcolor="#e3f2fd"];
+        TermBuilder [style="rounded,filled", fillcolor="#e3f2fd"];
+        TypeAttrs [style="rounded,filled", fillcolor="#e3f2fd"];
+        ExtType [style="rounded,filled", fillcolor="#e3f2fd"];
+        SubType [style="rounded,filled", fillcolor="#e3f2fd"];
+        Signature [style="rounded,filled", fillcolor="#e3f2fd"];
+    }
+    
+    // === Mid-Level Layer ===
+    subgraph cluster_mid {
+        label="Operations";
+        style=dashed;
+        color="#cccccc";
+        GlobalEnv [style="rounded,filled", fillcolor="#fff3e0"];
+        Kan [style="rounded,filled", fillcolor="#fff3e0"];
+        Conversion [style="rounded,filled", fillcolor="#fff3e0"];
+        Splice [style="rounded,filled", fillcolor="#fff3e0"];
+    }
+    
+    // === Kan/Composition Layer ===
+    subgraph cluster_kan {
+        label="Kan Operations";
+        style=dashed;
+        color="#cccccc";
+        FHCom [style="rounded,filled", fillcolor="#fce4ec"];
+        VType [style="rounded,filled", fillcolor="#fce4ec"];
+        HIT [style="rounded,filled", fillcolor="#fce4ec"];
+    }
+    
+    // === Typing Layer ===
+    subgraph cluster_typing {
+        label="Type System";
+        style=dashed;
+        color="#cccccc";
+        RefineMonad [style="rounded,filled", fillcolor="#f3e5f5"];
+        Semantics [style="rounded,filled", fillcolor="#f3e5f5"];
+        Tactic [style="rounded,filled", fillcolor="#f3e5f5"];
+        Unify [style="rounded,filled", fillcolor="#f3e5f5"];
+    }
+    
+    // === Top Layer ===
+    subgraph cluster_top {
+        label="Application";
+        style=dashed;
+        color="#cccccc";
+        Datatype [style="rounded,filled", fillcolor="#e1f5fe"];
+        Elaborate [style="rounded,filled", fillcolor="#e1f5fe"];
+        Module [style="rounded,filled", fillcolor="#e1f5fe"];
+    }
+    
+    // === Dependencies ===
+    
+    // Core Extensions → Core
+    Quote -> Core;
+    Visitor -> Core;
+    Cofibration -> Core;
+    Domain -> Core;
+    TermBuilder -> Core;
+    TypeAttrs -> Core;
+    ExtType -> Core;
+    SubType -> Core;
+    Signature -> Core;
+    
+    // Mid-Level dependencies
+    GlobalEnv -> Core;
+    GlobalEnv -> Visitor;
+    
+    Kan -> Core;
+    Kan -> Quote;
+    Kan -> Visitor;
+    
+    Conversion -> Core;
+    Conversion -> Cofibration;
+    Conversion -> Visitor;
+    
+    Splice -> Core;
+    Splice -> Cofibration;
+    Splice -> Visitor;
+    
+    // Kan Operations
+    FHCom -> Core;
+    FHCom -> Kan;
+    FHCom -> Visitor;
+    
+    VType -> Core;
+    VType -> Quote;
+    VType -> Kan;
+    VType -> Visitor;
+    
+    HIT -> Core;
+    HIT -> FHCom;
+    
+    // Type System
+    RefineMonad -> Core;
+    RefineMonad -> Cofibration;
+    RefineMonad -> Conversion;
+    
+    Semantics -> Core;
+    Semantics -> Cofibration;
+    Semantics -> Conversion;
+    Semantics -> TermBuilder;
+    Semantics -> Visitor;
+    
+    Tactic -> Core;
+    Tactic -> Cofibration;
+    Tactic -> Splice;
+    
+    Unify -> GlobalEnv;
+    Unify -> Visitor;
+    
+    // Application Layer
+    Datatype -> Core;
+    Datatype -> GlobalEnv;
+    
+    Elaborate -> Core;
+    Elaborate -> GlobalEnv;
+    Elaborate -> Unify;
+    Elaborate -> Quote;
+    Elaborate -> Datatype;
+    
+    Module -> Core;
+    Module -> GlobalEnv;
+    Module -> Elaborate;
+}

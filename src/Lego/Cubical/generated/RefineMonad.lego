@@ -1,0 +1,320 @@
+-----------------------------------------------------
+-- RefineMonad.lego: Elaboration/Refinement Monad
+--
+-- Mathematical Structure:
+-- - Reader-State-Error monad for elaboration
+-- - Carries: global state, local environment, cofibration context
+--
+-- Based on cooltt's RefineMonad.ml / Monads.ml architecture.
+-----------------------------------------------------
+
+import Core ;
+import Cofibration ;
+import Conversion ;
+
+lang RefineMonad (Core, Cofibration, Conversion) :=
+
+-----------------------------------------------------
+-- RefineError
+-- Error types for refinement
+-----------------------------------------------------
+piece RefineError
+  refineError ::= "unboundVariable" <name> → unboundVariable
+               | "expectedType" <expr> → expectedType
+               | "typeMismatch" <expr> <expr> → typeMismatch
+               | "expectedConnective" <name> <expr> → expectedConnective
+               | "conversionFailed" <name> → conversionFailed
+               | "unboundMeta" <nat> → unboundMeta
+               | "otherError" <name> → otherError ;
+  
+  rule refineErrorToString: (refineErrorToString (unboundVariable $n)) ~>
+    (strConcat "Unbound variable: " $n) ;
+  rule refineErrorToStringExpected: (refineErrorToString (expectedType $e)) ~>
+    (strConcat "Expected type, got: " (exprToString $e)) ;
+  rule refineErrorToStringMismatch: (refineErrorToString (typeMismatch $e1 $e2)) ~>
+    (strConcat "Type mismatch: " (strConcat (exprToString $e1) (strConcat " vs " (exprToString $e2)))) ;
+  rule refineErrorToStringConnective: (refineErrorToString (expectedConnective $n $e)) ~>
+    (strConcat "Expected " (strConcat $n (strConcat ", got: " (exprToString $e)))) ;
+  rule refineErrorToStringConv: (refineErrorToString (conversionFailed $n)) ~>
+    (strConcat "Conversion failed: " $n) ;
+  rule refineErrorToStringMeta: (refineErrorToString (unboundMeta $n)) ~>
+    (strConcat "Unbound meta: " (natToString $n)) ;
+  rule refineErrorToStringOther: (refineErrorToString (otherError $n)) ~> $n ;
+
+-----------------------------------------------------
+-- Ident
+-- Identifier types
+-----------------------------------------------------
+piece Ident
+  ident ::= "anon" → anon
+         | "user" <name> → userIdent
+         | "machine" <name> → machineIdent ;
+  
+  rule identName: (identName anon) ~> none ;
+  rule identNameUser: (identName (userIdent $s)) ~> (some $s) ;
+  rule identNameMachine: (identName (machineIdent $s)) ~> (some $s) ;
+  
+  rule identToString: (identToString anon) ~> "_" ;
+  rule identToStringUser: (identToString (userIdent $s)) ~> $s ;
+  rule identToStringMachine: (identToString (machineIdent $s)) ~> $s ;
+
+-----------------------------------------------------
+-- Cell
+-- A cell in the local environment
+-----------------------------------------------------
+piece Cell
+  cell ::= "cell" "id:" <ident> "tp:" <expr> "val:" <option> → cell ;
+  
+  rule cellIdent: (cellIdent (cell id: $i tp: $t val: $v)) ~> $i ;
+  rule cellTp: (cellTp (cell id: $i tp: $t val: $v)) ~> $t ;
+  rule cellVal: (cellVal (cell id: $i tp: $t val: $v)) ~> $v ;
+  
+  rule mkCell: (mkCell $ident $tp) ~> (cell id: $ident tp: $tp val: none) ;
+  rule mkCellVal: (mkCellVal $ident $tp $val) ~> (cell id: $ident tp: $tp val: (some $val)) ;
+
+-----------------------------------------------------
+-- LocalEnv
+-- Local environment for bound variables
+-----------------------------------------------------
+piece LocalEnv
+  localEnv ::= "localEnv" "cells:" <cell>* "cof:" <expr> → localEnv ;
+  
+  rule localEnvEmpty: localEnvEmpty ~> (localEnv cells: () cof: cof_top) ;
+  
+  rule localEnvSize: (localEnvSize (localEnv cells: $cs cof: $φ)) ~> (length $cs) ;
+  
+  rule localEnvExtend: (localEnvExtend (localEnv cells: $cs cof: $φ) $ident $tp) ~>
+    (localEnv cells: ($cs (mkCell $ident $tp)) cof: $φ) ;
+  
+  rule localEnvExtendVal: (localEnvExtendVal (localEnv cells: $cs cof: $φ) $ident $tp $val) ~>
+    (localEnv cells: ($cs (mkCellVal $ident $tp $val)) cof: $φ) ;
+  
+  rule localEnvGetLocal: (localEnvGetLocal (localEnv cells: $cs cof: $φ) $ix) ~>
+    (listGet $cs (minus (length $cs) 1 $ix)) ;
+  
+  rule localEnvGetLocalTp: (localEnvGetLocalTp $env $ix) ~>
+    (case (localEnvGetLocal $env $ix)
+      (some $c) => (some (cellTp $c))
+      none => none) ;
+  
+  rule localEnvResolve: (localEnvResolve (localEnv cells: $cs cof: $φ) $name) ~>
+    (localEnvResolveRec $cs $name 0) ;
+  
+  rule localEnvResolveRec: (localEnvResolveRec () $name $i) ~> none ;
+  rule localEnvResolveRecCons: (localEnvResolveRec ($cs $c) $name $i) ~>
+    (case (identName (cellIdent $c))
+      (some $n) => (if (eq $n $name) then (some $i) else (localEnvResolveRec $cs $name (succ $i)))
+      none => (localEnvResolveRec $cs $name (succ $i))) ;
+  
+  rule localEnvAssume: (localEnvAssume (localEnv cells: $cs cof: $φ) $ψ) ~>
+    (localEnv cells: $cs cof: (cof_and $φ $ψ)) ;
+
+-----------------------------------------------------
+-- GlobalDef
+-- A global definition
+-----------------------------------------------------
+piece GlobalDef
+  globalDef ::= "globalDef" "name:" <name> "tp:" <expr> "val:" <option> → globalDef ;
+  
+  rule globalDefName: (globalDefName (globalDef name: $n tp: $t val: $v)) ~> $n ;
+  rule globalDefTp: (globalDefTp (globalDef name: $n tp: $t val: $v)) ~> $t ;
+  rule globalDefVal: (globalDefVal (globalDef name: $n tp: $t val: $v)) ~> $v ;
+
+-----------------------------------------------------
+-- GlobalEnvState
+-- Global state for refinement
+-----------------------------------------------------
+piece GlobalEnvState
+  globalEnvState ::= "globalEnvState" 
+                     "defs:" <globalDef>* 
+                     "holes:" <holeEntry>*
+                     "nextHole:" <nat>
+                     "nextMeta:" <nat> → globalEnvState ;
+  holeEntry ::= "(" <nat> "," <expr> "," <option> ")" → holeEntry ;
+  
+  rule globalEnvStateEmpty: globalEnvStateEmpty ~>
+    (globalEnvState defs: () holes: () nextHole: 0 nextMeta: 0) ;
+  
+  rule globalEnvStateAddDef: (globalEnvStateAddDef $name $tp $val 
+    (globalEnvState defs: $ds holes: $hs nextHole: $nh nextMeta: $nm)) ~>
+    (globalEnvState 
+      defs: ($ds (globalDef name: $name tp: $tp val: $val)) 
+      holes: $hs 
+      nextHole: $nh 
+      nextMeta: $nm) ;
+  
+  rule globalEnvStateLookupDef: (globalEnvStateLookupDef $name 
+    (globalEnvState defs: $ds holes: $hs nextHole: $nh nextMeta: $nm)) ~>
+    (lookupDef $name $ds) ;
+  
+  rule lookupDef: (lookupDef $name ()) ~> none ;
+  rule lookupDefMatch: (lookupDef $name ($ds (globalDef name: $name tp: $t val: $v))) ~>
+    (some (globalDef name: $name tp: $t val: $v)) ;
+  rule lookupDefMiss: (lookupDef $name ($ds $d)) ~> (lookupDef $name $ds) ;
+  
+  rule globalEnvStateAddHole: (globalEnvStateAddHole $tp
+    (globalEnvState defs: $ds holes: $hs nextHole: $nh nextMeta: $nm)) ~>
+    ((globalEnvState 
+       defs: $ds 
+       holes: ($hs ($nh , $tp , none)) 
+       nextHole: (succ $nh) 
+       nextMeta: $nm)
+     , $nh) ;
+  
+  rule globalEnvStateFreshMeta: (globalEnvStateFreshMeta
+    (globalEnvState defs: $ds holes: $hs nextHole: $nh nextMeta: $nm)) ~>
+    ((globalEnvState defs: $ds holes: $hs nextHole: $nh nextMeta: (succ $nm)) , $nm) ;
+  
+  rule globalEnvStateSolveHole: (globalEnvStateSolveHole $id $sol
+    (globalEnvState defs: $ds holes: $hs nextHole: $nh nextMeta: $nm)) ~>
+    (globalEnvState defs: $ds holes: (solveHoleInList $id $sol $hs) nextHole: $nh nextMeta: $nm) ;
+  
+  rule solveHoleInList: (solveHoleInList $id $sol ()) ~> () ;
+  rule solveHoleInListMatch: (solveHoleInList $id $sol (($id , $tp , $old) $rest)) ~>
+    (($id , $tp , (some $sol)) (solveHoleInList $id $sol $rest)) ;
+  rule solveHoleInListMiss: (solveHoleInList $id $sol (($hid , $tp , $old) $rest)) ~>
+    (($hid , $tp , $old) (solveHoleInList $id $sol $rest)) ;
+  
+  rule globalEnvStateGetHoleSolution: (globalEnvStateGetHoleSolution $id
+    (globalEnvState defs: $ds holes: $hs nextHole: $nh nextMeta: $nm)) ~>
+    (getHoleSolution $id $hs) ;
+  
+  rule getHoleSolution: (getHoleSolution $id ()) ~> none ;
+  rule getHoleSolutionMatch: (getHoleSolution $id (($id , $tp , $sol) $rest)) ~> $sol ;
+  rule getHoleSolutionMiss: (getHoleSolution $id (($hid , $tp , $sol) $rest)) ~>
+    (getHoleSolution $id $rest) ;
+
+-----------------------------------------------------
+-- SourceLoc
+-- Source location for error reporting
+-----------------------------------------------------
+piece SourceLoc
+  sourceLoc ::= "sourceLoc" "file:" <name> "line:" <nat> "col:" <nat> → sourceLoc ;
+  
+  rule sourceLocFile: (sourceLocFile (sourceLoc file: $f line: $l col: $c)) ~> $f ;
+  rule sourceLocLine: (sourceLocLine (sourceLoc file: $f line: $l col: $c)) ~> $l ;
+  rule sourceLocCol: (sourceLocCol (sourceLoc file: $f line: $l col: $c)) ~> $c ;
+
+-----------------------------------------------------
+-- RefineCtx
+-- Refinement monad context (Reader)
+-----------------------------------------------------
+piece RefineCtx
+  refineCtx ::= "refineCtx" "local:" <localEnv> "loc:" <option> → refineCtx ;
+  
+  rule refineCtxEmpty: refineCtxEmpty ~> (refineCtx local: localEnvEmpty loc: none) ;
+  
+  rule refineCtxLocalEnv: (refineCtxLocalEnv (refineCtx local: $l loc: $s)) ~> $l ;
+  rule refineCtxLoc: (refineCtxLoc (refineCtx local: $l loc: $s)) ~> $s ;
+  
+  rule refineCtxSetLocal: (refineCtxSetLocal $env (refineCtx local: $l loc: $s)) ~>
+    (refineCtx local: $env loc: $s) ;
+  rule refineCtxSetLoc: (refineCtxSetLoc $loc (refineCtx local: $l loc: $s)) ~>
+    (refineCtx local: $l loc: (some $loc)) ;
+
+-----------------------------------------------------
+-- RefineState
+-- Refinement monad state
+-----------------------------------------------------
+piece RefineState
+  refineState ::= "refineState" "global:" <globalEnvState> → refineState ;
+  
+  rule refineStateEmpty: refineStateEmpty ~> (refineState global: globalEnvStateEmpty) ;
+  
+  rule refineStateGlobal: (refineStateGlobal (refineState global: $g)) ~> $g ;
+  rule refineStateSetGlobal: (refineStateSetGlobal $g (refineState global: $old)) ~>
+    (refineState global: $g) ;
+
+-----------------------------------------------------
+-- RefineResult
+-- Result of refinement
+-----------------------------------------------------
+piece RefineResult
+  refineResult ::= "refineOk" <any> <refineState> → refineOk
+                | "refineError" <refineError> <option> → refineErr ;
+  
+  rule isRefineOk: (isRefineOk (refineOk $a $s)) ~> true ;
+  rule isRefineOkErr: (isRefineOk (refineErr $e $l)) ~> false ;
+  
+  rule refineResultVal: (refineResultVal (refineOk $a $s)) ~> (some $a) ;
+  rule refineResultValErr: (refineResultVal (refineErr $e $l)) ~> none ;
+  
+  rule refineResultState: (refineResultState (refineOk $a $s)) ~> (some $s) ;
+  rule refineResultStateErr: (refineResultState (refineErr $e $l)) ~> none ;
+
+-----------------------------------------------------
+-- RefineM Operations
+-- Core monad operations
+-----------------------------------------------------
+piece RefineM
+  rule refinePure: (refinePure $a $ctx $st) ~> (refineOk $a $st) ;
+  
+  rule refineBind: (refineBind $ma $f $ctx $st) ~>
+    (case ($ma $ctx $st)
+      (refineOk $a $st') => (($f $a) $ctx $st')
+      (refineErr $e $l) => (refineErr $e $l)) ;
+  
+  rule refineGetLocalEnv: (refineGetLocalEnv $ctx $st) ~>
+    (refineOk (refineCtxLocalEnv $ctx) $st) ;
+  
+  rule refineGetGlobalEnv: (refineGetGlobalEnv $ctx $st) ~>
+    (refineOk (refineStateGlobal $st) $st) ;
+  
+  rule refineModifyGlobal: (refineModifyGlobal $f $ctx $st) ~>
+    (refineOk () (refineStateSetGlobal ($f (refineStateGlobal $st)) $st)) ;
+  
+  rule refineWithLocal: (refineWithLocal $f $ma $ctx $st) ~>
+    ($ma (refineCtxSetLocal ($f (refineCtxLocalEnv $ctx)) $ctx) $st) ;
+  
+  rule refineWithLoc: (refineWithLoc $loc $ma $ctx $st) ~>
+    ($ma (refineCtxSetLoc $loc $ctx) $st) ;
+  
+  rule refineThrow: (refineThrow $e $ctx $st) ~> (refineErr $e (refineCtxLoc $ctx)) ;
+
+-----------------------------------------------------
+-- Variable Operations
+-----------------------------------------------------
+piece VarOps
+  rule refineAbstract: (refineAbstract $ident $tp $k $ctx $st) ~>
+    (let $var = (ix (localEnvSize (refineCtxLocalEnv $ctx)))
+     in (let $newEnv = (localEnvExtend (refineCtxLocalEnv $ctx) $ident $tp)
+         in (($k $var) (refineCtxSetLocal $newEnv $ctx) $st))) ;
+  
+  rule refineGetLocalTp: (refineGetLocalTp $ix $ctx $st) ~>
+    (case (localEnvGetLocalTp (refineCtxLocalEnv $ctx) $ix)
+      (some $tp) => (refineOk $tp $st)
+      none => (refineErr (unboundVariable (natToString $ix)) (refineCtxLoc $ctx))) ;
+  
+  rule refineResolveName: (refineResolveName $name $ctx $st) ~>
+    (case (localEnvResolve (refineCtxLocalEnv $ctx) $name)
+      (some $ix) => (refineOk (inl $ix) $st)
+      none => (case (globalEnvStateLookupDef $name (refineStateGlobal $st))
+                (some $def) => (refineOk (inr $def) $st)
+                none => (refineErr (unboundVariable $name) (refineCtxLoc $ctx)))) ;
+
+-----------------------------------------------------
+-- Hole Operations
+-----------------------------------------------------
+piece HoleOps
+  rule refineFreshHole: (refineFreshHole $tp $ctx $st) ~>
+    (let ($st' , $id) = (globalEnvStateAddHole $tp (refineStateGlobal $st))
+     in (refineOk ($id , (lit (strConcat "?" (natToString $id)))) (refineStateSetGlobal $st' $st))) ;
+  
+  rule refineFreshMeta: (refineFreshMeta $ctx $st) ~>
+    (let ($g' , $id) = (globalEnvStateFreshMeta (refineStateGlobal $st))
+     in (refineOk $id (refineStateSetGlobal $g' $st))) ;
+  
+  rule refineSolveHole: (refineSolveHole $id $sol $ctx $st) ~>
+    (refineOk () (refineStateSetGlobal (globalEnvStateSolveHole $id $sol (refineStateGlobal $st)) $st)) ;
+  
+  rule refineGetHoleSolution: (refineGetHoleSolution $id $ctx $st) ~>
+    (refineOk (globalEnvStateGetHoleSolution $id (refineStateGlobal $st)) $st) ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

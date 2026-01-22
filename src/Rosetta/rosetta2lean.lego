@@ -1,0 +1,80 @@
+-----------------------------------------------------
+-- rosetta2lean.lego: Transform Lego AST to Lean Code
+--
+-- Transforms the parsed AST from .lego files into 
+-- Lean 4 syntax for code generation.
+-- Patterns match the actual Bootstrap.lego parse output.
+-----------------------------------------------------
+
+lang RosettaToLean :=
+
+-----------------------------------------------------
+-- GrammarTransform
+-- Transform DGrammar rules to inductive types
+-- Actual AST: (DGrammar (ident name) "::=" body ";")
+-----------------------------------------------------
+piece GrammarTransform
+  rule transformGrammar: (DGrammar (ident $name) $defn $body $semi) ~~>
+    (inductive $name $body) ;
+
+-----------------------------------------------------
+-- AltTransform
+-- Transform alt nodes to choice
+-----------------------------------------------------
+piece AltTransform
+  rule transformAlt: (alt $left $bar $right) ~~> (choice $left $right) ;
+
+-----------------------------------------------------
+-- StarTransform  
+-- Transform star nodes to many
+-----------------------------------------------------
+piece StarTransform
+  rule transformStar: (star $inner $op) ~~> (many $inner) ;
+
+-----------------------------------------------------
+-- OptTransform
+-- Transform opt nodes to optional
+-----------------------------------------------------
+piece OptTransform
+  rule transformOpt: (opt $inner $op) ~~> (optional $inner) ;
+
+-----------------------------------------------------
+-- RefTransform
+-- Transform ref nodes
+-----------------------------------------------------
+piece RefTransform
+  rule transformRef: (ref (ident $name)) ~~> (ref $name) ;
+
+-----------------------------------------------------
+-- LitTransform
+-- Transform lit nodes
+-----------------------------------------------------
+piece LitTransform
+  rule transformLit: (lit (string $s)) ~~> (terminal $s) ;
+
+-----------------------------------------------------
+-- ChrTransform
+-- Transform chr nodes for character classes
+-----------------------------------------------------
+piece ChrTransform
+  rule transformChr: (chr (char $c)) ~~> (char $c) ;
+
+-----------------------------------------------------
+-- TermTransform
+-- Transform term construction nodes
+-----------------------------------------------------
+piece TermTransform
+  -- Con terms: (con "(" head args... ")")
+  rule transformCon: (con $lp (ident $head) $args $rp) ~~>
+    (app $head $args) ;
+  
+  -- Var terms: (var "$" (ident name))
+  rule transformVar: (var $dollar (ident $name)) ~~>
+    (metavar $name) ;
+  
+  -- Identifier nodes: (ident name) -> just name
+  rule transformIdent: (ident $name) ~~> $name ;
+  
+  -- Unit: empty parens
+  rule transformUnit: (unit) ~~> () ;
+

@@ -1,0 +1,181 @@
+-----------------------------------------------------
+-- MinimalBootstrap: The Seed Grammar (ASCII only)
+--
+-- PURPOSE: Parse Bootstrap.lego ONCE to get the real grammar.
+-- This is the irreducible kernel - pure ASCII, no Unicode.
+--
+-- After loading Bootstrap.lego, this grammar is ERASED.
+-- Bootstrap.lego then handles everything else.
+--
+-- Design principle: MINIMAL. Only what's needed to parse
+-- Bootstrap.lego itself. No Greek, no math symbols.
+--
+-- NOTE: String/char CONTENT can contain any Unicode because
+-- the tokenizer handles them specially (not via grammar).
+-- This grammar only needs ASCII for STRUCTURE (keywords, etc).
+-----------------------------------------------------
+
+lang MinimalBootstrap :=
+
+-----------------------------------------------------
+-- Token: Character-level grammar (ASCII structure only)
+--
+-- String and char literals are handled by the tokenizer
+-- directly, accepting any Unicode content. The grammar
+-- here only defines the structural tokens.
+-----------------------------------------------------
+
+token Token
+  -- Basic character classes (ASCII only)
+  digit  ::= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
+  lower  ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+           | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+           | 'u' | 'v' | 'w' | 'x' | 'y' | 'z' ;
+  upper  ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
+           | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
+           | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' ;
+  alpha  ::= lower | upper | '_' ;
+  
+  -- Symbols (ASCII punctuation only)
+  -- Note: The tokenizer handles '...' and "..." specially for any unicode content
+  symch  ::= '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+           | ':' | ';' | ',' | '.' | '|' | '!' | '?' | '@'
+           | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '-'
+           | '=' | '~' | '/' | '\\' | '`' | '\'' | '"' ;
+
+  -- Token patterns
+  ident   ::= alpha (alpha | digit | '-' | '/' | '\'')* ;
+  number  ::= digit digit* ;
+  -- Note: string and char lexed specially by tokenizer, not grammar
+  -- These patterns are for fallback only
+  string  ::= '"' printable* '"' ;
+  char    ::= '\'' printable '\'' ;
+  printable ::= alpha | digit | symch | ' ' ;
+
+  -- Whitespace and comments
+  ws      ::= ' ' | '\t' | '\n' | '\r' ;
+  comment ::= '-' '-' nonnl* ;
+  nonnl   ::= alpha | digit | symch | ' ' | '\t' ;
+
+  -- Multi-character operators
+  op3     ::= ':' ':' '=' ;
+  op2     ::= '~' '~' '>'
+            | ':' '='
+            | '~' '>'
+            | '-' '>' ;
+
+  -- Special <name> syntax
+  special ::= '<' alpha+ '>' ;
+
+  -- Single symbol (fallback)
+  sym     ::= symch ;
+
+-----------------------------------------------------
+-- Atoms: Basic tokens
+-----------------------------------------------------
+
+piece Atom
+  ident  ::= <ident> → ident ;
+  string ::= <string> → string ;
+  char   ::= <char> → char ;
+  number ::= <number> → number ;
+
+-----------------------------------------------------
+-- Term: S-expression terms
+-----------------------------------------------------
+
+piece Term
+  term    ::= ident → var
+            | string → lit
+            | number → num
+            | "(" conname term* ")" → con ;
+  conname ::= ident | <sym> ;
+
+-----------------------------------------------------
+-- Pattern: Match patterns for rules
+-----------------------------------------------------
+
+piece Pattern
+  pattern ::= "$" ident → var
+            | "(" conname pattern* ")" → con
+            | string → lit
+            | number → num
+            | ident → con ;
+
+-----------------------------------------------------
+-- Template: Substitution templates for rules
+-----------------------------------------------------
+
+piece Template
+  template ::= "$" ident → var
+             | "(" ident template* ")" → con
+             | string → lit
+             | number → num
+             | ident → con ;
+
+-----------------------------------------------------
+-- GrammarExpr: Grammar expressions
+-----------------------------------------------------
+
+piece GrammarExpr
+  expr    ::= alt ;
+  alt     ::= seq "|" alt → alt
+            | seq ;
+  seq     ::= seqBase "→" ident → annotated
+            | seqBase ;
+  seqBase ::= suffix+ → seq
+            | suffix ;
+  suffix  ::= atom "*" → star
+            | atom "+" → plus
+            | atom "?" → opt
+            | atom ;
+  atom    ::= string → lit
+            | char → chr
+            | ident → ref
+            | "(" expr ")" → group
+            | <special> → special ;
+
+-----------------------------------------------------
+-- File: Top-level declarations
+-----------------------------------------------------
+
+piece File
+  legoFile   ::= decl* ;
+  decl       ::= langDecl | tokenDecl | pieceDecl | ruleDecl | typeDecl | testDecl ;
+  langDecl   ::= "lang" ident ":=" langBody → DLang ;
+  langBody   ::= innerDecl* ;
+  innerDecl  ::= tokenDecl | pieceDecl | ruleDecl | typeDecl | testDecl ;
+  tokenDecl  ::= "token" ident tokenItem+ → DToken ;
+  tokenItem  ::= prodDecl ;
+  pieceDecl  ::= "piece" ident pieceItem+ → DPiece ;
+  pieceItem  ::= prodDecl | ruleDecl | typeDecl | testDecl ;
+  prodDecl   ::= ident "::=" expr ";" → DGrammar ;
+  ruleDecl   ::= "rule" ident ":" pattern "~>" template ";" → DRule ;
+  typeDecl   ::= "type" ident ":" term ":" term whenClause? ";" → DType ;
+  whenClause ::= "when" term ("," term)* → when ;
+  testDecl   ::= "test" string ":" term ("~~>" term)? ";" → DTest ;
+
+-----------------------------------------------------
+-- Interpreter Rules
+-----------------------------------------------------
+
+rule combine-seq-seq: (combineSeq (seq $ts1) (seq $ts2)) ~~> (seq (append $ts1 $ts2)) ;
+rule combine-seq-left: (combineSeq (seq $ts) $t) ~~> (seq (append $ts (list $t))) ;
+rule combine-seq-right: (combineSeq $t (seq $ts)) ~~> (seq (cons $t $ts)) ;
+rule combine-seq-unit-l: (combineSeq (unit) $t) ~~> $t ;
+rule combine-seq-unit-r: (combineSeq $t (unit)) ~~> $t ;
+rule combine-seq-default: (combineSeq $t1 $t2) ~~> (seq (list $t1 $t2)) ;
+rule split-seq: (splitSeq (seq (cons $h $rest))) ~~> (pair $h (seq $rest)) ;
+rule split-single: (splitSeq $t) ~~> (pair $t (unit)) ;
+rule wrap-seq: (wrapNode $name (seq $ts)) ~~> (con $name $ts) ;
+rule wrap-other: (wrapNode $name $t) ~~> (con $name (list $t)) ;
+rule unwrap-match: (unwrapNode $name (con $name $ts)) ~~> (seq $ts) ;
+rule unwrap-nomatch: (unwrapNode $name $t) ~~> $t ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "parse ident": x ;
+test "parse string": "hello" ;
+test "parse term con": (f x y) ;

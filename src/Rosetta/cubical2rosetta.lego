@@ -1,0 +1,118 @@
+-----------------------------------------------------
+-- cubical2rosetta.lego
+-- Transforms Cubical constructs to generic Rosetta primitives
+-- Pipeline: Cubical → Rosetta → Lean
+-----------------------------------------------------
+
+lang CubicalToRosetta :=
+
+-----------------------------------------------------
+-- Dimensions → Rosetta
+-----------------------------------------------------
+rule toDim0: (toRosetta dim0) ~~> (Var "Dim.I0") ;
+rule toDim1: (toRosetta dim1) ~~> (Var "Dim.I1") ;
+rule toDimVar: (toRosetta (dimVar $i)) ~~> (App (Var "Dim.Var") (Var $i)) ;
+rule toDimAnd: (toRosetta (dim_and $d1 $d2)) ~~> 
+  (App (App (Var "Dim.Meet") (toRosetta $d1)) (toRosetta $d2)) ;
+rule toDimOr: (toRosetta (dim_or $d1 $d2)) ~~> 
+  (App (App (Var "Dim.Join") (toRosetta $d1)) (toRosetta $d2)) ;
+rule toDimNeg: (toRosetta (dim_neg $d)) ~~> 
+  (App (Var "Dim.Neg") (toRosetta $d)) ;
+
+-----------------------------------------------------
+-- Cofibrations → Rosetta
+-----------------------------------------------------
+rule toCofTop: (toRosetta cof_top) ~~> (Var "Cof.Top") ;
+rule toCofBot: (toRosetta cof_bot) ~~> (Var "Cof.Bot") ;
+rule toCofEq: (toRosetta (cof_eq $d1 $d2)) ~~> 
+  (App (App (Var "Cof.Eq") (toRosetta $d1)) (toRosetta $d2)) ;
+rule toCofAnd: (toRosetta (cof_and $φ1 $φ2)) ~~> 
+  (App (App (Var "Cof.And") (toRosetta $φ1)) (toRosetta $φ2)) ;
+rule toCofOr: (toRosetta (cof_disj $φ1 $φ2)) ~~> 
+  (App (App (Var "Cof.Or") (toRosetta $φ1)) (toRosetta $φ2)) ;
+
+-----------------------------------------------------
+-- Path types → Rosetta
+-----------------------------------------------------
+rule toPath: (toRosetta (path $A $a $b)) ~~> 
+  (App (App (App (Var "Path.PathTy") (toRosetta $A)) (toRosetta $a)) (toRosetta $b)) ;
+rule toPlam: (toRosetta (plam $body)) ~~> (Lam (toRosetta $body)) ;
+rule toPapp: (toRosetta (papp $p $i)) ~~> (App (toRosetta $p) (toRosetta $i)) ;
+
+-----------------------------------------------------
+-- Kan operations → Rosetta
+-----------------------------------------------------
+rule toCoe: (toRosetta (coe $r $r' $A $a)) ~~> 
+  (App (App (App (App (Var "Kan.Coe") (toRosetta $r)) (toRosetta $r')) 
+            (toRosetta $A)) (toRosetta $a)) ;
+rule toHcom: (toRosetta (hcom $A $r $r' $φ $tubes $cap)) ~~>
+  (App (App (App (App (App (App (Var "Kan.HCom") 
+    (toRosetta $A)) (toRosetta $r)) (toRosetta $r')) 
+    (toRosetta $φ)) (toRosetta $tubes)) (toRosetta $cap)) ;
+rule toCom: (toRosetta (com $A $r $r' $φ $tubes $cap)) ~~>
+  (App (App (App (App (App (App (Var "Kan.Com") 
+    (toRosetta $A)) (toRosetta $r)) (toRosetta $r')) 
+    (toRosetta $φ)) (toRosetta $tubes)) (toRosetta $cap)) ;
+
+-----------------------------------------------------
+-- Sub types → Rosetta
+-----------------------------------------------------
+rule toSub: (toRosetta (sub $A $φ $t)) ~~> 
+  (App (App (App (Var "Sub.SubTy") (toRosetta $A)) (toRosetta $φ)) (toRosetta $t)) ;
+rule toSubIn: (toRosetta (subIn $e)) ~~> (App (Var "Sub.SubIn") (toRosetta $e)) ;
+rule toSubOut: (toRosetta (subOut $e)) ~~> (App (Var "Sub.SubOut") (toRosetta $e)) ;
+
+-----------------------------------------------------
+-- V-types → Rosetta
+-----------------------------------------------------
+rule toVType: (toRosetta (vtype $r $A $B $e)) ~~> 
+  (App (App (App (App (Var "VType.VTy") (toRosetta $r)) 
+            (toRosetta $A)) (toRosetta $B)) (toRosetta $e)) ;
+rule toVIn: (toRosetta (vin $r $a $b)) ~~> 
+  (App (App (App (Var "VType.VIn") (toRosetta $r)) (toRosetta $a)) (toRosetta $b)) ;
+rule toVProj: (toRosetta (vproj $r $A $B $e $v)) ~~>
+  (App (App (App (App (App (Var "VType.VProj") (toRosetta $r)) 
+            (toRosetta $A)) (toRosetta $B)) (toRosetta $e)) (toRosetta $v)) ;
+
+-----------------------------------------------------
+-- Glue types → Rosetta
+-----------------------------------------------------
+rule toGlue: (toRosetta (glue $A $φ $T $e)) ~~>
+  (App (App (App (App (Var "Glue.GlueTy") (toRosetta $A)) 
+            (toRosetta $φ)) (toRosetta $T)) (toRosetta $e)) ;
+rule toGlueEl: (toRosetta (glueEl $t $a)) ~~> 
+  (App (App (Var "Glue.GlueEl") (toRosetta $t)) (toRosetta $a)) ;
+rule toUnglue: (toRosetta (unglue $g)) ~~> (App (Var "Glue.Unglue") (toRosetta $g)) ;
+
+-----------------------------------------------------
+-- HITs → Rosetta
+-----------------------------------------------------
+rule toCircle: (toRosetta S1) ~~> (Var "Circle.S1") ;
+rule toBase: (toRosetta base) ~~> (Var "Circle.Base") ;
+rule toLoop: (toRosetta (loop $i)) ~~> (App (Var "Circle.Loop") (toRosetta $i)) ;
+rule toNat: (toRosetta nat) ~~> (Var "Nat.NatTy") ;
+rule toZero: (toRosetta zero) ~~> (Var "Nat.Zero") ;
+rule toSuc: (toRosetta (suc $n)) ~~> (App (Var "Nat.Suc") (toRosetta $n)) ;
+
+-----------------------------------------------------
+-- Core → Rosetta
+-----------------------------------------------------
+rule toUniv: (toRosetta (univ $n)) ~~> (App (Var "Univ") (toRosetta $n)) ;
+rule toPi: (toRosetta (pi $A $B)) ~~> 
+  (App (App (Var "Pi") (toRosetta $A)) (Lam (toRosetta $B))) ;
+rule toLam: (toRosetta (lam $body)) ~~> (Lam (toRosetta $body)) ;
+rule toApp: (toRosetta (app $f $x)) ~~> (App (toRosetta $f) (toRosetta $x)) ;
+rule toSigma: (toRosetta (sigma $A $B)) ~~> 
+  (App (App (Var "Sigma") (toRosetta $A)) (Lam (toRosetta $B))) ;
+rule toPair: (toRosetta (pair $a $b)) ~~> (Pair (toRosetta $a) (toRosetta $b)) ;
+rule toFst: (toRosetta (fst $e)) ~~> (Fst (toRosetta $e)) ;
+rule toSnd: (toRosetta (snd $e)) ~~> (Snd (toRosetta $e)) ;
+rule toIx: (toRosetta (ix $n)) ~~> (Var (indexToName $n)) ;
+rule toLet: (toRosetta (let $x $A $v $body)) ~~>
+  (App (Lam (toRosetta $body)) (toRosetta $v)) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+test "dimEx": (toRosetta dim0) ~~> (Var "Dim.I0") ;
+test "lamEx": (toRosetta (lam (ix 0))) ~~> (Lam (Var (indexToName 0))) ;

@@ -1,0 +1,33 @@
+-- Lambda.lego: Lambda calculus with beta reduction
+-- Tests: app/lam matching, substitution, normalize
+
+lang Lambda :=
+
+-----------------------------------------------------
+-- Terms
+-----------------------------------------------------
+piece Term
+  term ::= var | lam | app ;
+  var ::= "(" "var" <ident> ")" ;
+  lam ::= "(" "lam" <ident> ty term ")" ;
+  app ::= "(" "app" term term ")" ;
+  ty ::= "Type" | <ident> ;
+
+-----------------------------------------------------
+-- Rules
+-----------------------------------------------------
+rule beta:
+  (app (lam $x $t $body) $arg) ~> (subst $x $arg $body) ;
+
+-----------------------------------------------------
+-- Tests: identity function
+-----------------------------------------------------
+test "identity": (lam x Type (var x)) ;
+test "app_id": (app (lam x Type (var x)) (var y)) ~~> y ;
+
+-- K combinator: λx.λy.x
+test "k_comb": (lam x Type (lam y Type (var x))) ;
+test "k_app1": (app (lam x Type (lam y Type (var x))) (var a)) ~~> (lam y Type (var a)) ;
+
+-- S combinator application (partial) - beta reduces f to h
+test "s_partial": (app (lam f Type (lam g Type (lam x Type (app (app (var f) (var x)) (app (var g) (var x)))))) (var h)) ~~> (lam g Type (lam x Type (app (app (var h) (var x)) (app (var g) (var x))))) ;

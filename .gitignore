@@ -1,0 +1,9 @@
+.lake/
+lake-packages/
+*.olean
+*.ilean
+*.trace
+*.c.hash
+*.c.o
+*.c.o.export*
+tmp/

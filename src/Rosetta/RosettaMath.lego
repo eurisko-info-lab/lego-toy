@@ -1,0 +1,472 @@
+-----------------------------------------------------
+-- RosettaMath: Algebraically-Founded Intermediate Language
+--
+-- Rosetta redesigned from first principles:
+-- Every construct corresponds to a mathematical structure.
+-- No arbitrary primitives - only derived from algebra.
+--
+-- The 8 Layers:
+--   1. Initial Algebras   (terms, recursion)
+--   2. Functors           (traversals, mapping)
+--   3. Limits/Colimits    (products, sums, pushouts)
+--   4. Monads             (effects, handlers)
+--   5. Profunctors        (optics, bidirectional)
+--   6. Adjunctions        (free/forgetful)
+--   7. Kan Extensions     (universal constructions)
+--   8. Operads            (multi-arity composition)
+--
+-- Target leverage: 100-200x
+-----------------------------------------------------
+
+lang RosettaMath :=
+
+-----------------------------------------------------
+-- Layer 0: Universe Hierarchy
+-- The categorical foundation: presheaves over a base
+-----------------------------------------------------
+
+piece Universe
+  -- Universe levels (predicative)
+  level ::= "ℓ" number                          → lconst      -- Constant level
+          | "ℓ" ident                           → lvar        -- Level variable
+          | level "⊔" level                     → lmax        -- Maximum
+          | level "+" number                    → lsuc ;      -- Successor
+
+  -- Universes indexed by level
+  term ::= "Type" level                         → univ        -- Type ℓ
+         | "Prop"                               → prop ;      -- Prop (impredicative)
+
+  -- Level polymorphism
+  decl ::= "universe" ident+ ";" → DUniverse ;
+
+-----------------------------------------------------
+-- Layer 1: Initial Algebras (F-Algebras)
+-- The foundation: μF = F(μF)
+-----------------------------------------------------
+
+piece InitialAlgebra
+  -- Functor declaration: F : Type → Type
+  decl ::= "functor" ident params? "=" functorBody ";" → DFunctor ;
+  params ::= "(" (ident ":" term)+ ")" → params ;
+  functorBody ::= "|" functorCase ("|" functorCase)* → functorCases
+                | functorCase ;
+  functorCase ::= ident ":" term → functorCase ;
+
+  -- Initial algebra: μF
+  term ::= "μ" ident                            → mu ;        -- Least fixpoint
+
+  -- Catamorphism: the ONLY explicit recursion
+  decl ::= "cata" ident "for" ident "with" cataBody ";" → DCata ;
+  cataBody ::= "{" cataCase+ "}" ;
+  cataCase ::= ident "=>" template ";" → cataCase ;
+
+  -- Anamorphism: unfold
+  decl ::= "ana" ident "for" ident "with" anaBody ";" → DAna ;
+  anaBody ::= "{" anaCase+ "}" ;
+  anaCase ::= ident "=>" template ";" → anaCase ;
+
+  -- Hylomorphism: ana ; cata (no intermediate data structure)
+  decl ::= "hylo" ident "=" ident ";" ident ";" → DHylo ;
+
+  -- Smart constructors (introduction)
+  term ::= "In" term                            → inF         -- In : F(μF) → μF
+         | "Out" term                           → outF ;      -- Out : μF → F(μF)
+
+-----------------------------------------------------
+-- Layer 1b: Terminal Coalgebras (F-Coalgebras)
+-- The dual: νF = F(νF)
+-----------------------------------------------------
+
+piece TerminalCoalgebra
+  -- Terminal coalgebra: νF (greatest fixpoint)
+  term ::= "ν" ident                            → nu ;        -- Greatest fixpoint
+
+  -- Corecursion: anamorphism to ν
+  term ::= "Unfold" term                        → unfoldF     -- Unfold : νF → F(νF)
+         | "Fold" term                          → foldF ;     -- Fold : F(νF) → νF
+
+  -- Bisimulation: equality for coalgebras
+  decl ::= "bisim" ident ":" ident "~" ident "with" bisimBody ";" → DBisim ;
+  bisimBody ::= "{" cataCase+ "}" ;
+
+-----------------------------------------------------
+-- Layer 2: Natural Transformations (Polymorphism)
+-- α : F ⟹ G means ∀X. F X → G X
+-----------------------------------------------------
+
+piece NaturalTransformation
+  -- Natural transformation declaration
+  decl ::= ident ":" ident "⟹" ident "=" ntBody ";" → DNatTrans ;
+  ntBody ::= "λ" ident "." template → ntLam
+           | template ;
+
+  -- Dinatural transformation (profunctors)
+  decl ::= ident ":" ident "⤇" ident "=" template ";" → DDinat ;
+
+  -- Extranatural transformation
+  decl ::= ident ":" ident "⟾" ident "=" template ";" → DExtranat ;
+
+  -- Parametric polymorphism as naturality
+  term ::= "∀" "(" ident ":" term ")" "." term  → forall
+         | "[" ident "]" term                   → tyApp ;     -- Type application
+
+-----------------------------------------------------
+-- Layer 3: Limits and Colimits
+-- Products, sums, equalizers, and their duals
+-----------------------------------------------------
+
+piece Limits
+  -- Product (limit of discrete diagram)
+  term ::= term "×" term                        → prod
+         | "(" term "," term ")"                → pair
+         | "π₁" term                            → fst
+         | "π₂" term                            → snd ;
+
+  rule fstBeta: (π₁ ($a, $b)) ~~> $a ;
+  rule sndBeta: (π₂ ($a, $b)) ~~> $b ;
+  rule pairEta: (($a, $b)) ~~> ($a, $b) when $p = ($a, $b), $a = (π₁ $p), $b = (π₂ $p) ;
+
+  -- Dependent product (Π)
+  term ::= "Π" "(" ident ":" term ")" "." term  → pi
+         | "λ" ident "." term                   → lam
+         | term term                            → app ;
+
+  rule beta: ((λ $x . $body) $arg) ~~> (subst $x $arg $body) ;
+
+  -- Equalizer
+  term ::= "Eq" term term term                  → eq          -- Eq A f g
+         | "eq" term                            → eqIn ;      -- eq a : Eq A f g (when f a = g a)
+
+piece Colimits
+  -- Coproduct (colimit of discrete diagram)
+  term ::= term "+" term                        → coprod
+         | "inl" term                           → inl
+         | "inr" term                           → inr
+         | "case" term term term                → caseSum ;
+
+  rule caseInl: (case (inl $a) $f $g) ~~> ($f $a) ;
+  rule caseInr: (case (inr $b) $f $g) ~~> ($g $b) ;
+
+  -- Dependent sum (Σ)
+  term ::= "Σ" "(" ident ":" term ")" "." term  → sigma
+         | "⟨" term "," term "⟩"                → dpair
+         | "pr₁" term                           → dfst
+         | "pr₂" term                           → dsnd ;
+
+  -- Coequalizer (quotient)
+  term ::= "Coeq" term term term                → coeq
+         | "quot" term                          → quotIn ;
+
+  -- Initial and terminal
+  term ::= "𝟘"                                  → initial     -- Initial object (Void)
+         | "𝟙"                                  → terminal    -- Terminal object (Unit)
+         | "★"                                  → star ;      -- The element of 𝟙
+
+  rule initElim: (abort $e) ~~> (abort $e) ;   -- No β for Void
+  rule termEta: $t ~~> ★ when $t : 𝟙 ;
+
+-----------------------------------------------------
+-- Layer 3b: Pushouts and Pullbacks
+-- The key for language composition
+-----------------------------------------------------
+
+piece Pushouts
+  -- Pushout: gluing along a shared part
+  -- Given A ← C → B, pushout is A ⊕_C B
+  decl ::= "pushout" ident ident ident "along" ident ident ";" → DPushout ;
+
+  term ::= ident "⊕" ident                      → pushout     -- A ⊕_C B
+         | "ι₁" term                            → pushInl     -- ι₁ : A → A ⊕_C B
+         | "ι₂" term                            → pushInr     -- ι₂ : B → A ⊕_C B
+         | "glue" term                          → pushGlue ;  -- glue : ∀c. ι₁(f c) = ι₂(g c)
+
+  -- Universal property
+  decl ::= "pushout-rec" ident ":" ident "with" pushRecBody ";" → DPushoutRec ;
+  pushRecBody ::= "{" "left" "=>" template ";"
+                      "right" "=>" template ";"
+                      "glue" "=>" template ";" "}" ;
+
+piece Pullbacks
+  -- Pullback: fiber product
+  -- Given A → C ← B, pullback is A ×_C B
+  decl ::= "pullback" ident ident ident "over" ident ident ";" → DPullback ;
+
+  term ::= ident "×" ident "over" ident         → pullback
+         | "pb" term term term                  → pbPair ;    -- pb : (a,b,p) : A ×_C B
+
+-----------------------------------------------------
+-- Layer 4: Monads and Effects
+-- T : C → C with η : Id ⟹ T, μ : T∘T ⟹ T
+-----------------------------------------------------
+
+piece Monad
+  -- Monad declaration from specification
+  decl ::= "monad" ident "=" monadSpec ";" → DMonad ;
+  monadSpec ::= "Free" ident                    → freeMonad
+              | "State" ident                   → stateMonad
+              | "Reader" ident                  → readerMonad
+              | "Writer" ident                  → writerMonad
+              | "Error" ident                   → errorMonad
+              | "Cont" ident                    → contMonad
+              | monadSpec "∘" monadSpec         → monadTrans
+              | monadSpec "×" monadSpec         → monadProd ;
+
+  -- Monad operations
+  term ::= "pure" term                          → mPure       -- η : A → T A
+         | term ">>=" term                      → mBind       -- μ ∘ T f
+         | "join" term                          → mJoin ;     -- μ : T(T A) → T A
+
+  rule bindPure: ((pure $a) >>= $f) ~~> ($f $a) ;
+  rule pureUnit: ($m >>= pure) ~~> $m ;
+  rule bindAssoc: (($m >>= $f) >>= $g) ~~> ($m >>= (λ $x . ($f $x >>= $g))) ;
+
+piece Comonad
+  -- Comonad: dual of monad
+  decl ::= "comonad" ident "=" comonadSpec ";" → DComonad ;
+  comonadSpec ::= "Cofree" ident                → cofreeComonad
+                | "Store" ident ident           → storeComonad
+                | "Env" ident                   → envComonad
+                | "Traced" ident                → tracedComonad ;
+
+  -- Comonad operations
+  term ::= "extract" term                       → wExtract    -- ε : W A → A
+         | "extend" term term                   → wExtend     -- δ ∘ W f
+         | "duplicate" term                     → wDup ;      -- δ : W A → W(W A)
+
+-----------------------------------------------------
+-- Layer 4b: Algebraic Effects
+-- More structured than monads
+-----------------------------------------------------
+
+piece Effects
+  -- Effect signature
+  decl ::= "effect" ident "{" effectOp* "}" → DEffect ;
+  effectOp ::= "op" ident ":" term "→" term ";" → DEffectOp ;
+
+  -- Effect handler
+  decl ::= "handler" ident "for" ident "{" handlerCase* "}" → DHandler ;
+  handlerCase ::= "return" ident "=>" template ";" → returnCase
+                | ident ident ident "=>" template ";" → opCase ;
+
+  -- Effect terms
+  term ::= "perform" ident term                 → perform     -- Invoke operation
+         | "handle" term "with" ident           → handle ;    -- Handle effects
+
+-----------------------------------------------------
+-- Layer 5: Profunctors and Optics
+-- P : C^op × C → Set
+-----------------------------------------------------
+
+piece Profunctor
+  -- Profunctor declaration
+  decl ::= "profunctor" ident ":" ident "↛" ident "=" profBody ";" → DProfunctor ;
+  profBody ::= "Hom" → homProf
+             | ident "∘" ident → composeProf
+             | "Const" ident → constProf ;
+
+  -- Profunctor operations
+  term ::= "dimap" term term term               → dimap ;     -- dimap f g p
+
+piece Optics
+  -- Lens: get/set pair
+  decl ::= "lens" ident ":" ident "⟷" ident "=" lensBody ";" → DLens ;
+  lensBody ::= "{" "get" "=" template ";" "set" "=" template ";" "}" ;
+
+  -- Prism: match/build pair
+  decl ::= "prism" ident ":" ident "⟷" ident "=" prismBody ";" → DPrism ;
+  prismBody ::= "{" "match" "=" template ";" "build" "=" template ";" "}" ;
+
+  -- Iso: invertible function
+  decl ::= "iso" ident ":" ident "≅" ident "=" isoBody ";" → DIso ;
+  isoBody ::= "{" "to" "=" template ";" "from" "=" template ";" "}" ;
+
+  -- Traversal: focus on multiple targets
+  decl ::= "traversal" ident ":" ident "⟿" ident "=" template ";" → DTraversal ;
+
+  -- Optic operations
+  term ::= "view" ident term                    → view        -- view l s
+         | "over" ident term term               → over        -- over l f s
+         | "set" ident term term                → setOp ;     -- set l b s
+
+-----------------------------------------------------
+-- Layer 6: Adjunctions
+-- F ⊣ G means Hom(F A, B) ≅ Hom(A, G B)
+-----------------------------------------------------
+
+piece Adjunction
+  -- Adjunction declaration
+  decl ::= ident "⊣" ident ":" ident "⇄" ident ";" → DAdjunction ;
+
+  -- Free/Forgetful adjunction
+  decl ::= "free" ident "for" ident ";" → DFreeAdj
+         | "forgetful" ident ":" ident "→" ident ";" → DForgetful ;
+
+  -- Unit and counit
+  term ::= "unit" ident term                    → adjUnit     -- η_A : A → GF A
+         | "counit" ident term                  → adjCounit ; -- ε_A : FG A → A
+
+  -- Transpose
+  term ::= "transpose" ident term               → transpose   -- Hom isomorphism
+         | "cotranspose" ident term             → cotransp ;
+
+-----------------------------------------------------
+-- Layer 7: Kan Extensions
+-- "All concepts are Kan extensions" - Mac Lane
+-----------------------------------------------------
+
+piece KanExtension
+  -- Left Kan extension: Lan_K F
+  decl ::= "lan" ident "along" ident "=" lanBody ";" → DLan ;
+  lanBody ::= "∫" ident "." term "×" term       → lanCoend    -- Coend formula
+            | template ;
+
+  -- Right Kan extension: Ran_K F
+  decl ::= "ran" ident "along" ident "=" ranBody ";" → DRan ;
+  ranBody ::= "∫" ident "." term "→" term       → ranEnd      -- End formula
+            | template ;
+
+  -- Special cases
+  decl ::= "yoneda" ident ";" → DYoneda                       -- Yoneda: C → [C^op, Set]
+         | "coYoneda" ident ";" → DCoYoneda                   -- CoYoneda: C → [C, Set]^op
+         | "codensity" ident ";" → DCodensity                 -- Ran_G G
+         | "density" ident ";" → DDensity ;                   -- Lan_G G
+
+  -- Universal property terms
+  term ::= "Lan" ident ident                    → lan         -- Lan_K F X
+         | "Ran" ident ident                    → ran         -- Ran_K F X
+         | "lanUnit" ident term                 → lanU        -- η : F ⟹ Lan_K F ∘ K
+         | "ranCounit" ident term               → ranCo ;     -- ε : Ran_K F ∘ K ⟹ F
+
+-----------------------------------------------------
+-- Layer 8: Operads and Higher Structure
+-- Multi-arity composition
+-----------------------------------------------------
+
+piece Operad
+  -- Operad declaration
+  decl ::= "operad" ident "{" operadSpec+ "}" → DOperad ;
+  operadSpec ::= "colors" ":" ident+ ";" → operadColors
+               | "O" "(" ident+ ";" ident ")" "=" term ";" → operadOps
+               | "∘" ":" template ";" → operadCompose
+               | "id" ":" template ";" → operadId ;
+
+  -- Algebra over operad
+  decl ::= "algebra" ident "over" ident "{" algOp* "}" → DOperadAlg ;
+  algOp ::= ident "=>" template ";" → algOp ;
+
+  -- Operadic terms
+  term ::= "op" ident "(" term* ")"             → opCall      -- Call operation
+         | "∘" ident term term*                 → opCompose ; -- Compose operations
+
+-----------------------------------------------------
+-- Derived: Recursion Schemes from Functors
+-- All traversals are cata/ana/hylo/para
+-----------------------------------------------------
+
+piece RecursionSchemes
+  -- Derive traversal from functor
+  decl ::= "derive" deriveKind "for" ident deriveWith? ";" → DDerive ;
+  deriveKind ::= "subst" → DSubst
+               | "shift" → DShift
+               | "map" → DMap
+               | "fold" → DFold
+               | "cata" → DCata
+               | "ana" → DAna
+               | "hylo" → DHylo
+               | "para" → DPara
+               | "normalize" → DNormalize
+               | "conv" → DConv
+               | "infer" → DInfer
+               | "check" → DCheck ;
+  deriveWith ::= "with" deriveMod ("," deriveMod)* ;
+  deriveMod  ::= "binders" "=" "[" ident ("," ident)* "]" → binderList
+               | "fuel" "=" number → fuelMod
+               | "algebra" "=" ident → algebraMod ;
+
+-----------------------------------------------------
+-- Meta: Code Generation Annotations
+-- Control how constructs map to targets
+-----------------------------------------------------
+
+piece Annotations
+  -- Target-specific hints
+  decl ::= "[@" ident ":" term "]" → DAnnotation
+         | "[@" "inline" "]" → DInline
+         | "[@" "opaque" "]" → DOpaque
+         | "[@" "derive" ident+ "]" → DDeriveHint ;
+
+  -- Source locations
+  term ::= "{-# LOC" number number "#-}" term   → withLoc ;
+
+-----------------------------------------------------
+-- Rewrite Rules (Term Rewriting System)
+-----------------------------------------------------
+
+piece Rules
+  decl ::= "rule" ident ":"? pattern "~~>" template ruleGuard? ";" → DRule ;
+  ruleGuard ::= "when" sideCondition ("," sideCondition)* ;
+  sideCondition ::= pattern "=" pattern → eq
+                  | pattern ":" pattern → hasType
+                  | pattern "not" "free" "in" pattern → notFree
+                  | "bound" pattern ":" pattern → bound ;
+
+-----------------------------------------------------
+-- Tests (Behavioral Verification)
+-----------------------------------------------------
+
+piece Tests
+  decl ::= "test" string ":" term ("~~>" term)? ";" → DTest
+         | "property" string ":" "∀" ident "." term ";" → DProperty
+         | "example" string ":" term "=" term ";" → DExample ;
+
+-----------------------------------------------------
+-- Judgments (Type Rules)
+-----------------------------------------------------
+
+piece Judgments
+  decl ::= "judgment" ident "{" judgmentRule* "}" → DJudgment ;
+  judgmentRule ::= ident ":" premises "⊢" conclusion ";" → JRule ;
+  premises ::= (premise ",")* ;
+  premise ::= pattern ":" term → typePremise
+            | "[" pattern ":" term "]" → ctxPremise
+            | pattern "=" pattern → eqPremise ;
+  conclusion ::= pattern ":" term → typeConc ;
+
+-----------------------------------------------------
+-- Complete Example: Type Theory in ~50 lines
+-----------------------------------------------------
+
+-- Functor for type theory terms
+functor TermF (A : Type) =
+  | var : Nat → A
+  | lam : A → A
+  | app : A → A → A
+  | pi  : A → A → A
+  | univ : Nat → A ;
+
+-- Initial algebra
+type Term = μ TermF ;
+
+-- Substitution via catamorphism + Kan extension
+derive subst for Term with binders = [lam, pi] ;
+
+-- Normalization via catamorphism
+derive normalize for Term with fuel = 1000 ;
+
+-- Typing is a natural transformation!
+infer : Term ⟹ Maybe Type = λ t .
+  case (Out t)
+    var => lookup
+    lam => checkLam
+    app => checkApp
+    pi  => checkPi
+    univ => pure (univ (n + 1)) ;
+
+-- Free monad for effects
+monad Elab = Free ElabEffect ;
+effect ElabEffect {
+  op fresh : Unit → Nat ;
+  op unify : Term → Term → Unit ;
+  op error : String → ⊥ ;
+}
+

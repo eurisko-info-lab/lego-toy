@@ -1,4 +1,23 @@
-# Lego in Lean 4: Composable Bidirectional Reducers
+# Lego: A Minimal Language for Building Languages
+
+**Lego** is a declarative language workbench in Lean 4 where syntax is an expression, not a procedure.
+The same grammar drives parsing, printing, and validation bidirectionally.
+
+## Quick Start
+
+```bash
+lake build
+lake exe pipeline           # Generate .lean from .lego
+lake build CubicalGenerated # Compile generated cubical TT
+```
+
+## Leverage Metrics
+
+| Input | Output | Ratio |
+|-------|--------|-------|
+| 99 derives | 1,718 functions | **17x** |
+| 99 derives | 11,236 Lean lines | **113x** |
+| Bootstrap.lego (521 lines) | Full meta-grammar | - |
 
 ## Philosophy
 
@@ -177,8 +196,6 @@ def metaGrammar : Language := {
 
 It has the same structure as any user-defined language. The only difference is it's pre-compiled in Lean (bootstrapped) rather than parsed from a `.lego` file.
 
-This is exactly like `Grammar.sexpr` in the Haskell implementation - a compiled representation of the grammar for grammars.
-
 ## The Roundtrip Theorem
 
 ```lean
@@ -194,25 +211,10 @@ This is provable from the lawfulness of BiReducers.
 ## Building
 
 ```bash
-cd toy
 lake build
-lake exe lego
+lake exe pipeline           # Generate .lean from .lego files
+lake build CubicalGenerated # Compile generated code
 ```
-
-## Comparison to Haskell Implementation
-
-| Haskell | Lean 4 | Purpose |
-|---------|--------|---------|
-| `GrammarExpr` | `GrammarExpr` | Grammar algebra (Kleene *-semiring) |
-| `Term` | `Term` | Universal AST |
-| `CompiledLang` | `Language` | Language = ⊔ Pieces |
-| `Grammar.sexpr` | `Bootstrap.metaGrammar` | Pre-compiled grammar for grammars |
-| `parseLegoFile` | `metaInterp.parse` | Parse .lego files |
-| `normalize` | `interp.normalize` | Apply rules (forward) |
-| `printExpr` | `interp.print` | Generate text (backward) |
-| - | `BiReducer` | Explicit bidirectional abstraction |
-
-The key difference: in Lean we can **prove** the algebraic laws hold, and the bidirectional structure is explicit in the types.
 
 ## Example Languages
 

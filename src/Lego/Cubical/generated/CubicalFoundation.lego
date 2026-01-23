@@ -1,0 +1,188 @@
+-----------------------------------------------------
+-- CubicalFoundation.lego: Cubical TT via Category Theory
+--
+-- Provides the categorical semantics for cubical type theory:
+-- - Interval as the walking isomorphism
+-- - Cofibrations as a distributive lattice
+-- - Path types as dinatural transformations
+-- - Kan operations as Kan extensions
+--
+-- Stack: CategoryTheory → CubicalFoundation → [Cubical TT files]
+-----------------------------------------------------
+
+import Lego.Algebra ;
+import CategoryTheory ;
+
+lang CubicalFoundation :=
+
+-----------------------------------------------------
+-- THE INTERVAL CATEGORY
+-----------------------------------------------------
+piece Interval
+  -- I is the free category with an isomorphism
+  -- Objects: 0, 1
+  -- Morphisms: id, the iso, and its inverse
+  
+  cat I objects dim morphisms dimHom dimHom ;
+  
+  dim ::= "d0" → d0 | "d1" → d1 | "dvar" <number> → dvar ;
+  
+  -- De Morgan algebra structure on I
+  rule join0L: (join d0 $r) ~> $r ;
+  rule join0R: (join $r d0) ~> $r ;
+  rule join1L: (join d1 $r) ~> d1 ;
+  rule join1R: (join $r d1) ~> d1 ;
+  
+  rule meet0L: (meet d0 $r) ~> d0 ;
+  rule meet0R: (meet $r d0) ~> d0 ;
+  rule meet1L: (meet d1 $r) ~> $r ;
+  rule meet1R: (meet $r d1) ~> $r ;
+  
+  rule inv0: (inv d0) ~> d1 ;
+  rule inv1: (inv d1) ~> d0 ;
+  rule invInv: (inv (inv $r)) ~> $r ;
+  
+  -- De Morgan laws
+  rule deMorganJoin: (inv (join $r $s)) ~> (meet (inv $r) (inv $s)) ;
+  rule deMorganMeet: (inv (meet $r $s)) ~> (join (inv $r) (inv $s)) ;
+
+-----------------------------------------------------
+-- COFIBRATIONS AS A DISTRIBUTIVE LATTICE
+-----------------------------------------------------
+piece Cofibration
+  -- Cofibrations form the face lattice
+  cof ::= "ctop" → ctop | "cbot" → cbot
+        | "ceq" dim dim → ceq
+        | "cand" cof cof → cand
+        | "cor" cof cof → cor ;
+  
+  -- Lattice laws
+  rule andTop: (cand ctop $φ) ~> $φ ;
+  rule andBot: (cand cbot $φ) ~> cbot ;
+  rule orTop: (cor ctop $φ) ~> ctop ;
+  rule orBot: (cor cbot $φ) ~> $φ ;
+  
+  -- Idempotence
+  rule andIdem: (cand $φ $φ) ~> $φ ;
+  rule orIdem: (cor $φ $φ) ~> $φ ;
+  
+  -- Dimension equality
+  rule eq00: (ceq d0 d0) ~> ctop ;
+  rule eq11: (ceq d1 d1) ~> ctop ;
+  rule eq01: (ceq d0 d1) ~> cbot ;
+  rule eq10: (ceq d1 d0) ~> cbot ;
+
+-----------------------------------------------------
+-- PATH TYPES via DINATURALITY
+-----------------------------------------------------
+piece PathTypes
+  -- Path A a b = dinatural transformation I → A
+  -- with boundary conditions at 0 and 1
+  
+  dinatural path : (dim, term) ⤇ (dim, term) ;
+  
+  -- Path introduction: λi. t where t[0/i] = a, t[1/i] = b
+  rule plamIntro: (plam $body) where
+    (subst $body d0) = $a,
+    (subst $body d1) = $b
+    ~> (mkPath $a $b $body) ;
+  
+  -- Path elimination: p @ r
+  rule pappElim: (papp (mkPath $a $b $body) $r) ~> (subst $body $r) ;
+  
+  -- Boundary conditions
+  rule pathBound0: (papp $p d0) ~> (pathLeft $p) ;
+  rule pathBound1: (papp $p d1) ~> (pathRight $p) ;
+  
+  -- Reflexivity: constant path
+  rule refl: (refl $a) ~> (plam $a) ;
+  rule reflApp: (papp (refl $a) $r) ~> $a ;
+
+-----------------------------------------------------
+-- KAN OPERATIONS as KAN EXTENSIONS
+-----------------------------------------------------
+piece KanOperations
+  -- The key insight: Kan operations ARE Kan extensions!
+  
+  -- Coercion: transport along a line of types
+  -- coe r r' (i.A) a : A[r'/i]
+  -- This is a LEFT KAN EXTENSION along the inclusion {r} → I
+  
+  lan coe along (inclusion dim) ;
+  
+  rule coeRefl: (coe $r $r $A $a) ~> $a ;
+  rule coeTrans: (coe $r $s (coe $s $t $A $a)) 
+    ~> (coe $r $t $A $a) ;
+  
+  -- Homogeneous composition: fill a cube
+  -- hcom r r' A [φ → u] a : A
+  -- This is a RIGHT KAN EXTENSION (limit-like)
+  
+  ran hcom along (proj cof) ;
+  
+  rule hcomRefl: (hcom $r $r $A $sys $a) ~> $a ;
+  rule hcomTube: (hcom $r $r' $A $sys $a) where $φ 
+    ~> (sys $φ $r') ;
+
+-----------------------------------------------------
+-- GLUEING via ADJUNCTIONS
+-----------------------------------------------------
+piece Glueing
+  -- Glue types implement univalence
+  -- Glue [φ ↦ (T, e)] A
+  
+  -- The equivalence adjunction: 
+  -- Equiv(A,B) forms a groupoid, glue is the action
+  
+  rule glueIntro: (glue $φ $T $e $a) where $φ
+    ~> (equivFun $e $a) ;
+  
+  rule glueElim: (unglue $φ $T $e (glue $φ $T $e $a))
+    ~> $a ;
+  
+  -- V-types: efficient glueing
+  rule vinIntro0: (vin d0 $a $b) ~> $a ;
+  rule vinIntro1: (vin d1 $a $b) ~> $b ;
+
+-----------------------------------------------------
+-- HIGHER INDUCTIVE TYPES via OPERADS
+-----------------------------------------------------
+piece HigherInductiveTypes
+  -- HITs are algebras over a polynomial + path operad
+  
+  operad HIT {
+    arity 0 : point ;        -- point constructors
+    arity 1 : path ;         -- path constructors  
+    arity 2 : surface ;      -- 2-cell constructors
+    compose : composition ;
+    unit : refl ;
+  }
+  
+  -- Circle: point + loop
+  algebra Circle over HIT where
+    point = base,
+    path = loop : base = base ;
+  
+  -- Torus: point + 2 loops + surface
+  algebra Torus over HIT where
+    point = tbase,
+    path = [meridian, equator],
+    surface = tsurf : meridian ∙ equator = equator ∙ meridian ;
+
+-----------------------------------------------------
+-- DERIVE THE SEMANTICS
+-----------------------------------------------------
+
+-- Substitution is a Kan extension
+derive subst as ran along weaken ;
+
+-- Evaluation is the counit of syntax ⊣ semantics
+derive eval as counit ;
+
+-- Normalization via codensity
+derive normalize via codensity ;
+
+-- Conversion via naturality
+derive conv via naturality ;
+
+end

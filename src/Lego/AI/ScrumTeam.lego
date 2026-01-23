@@ -1,0 +1,944 @@
+-----------------------------------------------------
+-- ScrumTeam.lego: Multi-Agent Scrum Team
+--
+-- A complete Scrum implementation with AI agents:
+-- - Product Owner: Human (you!) - human-in-the-loop
+-- - Scrum Master: AI agent coordinating the team
+-- - Dev Team: Specialized AI agents (Frontend, Backend, QA, DevOps)
+--
+-- Implements all Scrum ceremonies and artifacts.
+-----------------------------------------------------
+
+import Lego.Algebra ;
+import Agent ;
+
+lang ScrumTeam :=
+
+-----------------------------------------------------
+-- SCRUM ROLES
+-----------------------------------------------------
+piece Roles
+  scrumRole ::= "rolePO" → rolePO           -- Product Owner (Human)
+              | "roleSM" → roleSM           -- Scrum Master (Agent)
+              | "roleDev" specialty → roleDev ;  -- Developer (Agent)
+  
+  specialty ::= "specFrontend" → specFrontend
+              | "specBackend" → specBackend
+              | "specFullstack" → specFullstack
+              | "specQA" → specQA
+              | "specDevOps" → specDevOps
+              | "specArchitect" → specArchitect
+              | "specUX" → specUX
+              | "specData" → specData ;
+  
+  -- Team member
+  teamMember ::= "mkMember" <string> scrumRole agent → mkMember ;
+  
+  -- The Scrum Team
+  scrumTeam ::= "mkScrumTeam" teamMember scrumMembers → mkScrumTeam ;
+  
+  scrumMembers ::= "membersEmpty" → membersEmpty
+                 | "membersCons" teamMember scrumMembers → membersCons ;
+
+-----------------------------------------------------
+-- SCRUM ARTIFACTS
+-----------------------------------------------------
+piece Artifacts
+  -- User Story
+  userStory ::= "mkStory" storyId <string> <string> storyPoints acceptance → mkStory ;
+  
+  storyId ::= "storyId" <string> → storyId ;
+  
+  storyPoints ::= "sp1" → sp1 | "sp2" → sp2 | "sp3" → sp3 
+                | "sp5" → sp5 | "sp8" → sp8 | "sp13" → sp13
+                | "spUnestimated" → spUnestimated ;
+  
+  acceptance ::= "accEmpty" → accEmpty
+               | "accCriteria" <string> acceptance → accCriteria ;
+  
+  -- Product Backlog
+  productBacklog ::= "pbEmpty" → pbEmpty
+                   | "pbItem" userStory priority productBacklog → pbItem ;
+  
+  priority ::= "priCritical" → priCritical
+             | "priHigh" → priHigh
+             | "priMedium" → priMedium
+             | "priLow" → priLow ;
+  
+  -- Sprint Backlog
+  sprintBacklog ::= "sbEmpty" → sbEmpty
+                  | "sbItem" sprintItem sprintBacklog → sbItem ;
+  
+  sprintItem ::= "mkSprintItem" userStory tasks assignee itemStatus → mkSprintItem ;
+  
+  tasks ::= "tasksEmpty" → tasksEmpty
+          | "tasksCons" task tasks → tasksCons ;
+  
+  task ::= "mkTask" <string> <string> taskStatus → mkTask ;
+  
+  taskStatus ::= "tsTodo" → tsTodo
+               | "tsInProgress" → tsInProgress
+               | "tsReview" → tsReview
+               | "tsDone" → tsDone
+               | "tsBlocked" <string> → tsBlocked ;
+  
+  itemStatus ::= "isNotStarted" → isNotStarted
+               | "isInProgress" → isInProgress
+               | "isInReview" → isInReview
+               | "isDone" → isDone ;
+  
+  assignee ::= "unassigned" → unassigned
+             | "assigned" <string> → assigned ;
+  
+  -- Sprint
+  sprint ::= "mkSprint" sprintId <string> sprintBacklog sprintStatus → mkSprint ;
+  
+  sprintId ::= "sprintId" <number> → sprintId ;
+  
+  sprintStatus ::= "ssPlanning" → ssPlanning
+                 | "ssActive" → ssActive
+                 | "ssReview" → ssReview
+                 | "ssRetro" → ssRetro
+                 | "ssComplete" → ssComplete ;
+  
+  -- Increment (potentially shippable product)
+  increment ::= "mkIncrement" sprint artifacts → mkIncrement ;
+  
+  artifacts ::= "artEmpty" → artEmpty
+              | "artCode" <string> artifacts → artCode
+              | "artDoc" <string> artifacts → artDoc
+              | "artTest" <string> artifacts → artTest ;
+
+-----------------------------------------------------
+-- SCRUM EVENTS
+-----------------------------------------------------
+piece Events
+  scrumEvent ::= "evSprintPlanning" → evSprintPlanning
+               | "evDailyStandup" → evDailyStandup
+               | "evSprintReview" → evSprintReview
+               | "evRetro" → evRetro
+               | "evBacklogRefinement" → evBacklogRefinement ;
+  
+  -- Sprint Planning: PO presents, team estimates & commits
+  rule sprintPlanning: (runEvent evSprintPlanning $team $backlog)
+    ~> (let $topItems (getTopPriority $backlog 10)
+        (let $poApproved (humanCheck (cpApproval "Sprint Goal & Stories") $topItems)
+        (let $estimated (estimateStories $team $poApproved)
+        (let $committed (commitToSprint $team $estimated)
+        (mkSprint (nextSprintId) "Sprint Goal" $committed ssActive))))) ;
+  
+  -- Daily Standup: Each agent reports
+  standupReport ::= "mkStandup" <string> <string> <string> blockers → mkStandup ;
+  
+  blockers ::= "noBlockers" → noBlockers
+             | "hasBlockers" <string> blockers → hasBlockers ;
+  
+  rule dailyStandup: (runEvent evDailyStandup $team $sprint)
+    ~> (let $reports (collectStandups $team $sprint)
+        (let $blockers (extractBlockers $reports)
+        (let $smActions (smResolveBlockers $blockers)
+        (updateSprintStatus $sprint $reports)))) ;
+  
+  -- Sprint Review: Demo to PO
+  rule sprintReview: (runEvent evSprintReview $team $sprint)
+    ~> (let $completed (getCompletedItems $sprint)
+        (let $demo (prepareDemos $completed)
+        (let $poFeedback (humanCheck (cpReview "Sprint Review") $demo)
+        (let $accepted (filterAccepted $completed $poFeedback)
+        (mkIncrement $sprint (gatherArtifacts $accepted)))))) ;
+  
+  -- Retrospective: Team reflects
+  retroItem ::= "retroGood" <string> → retroGood
+              | "retroBad" <string> → retroBad
+              | "retroAction" <string> assignee → retroAction ;
+  
+  rule retrospective: (runEvent evRetro $team $sprint)
+    ~> (let $feedback (collectRetroFeedback $team)
+        (let $grouped (groupFeedback $feedback)
+        (let $actions (voteOnActions $team $grouped)
+        (recordRetroActions $actions)))) ;
+  
+  -- Backlog Refinement: Clarify & estimate upcoming stories
+  rule backlogRefinement: (runEvent evBacklogRefinement $team $backlog)
+    ~> (let $unclear (getUnrefinedStories $backlog)
+        (let $clarified (askPOForClarification $unclear)
+        (let $estimated (estimateStories $team $clarified)
+        (updateBacklog $backlog $estimated)))) ;
+
+-----------------------------------------------------
+-- AGENT BEHAVIORS
+-----------------------------------------------------
+piece AgentBehaviors
+  -- Scrum Master behaviors
+  rule smFacilitate: (smAction facilitate $event $team)
+    ~> (let $agenda (prepareAgenda $event)
+        (let $timeboxed (runTimeboxed $event $agenda)
+        (summarize $timeboxed))) ;
+  
+  rule smRemoveBlocker: (smAction removeBlocker $blocker)
+    ~> (let $analysis (analyzeBlocker $blocker)
+        (let $solution (findSolution $analysis)
+        (if (needsEscalation $solution)
+            (humanCheck (cpEscalation "Blocker needs PO decision" sevMajor) $blocker)
+            (implementSolution $solution)))) ;
+  
+  rule smProtectTeam: (smAction protectTeam $interrupt)
+    ~> (let $urgency (assessUrgency $interrupt)
+        (if (eq $urgency priCritical)
+            (escalateToPO $interrupt)
+            (deferToNextSprint $interrupt))) ;
+  
+  -- Developer behaviors
+  rule devPickTask: (devAction pickTask $dev $sprint)
+    ~> (let $available (getAvailableTasks $sprint)
+        (let $matching (filterBySpecialty (getSpecialty $dev) $available)
+        (let $selected (selectHighestPriority $matching)
+        (assignTask $selected $dev)))) ;
+  
+  rule devWorkOnTask: (devAction workOnTask $dev $task)
+    ~> (let $understanding (analyzeTask $task)
+        (let $approach (planApproach $understanding)
+        (let $implementation (implement $approach)
+        (let $selfReview (reviewOwnWork $implementation)
+        (submitForReview $task $selfReview))))) ;
+  
+  rule devReviewCode: (devAction reviewCode $reviewer $submission)
+    ~> (let $analysis (analyzeCode $submission)
+        (let $issues (findIssues $analysis)
+        (if (isEmpty $issues)
+            (approve $submission)
+            (requestChanges $submission $issues)))) ;
+  
+  -- QA behaviors
+  rule qaWriteTests: (qaAction writeTests $story)
+    ~> (let $acceptance (getAcceptanceCriteria $story)
+        (let $testCases (generateTestCases $acceptance)
+        (let $automated (automateTests $testCases)
+        (addToTestSuite $automated)))) ;
+  
+  rule qaRunTests: (qaAction runTests $increment)
+    ~> (let $suite (getTestSuite)
+        (let $results (executeTests $suite $increment)
+        (let $report (generateTestReport $results)
+        (if (allPassed $results)
+            (signOff $increment)
+            (reportBugs $results))))) ;
+  
+  -- DevOps behaviors
+  rule devopsDeploy: (devopsAction deploy $increment $env)
+    ~> (let $pipeline (preparePipeline $env)
+        (let $built (buildArtifacts $increment)
+        (let $tested (runIntegrationTests $built)
+        (if (allPassed $tested)
+            (deployToEnv $built $env)
+            (rollback $env))))) ;
+
+-----------------------------------------------------
+-- COMMUNICATION
+-----------------------------------------------------
+piece Communication
+  -- Slack-like channels
+  channel ::= "chGeneral" → chGeneral
+            | "chDev" → chDev
+            | "chAlerts" → chAlerts
+            | "chPOChannel" → chPOChannel ;
+  
+  slackMsg ::= "mkSlackMsg" <string> channel <string> → mkSlackMsg ;
+  
+  -- Post to channel
+  rule postToChannel: (post (mkSlackMsg $from $ch $msg))
+    ~> (broadcast $ch $from $msg) ;
+  
+  -- Notify PO (human-in-the-loop)
+  rule notifyPO: (notifyPO $urgency $msg)
+    ~> (humanCheck (cpInput $msg) $urgency) ;
+  
+  -- Request PO decision
+  rule askPO: (askPO $question $options)
+    ~> (let $formatted (formatQuestion $question $options)
+        (humanCheck (cpInput $formatted) valNull)) ;
+
+-----------------------------------------------------
+-- WORKFLOW ORCHESTRATION
+-----------------------------------------------------
+piece Workflow
+  -- Full sprint cycle
+  rule runSprint: (runSprint $team $backlog $sprintNum)
+    ~> (let $sprint (runEvent evSprintPlanning $team $backlog)
+        (let $completed (runSprintExecution $team $sprint)
+        (let $increment (runEvent evSprintReview $team $completed)
+        (let $retro (runEvent evRetro $team $completed)
+        (recordSprintMetrics $completed $increment))))) ;
+  
+  -- Sprint execution (daily loop)
+  rule runSprintExecution: (runSprintExecution $team $sprint 0)
+    ~> $sprint ;
+  rule runSprintExecutionDay: (runSprintExecution $team $sprint (succ $days))
+    ~> (let $updated (runEvent evDailyStandup $team $sprint)
+        (let $worked (parallelWork $team $updated)
+        (runSprintExecution $team $worked $days))) ;
+  
+  -- Parallel work: all devs work simultaneously
+  rule parallelWork: (parallelWork $team $sprint)
+    ~> (mapParallel (getDevs $team)
+         (fn $dev (devAction workOnTask $dev (getCurrentTask $dev $sprint)))) ;
+  
+  -- Initialize a new project
+  rule initProject: (initProject $projectName $po)
+    ~> (let $sm (createAgent "ScrumMaster" (mkSMPrompt))
+        (let $frontend (createAgent "Frontend" (mkDevPrompt specFrontend))
+        (let $backend (createAgent "Backend" (mkDevPrompt specBackend))
+        (let $qa (createAgent "QA" (mkDevPrompt specQA))
+        (let $devops (createAgent "DevOps" (mkDevPrompt specDevOps))
+        (mkScrumTeam (mkMember $po rolePO humanAgent)
+          (membersCons (mkMember "SM" roleSM $sm)
+          (membersCons (mkMember "FE" (roleDev specFrontend) $frontend)
+          (membersCons (mkMember "BE" (roleDev specBackend) $backend)
+          (membersCons (mkMember "QA" (roleDev specQA) $qa)
+          (membersCons (mkMember "DevOps" (roleDev specDevOps) $devops)
+          membersEmpty))))))))))) ;
+
+-----------------------------------------------------
+-- PO INTERACTIONS (Human-in-the-Loop)
+-----------------------------------------------------
+piece POInteractions
+  -- Story creation (PO writes, team estimates)
+  rule poCreateStory: (poCreateStory $title $description)
+    ~> (let $draft (mkStory (newStoryId) $title $description spUnestimated accEmpty)
+        (let $acceptance (humanCheck (cpInput "Add acceptance criteria") $draft)
+        (let $withAcc (addAcceptance $draft $acceptance)
+        (addToBacklog $withAcc)))) ;
+  
+  -- Prioritization (PO decides)
+  rule poPrioritize: (poPrioritize $backlog)
+    ~> (let $formatted (formatBacklogForReview $backlog)
+        (let $newOrder (humanCheck (cpInput "Reorder backlog (drag & drop)") $formatted)
+        (reorderBacklog $backlog $newOrder))) ;
+  
+  -- Accept/Reject completed work
+  rule poAcceptWork: (poAcceptWork $item $demo)
+    ~> (let $review (humanCheck (cpReview "Accept this work?") $demo)
+        (if (accepted $review)
+            (markDone $item)
+            (let $feedback (humanCheck (cpInput "What needs to change?") $item)
+            (reopenWithFeedback $item $feedback)))) ;
+  
+  -- Answer team questions
+  rule poAnswerQuestion: (poAnswerQuestion $question $from)
+    ~> (let $answer (humanCheck (cpInput $question) $from)
+        (deliverAnswer $answer $from)) ;
+
+-----------------------------------------------------
+-- METRICS & REPORTING
+-----------------------------------------------------
+piece Metrics
+  velocity ::= "mkVelocity" <number> → mkVelocity ;
+  
+  burndown ::= "mkBurndown" dataPoints → mkBurndown ;
+  
+  dataPoints ::= "dpEmpty" → dpEmpty
+               | "dpPoint" <number> <number> dataPoints → dpPoint ;
+  
+  -- Calculate velocity
+  rule calcVelocity: (calcVelocity $completedSprints)
+    ~> (let $points (map $completedSprints sumStoryPoints)
+        (mkVelocity (average $points))) ;
+  
+  -- Generate burndown
+  rule genBurndown: (genBurndown $sprint)
+    ~> (let $total (sumStoryPoints (getItems $sprint))
+        (let $daily (dailyRemaining $sprint)
+        (mkBurndown $daily))) ;
+  
+  -- Sprint summary for PO
+  rule sprintSummary: (sprintSummary $sprint $increment)
+    ~> (let $completed (countCompleted $sprint)
+        (let $velocity (calcVelocity $sprint)
+        (let $burndown (genBurndown $sprint)
+        (formatSummary $completed $velocity $burndown)))) ;
+
+-----------------------------------------------------
+-- CODE GENERATION & REVIEW
+-----------------------------------------------------
+piece CodeGen
+  -- Code artifact types
+  codeArtifact ::= "caFile" filePath language content → caFile
+                 | "caPR" prId title description files → caPR
+                 | "caCommit" commitId message files → caCommit ;
+  
+  filePath ::= "mkPath" <string> → mkPath ;
+  language ::= "langLean" → langLean | "langTS" → langTS | "langPython" → langPython
+             | "langRust" → langRust | "langGo" → langGo | "langJava" → langJava ;
+  content ::= "mkContent" <string> → mkContent ;
+  
+  files ::= "filesEmpty" → filesEmpty
+          | "filesCons" codeArtifact files → filesCons ;
+  
+  prId ::= "prId" <number> → prId ;
+  commitId ::= "commitId" <string> → commitId ;
+  
+  -- Generate code from story
+  rule generateCode: (generateCode $story $codebase)
+    ~> (let $spec (extractSpec $story)
+        (let $context (getRelevantCode $codebase $spec)
+        (let $design (planImplementation $spec $context)
+        (let $code (llmGenerateCode $design $context)
+        (let $tests (generateTests $spec $code)
+        (caCommit (newCommitId) (storyTitle $story) 
+          (filesCons $code (filesCons $tests filesEmpty)))))))) ;
+  
+  -- Code review
+  reviewResult ::= "rvApproved" comments → rvApproved
+                 | "rvChangesRequested" comments → rvChangesRequested
+                 | "rvBlocked" <string> → rvBlocked ;
+  
+  comments ::= "commentsEmpty" → commentsEmpty
+             | "commentsCons" reviewComment comments → commentsCons ;
+  
+  reviewComment ::= "mkComment" filePath <number> <string> severity → mkComment ;
+  
+  rule reviewCode: (reviewCode $pr $reviewer)
+    ~> (let $files (getPRFiles $pr)
+        (let $analysis (analyzeCodeQuality $files)
+        (let $security (checkSecurityIssues $files)
+        (let $style (checkStyleGuide $files)
+        (let $tests (checkTestCoverage $files)
+        (aggregateReview $analysis $security $style $tests)))))) ;
+  
+  -- Create PR
+  rule createPR: (createPR $story $code $branch)
+    ~> (let $title (formatPRTitle $story)
+        (let $desc (formatPRDescription $story $code)
+        (let $reviewers (selectReviewers $code)
+        (caPR (newPRId) $title $desc (getFiles $code))))) ;
+
+-----------------------------------------------------
+-- KNOWLEDGE MANAGEMENT (RAG)
+-----------------------------------------------------
+piece Knowledge
+  -- Knowledge types
+  knowledge ::= "kCodebase" codeIndex → kCodebase
+              | "kADR" adr → kADR
+              | "kDoc" doc → kDoc
+              | "kDecision" decision → kDecision ;
+  
+  codeIndex ::= "mkCodeIndex" embeddings fileMap → mkCodeIndex ;
+  
+  embeddings ::= "embedsEmpty" → embedsEmpty
+               | "embedsCons" <string> embedding embeddings → embedsCons ;
+  
+  embedding ::= "mkEmbedding" floats → mkEmbedding ;
+  
+  floats ::= "floatsEmpty" → floatsEmpty
+           | "floatsCons" <number> floats → floatsCons ;
+  
+  fileMap ::= "fmEmpty" → fmEmpty
+            | "fmEntry" <string> <string> fileMap → fmEntry ;
+  
+  -- Architecture Decision Record
+  adr ::= "mkADR" <number> <string> adrStatus context decision consequences → mkADR ;
+  
+  adrStatus ::= "adrProposed" → adrProposed
+              | "adrAccepted" → adrAccepted
+              | "adrDeprecated" → adrDeprecated
+              | "adrSuperseded" <number> → adrSuperseded ;
+  
+  context ::= "mkContext" <string> → mkContext ;
+  decision ::= "mkDecision" <string> → mkDecision ;
+  consequences ::= "mkConsequences" <string> → mkConsequences ;
+  
+  doc ::= "mkDoc" <string> <string> docType → mkDoc ;
+  docType ::= "dtAPI" → dtAPI | "dtGuide" → dtGuide | "dtReadme" → dtReadme ;
+  
+  -- RAG query for context
+  rule queryKnowledge: (queryKnowledge $query $kb)
+    ~> (let $queryEmbed (embed $query)
+        (let $relevant (retrieveTop $kb $queryEmbed 5)
+        (formatContext $relevant))) ;
+  
+  -- Index codebase
+  rule indexCodebase: (indexCodebase $repo)
+    ~> (let $files (listAllFiles $repo)
+        (let $chunks (chunkFiles $files)
+        (let $embeds (mapParallel $chunks embed)
+        (mkCodeIndex $embeds (buildFileMap $files))))) ;
+  
+  -- Create ADR
+  rule createADR: (createADR $title $contextDesc $decisionDesc $consequencesDesc)
+    ~> (let $num (nextADRNumber)
+        (let $adr (mkADR $num $title adrProposed 
+                    (mkContext $contextDesc)
+                    (mkDecision $decisionDesc)
+                    (mkConsequences $consequencesDesc))
+        (let $approved (humanCheck (cpApproval "Approve ADR?") $adr)
+        (if $approved (setStatus $adr adrAccepted) $adr)))) ;
+  
+  -- Auto-generate docs
+  rule generateDocs: (generateDocs $code $docType)
+    ~> (let $analysis (analyzeCodeStructure $code)
+        (let $docContent (llmGenerateDocs $analysis $docType)
+        (mkDoc (docTitle $code $docType) $docContent $docType))) ;
+
+-----------------------------------------------------
+-- EXTERNAL TOOL INTEGRATION (MCP/GitHub/Jira)
+-----------------------------------------------------
+piece ExternalTools
+  -- GitHub integration
+  ghAction ::= "ghCreateBranch" <string> → ghCreateBranch
+             | "ghCreatePR" <string> <string> <string> → ghCreatePR
+             | "ghMergePR" <number> → ghMergePR
+             | "ghCreateIssue" <string> <string> labels → ghCreateIssue
+             | "ghAddComment" <number> <string> → ghAddComment
+             | "ghRequestReview" <number> reviewers → ghRequestReview ;
+  
+  labels ::= "labelsEmpty" → labelsEmpty
+           | "labelsCons" <string> labels → labelsCons ;
+  
+  reviewers ::= "reviewersEmpty" → reviewersEmpty
+              | "reviewersCons" <string> reviewers → reviewersCons ;
+  
+  rule execGitHub: (execGitHub (ghCreateBranch $name))
+    ~> (apiCall "github" "createBranch" (jsonObj "name" $name)) ;
+  rule execGitHubPR: (execGitHub (ghCreatePR $title $body $branch))
+    ~> (apiCall "github" "createPR" (jsonObj3 "title" $title "body" $body "head" $branch)) ;
+  rule execGitHubMerge: (execGitHub (ghMergePR $num))
+    ~> (apiCall "github" "mergePR" (jsonObj "number" $num)) ;
+  
+  -- Jira/Linear integration
+  jiraAction ::= "jiraCreateIssue" <string> <string> issueType → jiraCreateIssue
+               | "jiraUpdateStatus" <string> jiraStatus → jiraUpdateStatus
+               | "jiraSyncStory" userStory → jiraSyncStory
+               | "jiraAddComment" <string> <string> → jiraAddComment ;
+  
+  issueType ::= "itStory" → itStory | "itBug" → itBug | "itTask" → itTask | "itEpic" → itEpic ;
+  
+  jiraStatus ::= "jsTodo" → jsTodo | "jsInProgress" → jsInProgress 
+               | "jsReview" → jsReview | "jsDone" → jsDone ;
+  
+  rule execJira: (execJira (jiraCreateIssue $title $desc $type))
+    ~> (apiCall "jira" "createIssue" (jsonObj3 "summary" $title "description" $desc "type" $type)) ;
+  rule execJiraSync: (execJira (jiraSyncStory $story))
+    ~> (let $jiraId (getJiraId $story)
+        (apiCall "jira" "updateIssue" (storyToJiraJson $story $jiraId))) ;
+  
+  -- Slack integration
+  slackAction ::= "slackPost" <string> <string> → slackPost
+                | "slackThread" <string> <string> <string> → slackThread
+                | "slackDM" <string> <string> → slackDM
+                | "slackReact" <string> <string> → slackReact ;
+  
+  rule execSlack: (execSlack (slackPost $channel $msg))
+    ~> (apiCall "slack" "postMessage" (jsonObj2 "channel" $channel "text" $msg)) ;
+  rule execSlackDM: (execSlack (slackDM $user $msg))
+    ~> (apiCall "slack" "postMessage" (jsonObj2 "channel" (dmChannel $user) "text" $msg)) ;
+
+-----------------------------------------------------
+-- TECHNICAL DEBT TRACKING
+-----------------------------------------------------
+piece TechDebt
+  debtItem ::= "mkDebt" debtId <string> debtType debtSeverity debtStatus location → mkDebt ;
+  
+  debtId ::= "debtId" <string> → debtId ;
+  
+  debtType ::= "dtCodeSmell" → dtCodeSmell
+             | "dtDuplication" → dtDuplication
+             | "dtComplexity" → dtComplexity
+             | "dtOutdatedDep" → dtOutdatedDep
+             | "dtMissingTest" → dtMissingTest
+             | "dtHardcoded" → dtHardcoded
+             | "dtSecurityRisk" → dtSecurityRisk ;
+  
+  debtSeverity ::= "dsCritical" → dsCritical
+                 | "dsHigh" → dsHigh
+                 | "dsMedium" → dsMedium
+                 | "dsLow" → dsLow ;
+  
+  debtStatus ::= "debtNew" → debtNew
+               | "debtAcknowledged" → debtAcknowledged
+               | "debtScheduled" sprintId → debtScheduled
+               | "debtResolved" → debtResolved ;
+  
+  location ::= "mkLocation" filePath <number> <number> → mkLocation ;
+  
+  debtRegistry ::= "drEmpty" → drEmpty
+                 | "drItem" debtItem debtRegistry → drItem ;
+  
+  -- Detect debt during code review
+  rule detectDebt: (detectDebt $code)
+    ~> (let $smells (detectCodeSmells $code)
+        (let $dupes (detectDuplication $code)
+        (let $complexity (detectHighComplexity $code)
+        (let $deps (detectOutdatedDeps $code)
+        (let $security (detectSecurityRisks $code)
+        (concat $smells (concat $dupes (concat $complexity (concat $deps $security))))))))) ;
+  
+  -- Log debt
+  rule logDebt: (logDebt $description $type $severity $loc)
+    ~> (let $item (mkDebt (newDebtId) $description $type $severity debtNew $loc)
+        (addToRegistry $item)) ;
+  
+  -- Suggest refactoring priorities
+  rule prioritizeDebt: (prioritizeDebt $registry)
+    ~> (let $scored (map $registry scoreDebtItem)
+        (sortBy $scored debtScore descending)) ;
+  
+  -- Debt burndown
+  rule debtBurndown: (debtBurndown $registry $sprints)
+    ~> (let $resolved (filter $registry isResolved)
+        (let $byTime (groupByResolutionDate $resolved)
+        (formatBurndown $byTime))) ;
+
+-----------------------------------------------------
+-- ESTIMATION INTELLIGENCE
+-----------------------------------------------------
+piece Estimation
+  estimate ::= "mkEstimate" storyPoints confidence risks → mkEstimate ;
+  
+  risks ::= "risksEmpty" → risksEmpty
+          | "risksCons" risk risks → risksCons ;
+  
+  risk ::= "mkRisk" <string> riskLevel → mkRisk ;
+  
+  riskLevel ::= "rlHigh" → rlHigh | "rlMedium" → rlMedium | "rlLow" → rlLow ;
+  
+  historicalData ::= "hdEmpty" → hdEmpty
+                   | "hdEntry" userStory storyPoints <number> historicalData → hdEntry ;
+  
+  -- Learn from history
+  rule learnVelocity: (learnVelocity $completedStories)
+    ~> (let $actuals (map $completedStories getActualEffort)
+        (let $estimates (map $completedStories getEstimate)
+        (let $ratio (average (zipWith divide $actuals $estimates))
+        (updateVelocityModel $ratio)))) ;
+  
+  -- AI-assisted estimation
+  rule estimateStory: (estimateStory $story $history $codebase)
+    ~> (let $similar (findSimilarStories $story $history)
+        (let $complexity (analyzeComplexity $story $codebase)
+        (let $dependencies (findDependencies $story $codebase)
+        (let $risks (assessRisks $story $dependencies)
+        (let $basePoints (calculateBasePoints $similar $complexity)
+        (let $adjusted (adjustForRisks $basePoints $risks)
+        (mkEstimate $adjusted (calcConfidence $similar) $risks))))))) ;
+  
+  -- Dependency mapping
+  rule mapDependencies: (mapDependencies $stories)
+    ~> (let $deps (map $stories extractDependencies)
+        (buildDependencyGraph $stories $deps)) ;
+  
+  -- Risk-adjusted timeline
+  rule projectTimeline: (projectTimeline $backlog $velocity $confidence)
+    ~> (let $totalPoints (sumStoryPoints $backlog)
+        (let $sprintsNeeded (divide $totalPoints $velocity)
+        (let $buffer (riskBuffer $backlog $confidence)
+        (addBuffer $sprintsNeeded $buffer)))) ;
+
+-----------------------------------------------------
+-- SPECIALIST AGENTS
+-----------------------------------------------------
+piece Specialists
+  -- Security Engineer
+  securityScan ::= "mkSecScan" vulns sastResult dastResult → mkSecScan ;
+  
+  vulns ::= "vulnsEmpty" → vulnsEmpty
+          | "vulnsCons" vulnerability vulns → vulnsCons ;
+  
+  vulnerability ::= "mkVuln" <string> vulnSeverity <string> <string> → mkVuln ;
+  
+  vulnSeverity ::= "vsCritical" → vsCritical | "vsHigh" → vsHigh 
+                 | "vsMedium" → vsMedium | "vsLow" → vsLow | "vsInfo" → vsInfo ;
+  
+  sastResult ::= "mkSAST" findings → mkSAST ;
+  dastResult ::= "mkDAST" findings → mkDAST ;
+  findings ::= "findingsEmpty" → findingsEmpty
+             | "findingsCons" <string> findings → findingsCons ;
+  
+  rule securityReview: (securityReview $code)
+    ~> (let $sast (runSAST $code)
+        (let $deps (checkDependencies $code)
+        (let $secrets (scanForSecrets $code)
+        (mkSecScan (concat $deps $secrets) $sast (mkDAST findingsEmpty))))) ;
+  
+  -- Technical Writer
+  docArtifact ::= "daReadme" <string> → daReadme
+                | "daAPI" <string> → daAPI
+                | "daChangelog" <string> → daChangelog
+                | "daRunbook" <string> → daRunbook ;
+  
+  rule writeDocumentation: (writeDocumentation $increment $docType)
+    ~> (let $analysis (analyzeForDocs $increment)
+        (let $existing (getExistingDocs $docType)
+        (let $draft (llmWriteDocs $analysis $existing $docType)
+        (let $reviewed (humanCheck (cpReview "Review docs?") $draft)
+        $reviewed)))) ;
+  
+  -- Data Engineer
+  schemaChange ::= "mkSchemaChange" <string> changeType migration rollback → mkSchemaChange ;
+  
+  changeType ::= "ctAddTable" → ctAddTable
+               | "ctAddColumn" → ctAddColumn
+               | "ctModifyColumn" → ctModifyColumn
+               | "ctDropColumn" → ctDropColumn
+               | "ctAddIndex" → ctAddIndex ;
+  
+  migration ::= "mkMigration" <string> → mkMigration ;
+  rollback ::= "mkRollback" <string> → mkRollback ;
+  
+  rule planSchemaChange: (planSchemaChange $requirement)
+    ~> (let $current (getCurrentSchema)
+        (let $target (designTargetSchema $requirement $current)
+        (let $diff (schemaDiff $current $target)
+        (let $migration (generateMigration $diff)
+        (let $rollback (generateRollback $diff)
+        (mkSchemaChange (describeChange $diff) (classifyChange $diff) $migration $rollback)))))) ;
+
+-----------------------------------------------------
+-- OBSERVABILITY INTEGRATION
+-----------------------------------------------------
+piece Observability
+  -- Production monitoring
+  alert ::= "mkAlert" alertId alertSeverity <string> <string> timestamp → mkAlert ;
+  
+  alertId ::= "alertId" <string> → alertId ;
+  
+  alertSeverity ::= "asCritical" → asCritical
+                  | "asWarning" → asWarning
+                  | "asInfo" → asInfo ;
+  
+  timestamp ::= "mkTimestamp" <number> → mkTimestamp ;
+  
+  -- Error to backlog item
+  rule errorToStory: (errorToStory $alert)
+    ~> (let $analysis (analyzeError $alert)
+        (let $impact (assessImpact $alert)
+        (let $title (formatBugTitle $alert)
+        (let $desc (formatBugDescription $alert $analysis)
+        (let $priority (alertToPriority (getSeverity $alert))
+        (mkStory (newStoryId) $title $desc spUnestimated 
+          (accCriteria (formatAcceptance $alert) accEmpty))))))) ;
+  
+  -- User feedback integration
+  feedback ::= "mkFeedback" <string> <string> feedbackType sentiment → mkFeedback ;
+  
+  feedbackType ::= "ftBug" → ftBug | "ftFeature" → ftFeature | "ftImprovement" → ftImprovement ;
+  sentiment ::= "sentPositive" → sentPositive | "sentNeutral" → sentNeutral | "sentNegative" → sentNegative ;
+  
+  rule feedbackToStory: (feedbackToStory $feedback)
+    ~> (let $classified (classifyFeedback $feedback)
+        (let $priority (sentimentToPriority (getSentiment $feedback))
+        (let $story (createStoryFromFeedback $classified)
+        (addToBacklog $story $priority)))) ;
+  
+  -- Performance regression detection
+  perfMetric ::= "mkPerfMetric" <string> <number> <number> timestamp → mkPerfMetric ;
+  
+  rule detectRegression: (detectRegression $current $baseline $threshold)
+    ~> (let $diff (percentDiff $current $baseline)
+        (if (gt $diff $threshold)
+            (createPerfAlert $current $baseline $diff)
+            (ok))) ;
+
+-----------------------------------------------------
+-- SPRINT ANALYTICS DASHBOARD
+-----------------------------------------------------
+piece Analytics
+  -- Dashboard data
+  dashboard ::= "mkDashboard" burndownData velocityData healthData → mkDashboard ;
+  
+  burndownData ::= "mkBurndownData" dataPoints idealLine → mkBurndownData ;
+  
+  idealLine ::= "mkIdealLine" <number> <number> → mkIdealLine ;
+  
+  velocityData ::= "mkVelocityData" sprintVelocities average trend → mkVelocityData ;
+  
+  sprintVelocities ::= "svEmpty" → svEmpty
+                     | "svEntry" sprintId <number> sprintVelocities → svEntry ;
+  
+  trend ::= "trendUp" → trendUp | "trendDown" → trendDown | "trendStable" → trendStable ;
+  
+  healthData ::= "mkHealthData" <number> <number> <number> → mkHealthData ;
+  
+  -- Generate dashboard
+  rule generateDashboard: (generateDashboard $sprint $history)
+    ~> (let $burndown (calcBurndown $sprint)
+        (let $velocity (calcVelocityTrend $history)
+        (let $health (calcTeamHealth $sprint $history)
+        (mkDashboard $burndown $velocity $health)))) ;
+  
+  -- Real-time burndown
+  rule updateBurndown: (updateBurndown $sprint)
+    ~> (let $remaining (sumRemainingPoints $sprint)
+        (let $day (currentSprintDay $sprint)
+        (addDataPoint $sprint $day $remaining))) ;
+  
+  -- Team health metrics
+  rule calcTeamHealth: (calcTeamHealth $sprint $history)
+    ~> (let $blockerRate (calcBlockerRate $sprint)
+        (let $completionRate (calcCompletionRate $history)
+        (let $scopeChange (calcScopeChange $sprint)
+        (mkHealthData $blockerRate $completionRate $scopeChange)))) ;
+
+-----------------------------------------------------
+-- AUTOMATED TESTING PIPELINE
+-----------------------------------------------------
+piece TestPipeline
+  -- Test types
+  testSuite ::= "mkTestSuite" unitTests integrationTests e2eTests → mkTestSuite ;
+  
+  unitTests ::= "utEmpty" → utEmpty
+              | "utCase" testCase unitTests → utCase ;
+  
+  integrationTests ::= "intEmpty" → intEmpty
+                     | "intCase" testCase integrationTests → intCase ;
+  
+  e2eTests ::= "e2eEmpty" → e2eEmpty
+             | "e2eCase" testCase e2eTests → e2eCase ;
+  
+  testCase ::= "mkTestCase" <string> <string> testStatus → mkTestCase ;
+  
+  testResult ::= "trPassed" → trPassed
+               | "trFailed" <string> → trFailed
+               | "trSkipped" → trSkipped ;
+  
+  -- Generate tests from acceptance criteria
+  rule generateTestsFromAC: (generateTestsFromAC $story)
+    ~> (let $criteria (getAcceptanceCriteria $story)
+        (let $scenarios (criteriaToScenarios $criteria)
+        (let $unit (generateUnitTests $scenarios)
+        (let $integration (generateIntegrationTests $scenarios)
+        (let $e2e (generateE2ETests $scenarios)
+        (mkTestSuite $unit $integration $e2e)))))) ;
+  
+  -- Visual regression testing
+  visualTest ::= "mkVisualTest" <string> baselineImg currentImg diffPercent → mkVisualTest ;
+  
+  baselineImg ::= "mkBaseline" <string> → mkBaseline ;
+  currentImg ::= "mkCurrent" <string> → mkCurrent ;
+  diffPercent ::= "mkDiff" <number> → mkDiff ;
+  
+  rule visualRegression: (visualRegression $component $baseline)
+    ~> (let $current (captureScreenshot $component)
+        (let $diff (compareImages $baseline $current)
+        (if (gt $diff 1)
+            (flagVisualRegression $component $baseline $current $diff)
+            (trPassed)))) ;
+  
+  -- Run full test pipeline
+  rule runTestPipeline: (runTestPipeline $increment)
+    ~> (let $unit (runUnitTests $increment)
+        (let $int (runIntegrationTests $increment)
+        (let $e2e (runE2ETests $increment)
+        (let $visual (runVisualTests $increment)
+        (aggregateTestResults $unit $int $e2e $visual))))) ;
+
+-----------------------------------------------------
+-- CONTEXT PERSISTENCE
+-----------------------------------------------------
+piece ContextPersistence
+  -- Project knowledge graph
+  knowledgeGraph ::= "mkKG" nodes edges → mkKG ;
+  
+  nodes ::= "nodesEmpty" → nodesEmpty
+          | "nodesCons" kgNode nodes → nodesCons ;
+  
+  kgNode ::= "knStory" userStory → knStory
+           | "knCode" codeArtifact → knCode
+           | "knDecision" decision → knDecision
+           | "knPerson" <string> → knPerson
+           | "knConcept" <string> → knConcept ;
+  
+  edges ::= "edgesEmpty" → edgesEmpty
+          | "edgesCons" kgEdge edges → edgesCons ;
+  
+  kgEdge ::= "mkEdge" kgNode edgeType kgNode → mkEdge ;
+  
+  edgeType ::= "etImplements" → etImplements
+             | "etDependsOn" → etDependsOn
+             | "etCreatedBy" → etCreatedBy
+             | "etRelatedTo" → etRelatedTo
+             | "etSupersedes" → etSupersedes ;
+  
+  -- Cross-sprint memory
+  projectMemory ::= "mkProjectMemory" sprintHistories decisions patterns → mkProjectMemory ;
+  
+  sprintHistories ::= "shEmpty" → shEmpty
+                    | "shEntry" sprint sprintHistories → shEntry ;
+  
+  decisions ::= "decisionsEmpty" → decisionsEmpty
+              | "decisionsCons" decision decisions → decisionsCons ;
+  
+  patterns ::= "patternsEmpty" → patternsEmpty
+             | "patternsCons" pattern patterns → patternsCons ;
+  
+  pattern ::= "mkPattern" <string> <string> <number> → mkPattern ;
+  
+  -- Record decision
+  rule recordDecision: (recordDecision $context $choice $rationale)
+    ~> (let $dec (mkDecision (formatDecision $context $choice $rationale))
+        (addToMemory $dec)) ;
+  
+  -- Query project history
+  rule queryHistory: (queryHistory $question $memory)
+    ~> (let $relevant (searchMemory $memory $question)
+        (let $context (formatHistoryContext $relevant)
+        (llmAnswer $question $context))) ;
+  
+  -- Learn patterns from history
+  rule learnPatterns: (learnPatterns $memory)
+    ~> (let $stories (getAllStories $memory)
+        (let $outcomes (getOutcomes $stories)
+        (let $clusters (clusterSimilar $stories $outcomes)
+        (extractPatterns $clusters)))) ;
+  
+  -- Persist state
+  rule saveState: (saveState $team $backlog $sprint $memory)
+    ~> (let $state (mkState $team $backlog $sprint $memory)
+        (serialize $state)
+        (writeToStorage $state)) ;
+  
+  rule loadState: (loadState $projectId)
+    ~> (let $data (readFromStorage $projectId)
+        (deserialize $data)) ;
+
+-----------------------------------------------------
+-- DERIVES
+-----------------------------------------------------
+
+derive subst for userStory ;
+derive cata for productBacklog ;
+derive cata for sprintBacklog ;
+derive cata for tasks ;
+derive cata for debtRegistry ;
+derive cata for knowledgeGraph ;
+derive cata for testSuite ;
+
+-----------------------------------------------------
+-- TESTS
+-----------------------------------------------------
+
+test "empty-sprint": (getCompletedItems (mkSprint (sprintId 1) "Test" sbEmpty ssActive))
+  ~~> sbEmpty ;
+
+test "debt-detection": (detectDebt (caFile (mkPath "test.ts") langTS (mkContent "TODO: fix")))
+  ~~> (drItem (mkDebt (debtId "1") "TODO comment" dtCodeSmell dsLow debtNew (mkLocation (mkPath "test.ts") 1 1)) drEmpty) ;
+
+
+-----------------------------------------------------
+-- Usage Example:
+--
+-- 1. Initialize project:
+--    (initProject "MyApp" "Patrick")
+--
+-- 2. PO creates stories:
+--    (poCreateStory "User login" "As a user, I want to log in...")
+--
+-- 3. Run sprint:
+--    (runSprint $team $backlog 1)
+--
+-- The system will prompt you (PO) at key decision points:
+-- - Sprint planning: Approve sprint goal & stories
+-- - Story details: Add acceptance criteria
+-- - Sprint review: Accept/reject completed work
+-- - Blockers: Resolve escalated issues
+-- - Questions: Answer team clarifications
+-----------------------------------------------------

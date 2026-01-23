@@ -1,0 +1,500 @@
+-----------------------------------------------------
+-- Agent.lego: Agentic AI Design Patterns in Lego
+--
+-- Based on "Agentic Design Patterns" by Antonio Gulli
+--
+-- Core insight: An AI agent follows a 5-step loop:
+-- 1. Get the Mission (goal)
+-- 2. Scan the Scene (perceive)
+-- 3. Think It Through (plan)
+-- 4. Take Action (act)
+-- 5. Learn and Get Better (adapt)
+--
+-- This file defines the core agent architecture.
+-----------------------------------------------------
+
+import Lego.Algebra ;
+
+lang Agent :=
+
+-----------------------------------------------------
+-- CORE AGENT LOOP
+-----------------------------------------------------
+piece AgentCore
+  -- The agent perceives, thinks, acts in a loop
+  agent ::= "mkAgent" agentId goal memory tools → mkAgent ;
+  
+  agentId ::= "agentId" <string> → agentId ;
+  
+  -- Agent state
+  state ::= "stIdle" → stIdle
+          | "stPlanning" goal → stPlanning
+          | "stExecuting" plan → stExecuting
+          | "stReflecting" result → stReflecting
+          | "stComplete" result → stComplete
+          | "stError" error → stError ;
+  
+  -- The main agent loop
+  rule agentStep: (step (mkAgent $id $goal $mem $tools) $env)
+    ~> (let $percept (perceive $env)
+        (let $plan (plan $goal $percept $mem)
+        (let $result (execute $plan $tools $env)
+        (let $newMem (learn $mem $result)
+        (mkAgent $id $goal $newMem $tools))))) ;
+  
+  -- Run until goal achieved or max steps
+  rule agentRun: (run $agent $env 0) ~> (stError timeout) ;
+  rule agentRunStep: (run $agent $env (succ $n))
+    ~> (if (goalAchieved $agent)
+           (stComplete (getResult $agent))
+           (run (step $agent $env) $env $n)) ;
+
+-----------------------------------------------------
+-- GOALS
+-----------------------------------------------------
+piece Goal
+  goal ::= "goalSimple" <string> → goalSimple
+         | "goalComposite" goal goal → goalComposite
+         | "goalConditional" condition goal goal → goalConditional
+         | "goalAchieved" → goalAchieved
+         | "goalFailed" error → goalFailed ;
+  
+  condition ::= "condTrue" → condTrue
+              | "condFalse" → condFalse
+              | "condAnd" condition condition → condAnd
+              | "condOr" condition condition → condOr
+              | "condNot" condition → condNot
+              | "condEval" <string> → condEval ;
+  
+  -- Goal decomposition
+  rule decomposeComposite: (decompose (goalComposite $g1 $g2))
+    ~> (seq (decompose $g1) (decompose $g2)) ;
+  rule decomposeSimple: (decompose (goalSimple $desc))
+    ~> (planFor $desc) ;
+  
+  -- Goal checking
+  rule checkAchieved: (goalAchieved (goalAchieved)) ~> condTrue ;
+  rule checkFailed: (goalAchieved (goalFailed $e)) ~> condFalse ;
+
+-----------------------------------------------------
+-- MEMORY (Episodic, Semantic, Procedural)
+-----------------------------------------------------
+piece Memory
+  memory ::= "memEmpty" → memEmpty
+           | "memEpisodic" episode memory → memEpisodic
+           | "memSemantic" fact memory → memSemantic
+           | "memProcedural" procedure memory → memProcedural ;
+  
+  -- Episodic: specific experiences
+  episode ::= "mkEpisode" timestamp context action result → mkEpisode ;
+  
+  -- Semantic: general knowledge/facts
+  fact ::= "mkFact" <string> <string> confidence → mkFact ;
+  
+  -- Procedural: learned skills
+  procedure ::= "mkProc" <string> pattern action → mkProc ;
+  
+  confidence ::= "confHigh" → confHigh
+               | "confMedium" → confMedium
+               | "confLow" → confLow ;
+  
+  -- Memory retrieval (similarity-based)
+  rule retrieveEpisodic: (retrieve (memEpisodic $ep $rest) $query)
+    ~> (if (similar $ep $query)
+           (cons $ep (retrieve $rest $query))
+           (retrieve $rest $query)) ;
+  rule retrieveEmpty: (retrieve memEmpty $query) ~> nil ;
+  
+  -- Memory consolidation (forgetting + strengthening)
+  rule consolidate: (consolidate $mem)
+    ~> (filter (strengthen $mem) (aboveThreshold)) ;
+
+-----------------------------------------------------
+-- TOOLS (Function Calling)
+-----------------------------------------------------
+piece Tools
+  tools ::= "toolsEmpty" → toolsEmpty
+          | "toolsCons" tool tools → toolsCons ;
+  
+  tool ::= "mkTool" <string> schema handler → mkTool ;
+  
+  schema ::= "schemaEmpty" → schemaEmpty
+           | "schemaParam" <string> paramType schema → schemaParam ;
+  
+  paramType ::= "ptString" → ptString
+              | "ptNumber" → ptNumber
+              | "ptBool" → ptBool
+              | "ptArray" paramType → ptArray
+              | "ptObject" schema → ptObject ;
+  
+  handler ::= "hBuiltin" <string> → hBuiltin
+            | "hExternal" <string> → hExternal
+            | "hAgent" agentId → hAgent ;
+  
+  -- Tool invocation
+  rule invokeTool: (invoke (mkTool $name $schema $handler) $args)
+    ~> (validate $schema $args (call $handler $args)) ;
+  
+  rule callBuiltin: (call (hBuiltin $name) $args)
+    ~> (builtinCall $name $args) ;
+  rule callExternal: (call (hExternal $url) $args)
+    ~> (httpPost $url $args) ;
+  rule callAgent: (call (hAgent $id) $args)
+    ~> (delegateTo $id $args) ;
+
+-----------------------------------------------------
+-- PLANNING
+-----------------------------------------------------
+piece Planning
+  plan ::= "planEmpty" → planEmpty
+         | "planStep" action plan → planStep
+         | "planChoice" plan plan → planChoice
+         | "planLoop" condition plan → planLoop
+         | "planParallel" plan plan → planParallel ;
+  
+  action ::= "actThink" <string> → actThink
+           | "actTool" <string> args → actTool
+           | "actAsk" <string> → actAsk
+           | "actDelegate" agentId goal → actDelegate
+           | "actWait" duration → actWait
+           | "actNoop" → actNoop ;
+  
+  args ::= "argsEmpty" → argsEmpty
+         | "argsCons" <string> value args → argsCons ;
+  
+  value ::= "valStr" <string> → valStr
+          | "valNum" <number> → valNum
+          | "valBool" <string> → valBool
+          | "valNull" → valNull
+          | "valArray" values → valArray
+          | "valObj" args → valObj ;
+  
+  values ::= "valsEmpty" → valsEmpty
+           | "valsCons" value values → valsCons ;
+  
+  duration ::= "durMs" <number> → durMs
+             | "durSec" <number> → durSec ;
+  
+  -- Plan execution
+  rule execEmpty: (execute planEmpty $tools $env) ~> (ok nil) ;
+  rule execStep: (execute (planStep $act $rest) $tools $env)
+    ~> (bind (executeAction $act $tools $env)
+             (fn $r (execute $rest $tools (updateEnv $env $r)))) ;
+  rule execChoice: (execute (planChoice $p1 $p2) $tools $env)
+    ~> (choose (execute $p1 $tools $env)
+               (execute $p2 $tools $env)) ;
+  rule execParallel: (execute (planParallel $p1 $p2) $tools $env)
+    ~> (parallel (execute $p1 $tools $env)
+                 (execute $p2 $tools $env)) ;
+  
+  -- Action execution
+  rule execThink: (executeAction (actThink $prompt) $tools $env)
+    ~> (llmCall $prompt $env) ;
+  rule execTool: (executeAction (actTool $name $args) $tools $env)
+    ~> (invoke (lookupTool $name $tools) $args) ;
+  rule execAsk: (executeAction (actAsk $question) $tools $env)
+    ~> (humanInput $question) ;
+  rule execDelegate: (executeAction (actDelegate $agentId $goal) $tools $env)
+    ~> (sendToAgent $agentId $goal) ;
+
+-----------------------------------------------------
+-- REASONING (ReAct, CoT, ToT)
+-----------------------------------------------------
+piece Reasoning
+  thought ::= "tObservation" <string> → tObservation
+            | "tReasoning" <string> → tReasoning
+            | "tAction" action → tAction
+            | "tReflection" <string> → tReflection ;
+  
+  thoughtChain ::= "tcEmpty" → tcEmpty
+                 | "tcCons" thought thoughtChain → tcCons ;
+  
+  -- ReAct: Reason + Act loop
+  rule react: (react $goal $env $mem)
+    ~> (let $obs (observe $env)
+        (let $thought (reason $goal $obs $mem)
+        (let $action (decideAction $thought)
+        (let $result (executeAction $action)
+        (tcCons (tObservation $obs)
+        (tcCons (tReasoning $thought)
+        (tcCons (tAction $action)
+        (tcCons (tReflection (reflect $result))
+        tcEmpty)))))))) ;
+  
+  -- Chain of Thought
+  rule cot: (chainOfThought $problem)
+    ~> (let $steps (decompose $problem)
+        (foldl $steps tcEmpty
+          (fn $acc $step
+            (tcCons (tReasoning (solveStep $step $acc)) $acc)))) ;
+  
+  -- Tree of Thought (explore multiple paths)
+  rule tot: (treeOfThought $problem $breadth $depth)
+    ~> (bestPath (explore $problem $breadth $depth score)) ;
+
+-----------------------------------------------------
+-- REFLECTION (Self-Correction)
+-----------------------------------------------------
+piece Reflection
+  critique ::= "mkCritique" <string> severity suggestions → mkCritique ;
+  
+  severity ::= "sevCritical" → sevCritical
+             | "sevMajor" → sevMajor
+             | "sevMinor" → sevMinor
+             | "sevNone" → sevNone ;
+  
+  suggestions ::= "sugEmpty" → sugEmpty
+                | "sugCons" <string> suggestions → sugCons ;
+  
+  -- Self-reflection loop
+  rule reflectOnOutput: (reflect $output $goal)
+    ~> (let $critique (selfCritique $output $goal)
+        (if (needsRevision $critique)
+            (revise $output $critique)
+            $output)) ;
+  
+  -- Multi-pass refinement
+  rule refine: (refine $output $goal 0) ~> $output ;
+  rule refineStep: (refine $output $goal (succ $n))
+    ~> (let $improved (reflect $output $goal)
+        (if (eq $improved $output)
+            $output
+            (refine $improved $goal $n))) ;
+
+-----------------------------------------------------
+-- PROMPT CHAINING
+-----------------------------------------------------
+piece PromptChaining
+  chain ::= "chainSingle" prompt → chainSingle
+          | "chainSeq" chain chain → chainSeq
+          | "chainBranch" condition chain chain → chainBranch
+          | "chainMap" chain list → chainMap ;
+  
+  prompt ::= "mkPrompt" <string> context → mkPrompt ;
+  
+  context ::= "ctxEmpty" → ctxEmpty
+            | "ctxVar" <string> value context → ctxVar ;
+  
+  -- Chain execution
+  rule execSingle: (execChain (chainSingle $p) $ctx)
+    ~> (llmCall (substitute $p $ctx)) ;
+  rule execSeq: (execChain (chainSeq $c1 $c2) $ctx)
+    ~> (let $r1 (execChain $c1 $ctx)
+        (execChain $c2 (extend $ctx "prev" $r1))) ;
+  rule execBranch: (execChain (chainBranch $cond $c1 $c2) $ctx)
+    ~> (if (evalCond $cond $ctx)
+           (execChain $c1 $ctx)
+           (execChain $c2 $ctx)) ;
+  rule execMap: (execChain (chainMap $c $items) $ctx)
+    ~> (map $items (fn $item (execChain $c (extend $ctx "item" $item)))) ;
+
+-----------------------------------------------------
+-- ROUTING
+-----------------------------------------------------
+piece Routing
+  router ::= "mkRouter" routeTable defaultRoute → mkRouter ;
+  
+  routeTable ::= "rtEmpty" → rtEmpty
+               | "rtEntry" <string> classifier handler routeTable → rtEntry ;
+  
+  classifier ::= "clKeyword" keywords → clKeyword
+               | "clSemantic" <string> threshold → clSemantic
+               | "clLLM" <string> → clLLM ;
+  
+  keywords ::= "kwEmpty" → kwEmpty
+             | "kwCons" <string> keywords → kwCons ;
+  
+  -- Route a request
+  rule route: (route (mkRouter $table $default) $input)
+    ~> (let $match (findRoute $table $input)
+        (if (isNone $match)
+            (invoke $default $input)
+            (invoke (getHandler $match) $input))) ;
+  
+  -- Find matching route
+  rule findRouteEmpty: (findRoute rtEmpty $input) ~> none ;
+  rule findRouteEntry: (findRoute (rtEntry $name $cl $h $rest) $input)
+    ~> (if (matches $cl $input)
+           (some $h)
+           (findRoute $rest $input)) ;
+
+-----------------------------------------------------
+-- MULTI-AGENT
+-----------------------------------------------------
+piece MultiAgent
+  agentTeam ::= "teamEmpty" → teamEmpty
+              | "teamMember" agent role agentTeam → teamMember ;
+  
+  role ::= "roleLeader" → roleLeader
+         | "roleWorker" → roleWorker
+         | "roleReviewer" → roleReviewer
+         | "roleSpecialist" <string> → roleSpecialist ;
+  
+  message ::= "msgTask" agentId agentId goal → msgTask
+            | "msgResult" agentId agentId result → msgResult
+            | "msgQuery" agentId agentId <string> → msgQuery
+            | "msgResponse" agentId agentId value → msgResponse ;
+  
+  -- Team coordination patterns
+  rule leaderWorker: (coordinate roleLeader $task $team)
+    ~> (let $subtasks (decompose $task)
+        (let $assignments (assign $subtasks (workers $team))
+        (let $results (mapParallel $assignments executeAssignment)
+        (aggregate $results)))) ;
+  
+  rule peerReview: (review $output $team)
+    ~> (let $reviews (mapParallel (reviewers $team)
+                       (fn $r (critique $r $output)))
+        (consensus $reviews)) ;
+
+-----------------------------------------------------
+-- GUARDRAILS / SAFETY
+-----------------------------------------------------
+piece Guardrails
+  guardrail ::= "grInput" filter → grInput
+              | "grOutput" filter → grOutput
+              | "grBehavior" policy → grBehavior
+              | "grComposite" guardrail guardrail → grComposite ;
+  
+  filter ::= "fKeywordBlock" keywords → fKeywordBlock
+           | "fContentFilter" <string> → fContentFilter
+           | "fPIIDetector" → fPIIDetector
+           | "fToxicityFilter" threshold → fToxicityFilter
+           | "fCustom" <string> → fCustom ;
+  
+  policy ::= "polAllowList" actions → polAllowList
+           | "polDenyList" actions → polDenyList
+           | "polRateLimit" <number> duration → polRateLimit
+           | "polHumanApproval" actions → polHumanApproval ;
+  
+  actions ::= "actionsEmpty" → actionsEmpty
+            | "actionsCons" <string> actions → actionsCons ;
+  
+  -- Apply guardrails
+  rule applyInput: (guard (grInput $f) $input)
+    ~> (if (passesFilter $f $input)
+           (ok $input)
+           (blocked "Input filtered")) ;
+  rule applyOutput: (guard (grOutput $f) $output)
+    ~> (if (passesFilter $f $output)
+           (ok $output)
+           (redact $output $f)) ;
+  rule applyBehavior: (guard (grBehavior $pol) $action)
+    ~> (if (allowedByPolicy $pol $action)
+           (ok $action)
+           (blocked "Action not allowed")) ;
+
+-----------------------------------------------------
+-- RAG (Retrieval-Augmented Generation)
+-----------------------------------------------------
+piece RAG
+  retriever ::= "mkRetriever" vectorStore embedder topK → mkRetriever ;
+  
+  vectorStore ::= "vsInMemory" vectors → vsInMemory
+                | "vsExternal" <string> → vsExternal ;
+  
+  vectors ::= "vecsEmpty" → vecsEmpty
+            | "vecsCons" embedding doc vectors → vecsCons ;
+  
+  embedding ::= "mkEmbed" floats → mkEmbed ;
+  
+  floats ::= "floatsEmpty" → floatsEmpty
+           | "floatsCons" <number> floats → floatsCons ;
+  
+  doc ::= "mkDoc" <string> metadata → mkDoc ;
+  
+  metadata ::= "metaEmpty" → metaEmpty
+             | "metaField" <string> <string> metadata → metaField ;
+  
+  -- RAG pipeline
+  rule ragQuery: (rag (mkRetriever $vs $embed $k) $query)
+    ~> (let $queryEmbed (embed $embed $query)
+        (let $docs (retrieve $vs $queryEmbed $k)
+        (let $context (formatDocs $docs)
+        (llmCall (augmentPrompt $query $context))))) ;
+
+-----------------------------------------------------
+-- MCP (Model Context Protocol)
+-----------------------------------------------------
+piece MCP
+  mcpServer ::= "mkMCPServer" <string> resources tools prompts → mkMCPServer ;
+  
+  resources ::= "resEmpty" → resEmpty
+              | "resCons" resource resources → resCons ;
+  
+  resource ::= "mkResource" <string> <string> schema → mkResource ;
+  
+  prompts ::= "promptsEmpty" → promptsEmpty
+            | "promptsCons" namedPrompt prompts → promptsCons ;
+  
+  namedPrompt ::= "mkNamedPrompt" <string> <string> args → mkNamedPrompt ;
+  
+  -- MCP operations
+  rule mcpListTools: (mcpCall $server "tools/list")
+    ~> (getTools $server) ;
+  rule mcpCallTool: (mcpCall $server "tools/call" $name $args)
+    ~> (invoke (lookupTool $name (getTools $server)) $args) ;
+  rule mcpReadResource: (mcpCall $server "resources/read" $uri)
+    ~> (readResource $server $uri) ;
+
+-----------------------------------------------------
+-- HUMAN-IN-THE-LOOP
+-----------------------------------------------------
+piece HumanInLoop
+  checkpoint ::= "cpApproval" <string> → cpApproval
+               | "cpReview" <string> → cpReview
+               | "cpInput" <string> → cpInput
+               | "cpEscalation" <string> severity → cpEscalation ;
+  
+  -- Human interaction
+  rule requestApproval: (humanCheck (cpApproval $desc) $value)
+    ~> (awaitHuman (formatApprovalRequest $desc $value)) ;
+  rule requestReview: (humanCheck (cpReview $desc) $value)
+    ~> (let $feedback (awaitHuman (formatReviewRequest $desc $value))
+        (if (hasCorrections $feedback)
+            (applyCorrections $value $feedback)
+            $value)) ;
+  rule escalate: (humanCheck (cpEscalation $desc $sev) $value)
+    ~> (notify $sev (formatEscalation $desc $value)) ;
+
+-----------------------------------------------------
+-- DERIVES
+-----------------------------------------------------
+
+derive subst for goal ;
+derive subst for plan ;
+derive cata for memory ;
+derive cata for thoughtChain ;
+
+-----------------------------------------------------
+-- TESTS
+-----------------------------------------------------
+
+test "goal-decompose": (decompose (goalComposite (goalSimple "A") (goalSimple "B")))
+  ~~> (seq (planFor "A") (planFor "B")) ;
+
+test "memory-retrieve-empty": (retrieve memEmpty "query")
+  ~~> nil ;
+
+
+-----------------------------------------------------
+-- Summary:
+--
+-- Agentic Design Patterns implemented:
+-- 1. Core Agent Loop (perceive-plan-act-learn)
+-- 2. Goals (composite, conditional)
+-- 3. Memory (episodic, semantic, procedural)
+-- 4. Tools (function calling)
+-- 5. Planning (sequential, choice, parallel, loop)
+-- 6. Reasoning (ReAct, CoT, ToT)
+-- 7. Reflection (self-correction)
+-- 8. Prompt Chaining
+-- 9. Routing
+-- 10. Multi-Agent
+-- 11. Guardrails/Safety
+-- 12. RAG
+-- 13. MCP
+-- 14. Human-in-the-Loop
+--
+-- Total: ~350 lines, 14 patterns
+-----------------------------------------------------

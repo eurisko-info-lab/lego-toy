@@ -1169,6 +1169,7 @@ inductive TypeError where
   | pathBoundaryMismatch : Expr → Expr → Expr → TypeError  -- body, expected endpoint, actual
   | tubeAgreement : Expr → Expr → Expr → TypeError  -- hcom, face1 value, face2 value
   | cofibrationError : String → TypeError
+  | boundaryMismatch : Expr → Expr → Expr → TypeError  -- expr, expected boundary, actual
   deriving Repr
 
 instance : ToString TypeError where
@@ -1183,6 +1184,7 @@ instance : ToString TypeError where
   | .pathBoundaryMismatch body exp act => s!"Path boundary mismatch in {body}: expected {exp}, got {act}"
   | .tubeAgreement hc v1 v2 => s!"Tube agreement failure in {hc}: {v1} ≠ {v2}"
   | .cofibrationError msg => s!"Cofibration error: {msg}"
+  | .boundaryMismatch e exp act => s!"Boundary mismatch in {e}: expected {exp}, got {act}"
 
 /-- Type checking result -/
 abbrev TCResult := Except TypeError
@@ -1670,10 +1672,18 @@ partial def check (ctx : Ctx) (e : Expr) (expected : Expr) : TCResult Unit := do
     | .ext m fam cof bdry =>
       if n == m then
         -- Body should have type fam (with n dimension variables in scope)
-        -- Simplified: just infer body type, proper checking would verify boundary
         let _ ← infer ctx body
-        -- TODO: verify that when cof holds, body agrees with bdry
-        .ok ()
+        -- Verify boundary: when cof holds, body must agree with bdry
+        -- Note: cof_top means cofibration is definitely true
+        let cofNorm := Expr.eval cof
+        if cofNorm == .cof_top then
+          -- Cofibration is always true, so body must equal bdry
+          if !conv (Expr.eval body) (Expr.eval bdry) then
+            .error (.boundaryMismatch e bdry body)
+          else .ok ()
+        else
+          -- Cofibration not statically true - boundary check deferred to runtime
+          .ok ()
       else
         .error (.mismatch e expected (.ext n fam cof bdry))
     | _ => .error (.cannotInfer e)
@@ -1684,11 +1694,21 @@ partial def check (ctx : Ctx) (e : Expr) (expected : Expr) : TCResult Unit := do
     | .sub ty cof bdry =>
       -- elem should have type ty
       let _ ← check ctx elem ty
-      -- TODO: verify that when cof holds, elem agrees with bdry[prf/x]
-      -- For now, simplified: just check the element has the base type
-      -- The boundary condition would be: conv (eval elem) (subst0 prf bdry) when cof is true
-      let _ := (cof, bdry)  -- silence unused warning
-      .ok ()
+      -- Verify boundary: when cof holds, elem must agree with bdry
+      -- bdry has form (λ prf. body) where prf is the proof of cof
+      -- When cof is ⊤, we can substitute any proof (use elem itself as witness)
+      let cofNorm := Expr.eval cof
+      if cofNorm == .cof_top then
+        -- Cofibration is always true, so elem must equal bdry applied to witness
+        -- Since cof is ⊤, the boundary bdry is a λ-abstraction expecting proof
+        -- Substitute elem as the "proof" (simplified: just eval bdry directly)
+        let bdryVal := Expr.eval bdry
+        if !conv (Expr.eval elem) bdryVal then
+          .error (.boundaryMismatch e bdry elem)
+        else .ok ()
+      else
+        -- Cofibration not statically true - boundary check deferred to runtime
+        .ok ()
     | _ => .error (.cannotInfer e)
 
   -- Fallback: infer and compare

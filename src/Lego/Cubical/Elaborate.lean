@@ -171,6 +171,13 @@ def withBinding (name : String) (ty : Expr) (m : ElabM α) : ElabM α := do
   modifyCtx fun ctx => { ctx with locals := ctx.locals.tail! }
   return result
 
+/-- Extend context with multiple bindings -/
+def withBindings (bindings : List (String × Expr)) (m : ElabM α) : ElabM α := do
+  match bindings with
+  | [] => m
+  | (name, ty) :: rest =>
+    withBinding name ty (withBindings rest m)
+
 /-- Extend context with dimension -/
 def withDim (name : String) (m : ElabM α) : ElabM α := do
   modifyCtx (·.extendDim name)
@@ -306,11 +313,48 @@ partial def infer (s : Surface) : ElabM (Expr × Expr) := do
     | none => return (dataTy, .univ .zero)  -- Assume level 0 if not found
 
   | .intro dlbl clbl args => do
-    let argsCore ← args.mapM (fun a => do let (c, _) ← infer a; return c)
-    -- TODO: look up constructor type and check args
-    let introExpr := mkIntro dlbl clbl [] argsCore
-    let resultTy := mkData dlbl []
-    return (introExpr, resultTy)
+    let ctx ← getCtx
+    -- Look up datatype descriptor
+    match ctx.global.lookupDatatype (GName.named dlbl) with
+    | some desc =>
+      -- Find the constructor
+      match desc.constrs.find? (·.name == clbl) with
+      | some constr =>
+        -- Check args match constructor arity
+        if args.length != constr.args.length then
+          elabError s!"Constructor {clbl} expects {constr.args.length} args, got {args.length}"
+        else do
+          -- Elaborate args with expected types from constructor signature
+          let mut argsCore : List Expr := []
+          let mut argIdx := 0
+          for (argS, (_, spec)) in args.zip constr.args do
+            match spec with
+            | .const ty =>
+              -- Non-recursive arg: check against declared type
+              let argCore ← check argS ty
+              argsCore := argsCore ++ [argCore]
+            | .recursive =>
+              -- Recursive arg: check against the datatype itself
+              let argCore ← check argS (mkData dlbl (desc.params.map Prod.snd))
+              argsCore := argsCore ++ [argCore]
+            | .dim =>
+              -- Dimension arg: infer and expect dimension
+              let (argCore, _) ← infer argS
+              argsCore := argsCore ++ [argCore]
+            argIdx := argIdx + 1
+          -- Build intro expression with datatype params
+          let params := desc.params.map Prod.snd
+          let introExpr := mkIntro dlbl clbl params argsCore
+          let resultTy := mkData dlbl params
+          return (introExpr, resultTy)
+      | none =>
+        elabError s!"Constructor {clbl} not found in datatype {dlbl}"
+    | none =>
+      -- Datatype not registered - fall back to simple inference
+      let argsCore ← args.mapM (fun a => do let (c, _) ← infer a; return c)
+      let introExpr := mkIntro dlbl clbl [] argsCore
+      let resultTy := mkData dlbl []
+      return (introExpr, resultTy)
 
   | _ => elabError s!"Cannot infer type for: {repr s}"
 
@@ -349,22 +393,51 @@ partial def check (s : Surface) (expected : Expr) : ElabM Expr := do
     freshMeta expected
 
   -- Refl checks against Path
-  | .refl a, .path _ lhs _rhs => do
-    let aCore ← check a lhs
-    -- TODO: check that lhs ≡ rhs ≡ aCore
-    return .refl aCore
+  | .refl a, .path tyLine lhs rhs => do
+    let aCore ← check a tyLine
+    -- Check that endpoints are convertible: lhs ≡ aCore and rhs ≡ aCore
+    let aVal := Expr.eval aCore
+    let lhsVal := Expr.eval lhs
+    let rhsVal := Expr.eval rhs
+    if !conv aVal lhsVal then
+      elabError s!"refl endpoint mismatch: expected {lhs}, got {aCore}"
+    else if !conv aVal rhsVal then
+      elabError s!"refl endpoint mismatch: expected {rhs}, got {aCore}"
+    else
+      return .refl aCore
 
   -- Elim checks by inferring scrutinee
   | .elim scrut mot clauses, _expected => do
     let (scrutCore, scrutTy) ← infer scrut
     let (motCore, _) ← infer mot
-    -- Build clauses
-    let clausesCore ← clauses.mapM fun (clbl, _binders, body) => do
-      -- TODO: extend context with binders
-      let (bodyCore, _) ← infer body
+    let ctx ← getCtx
+    -- Get datatype info for looking up constructor arg types
+    let dataInfo := isData scrutTy
+    -- Build clauses with binders in scope
+    let clausesCore ← clauses.mapM fun (clbl, binders, body) => do
+      -- Look up constructor arg types from datatype if available
+      let argTypes : List Expr ← match dataInfo with
+        | some (dlbl, params) =>
+          match ctx.global.lookupDatatype (GName.named dlbl) with
+          | some desc =>
+            match desc.constrs.find? (·.name == clbl) with
+            | some constr =>
+              -- Get types from constructor signature
+              pure <| constr.args.map fun (_, spec) =>
+                match spec with
+                | .const ty => ty
+                | .recursive => mkData dlbl params
+                | .dim => .lit "𝕀"
+            | none => pure <| binders.map (fun _ => .univ .zero)  -- fallback
+          | none => pure <| binders.map (fun _ => .univ .zero)  -- fallback
+        | none => pure <| binders.map (fun _ => .univ .zero)  -- fallback
+      -- Extend context with binders
+      let bodyCore ← withBindings (binders.zip argTypes) do
+        let (c, _) ← infer body
+        pure c
       return { clbl := clbl, body := bodyCore : ElimClause }
     -- Get datatype label from scrutTy
-    match isData scrutTy with
+    match dataInfo with
     | some (dlbl, params) =>
       return mkElim dlbl params motCore clausesCore scrutCore
     | none => elabError "Elim scrutinee must be a datatype"

@@ -415,9 +415,23 @@ def stdEnvWithDatatypes : GlobalEnv :=
        Γ ⊢ Elim D params mot clauses scrut : mot[scrut/x]
 -/
 
-/-- Check if a type is well-formed (placeholder) -/
-def checkType (_env : GlobalEnv) (_ctx : List Expr) (_ty : Expr) : Bool :=
-  true  -- TODO: implement proper type checking
+/-- Check if a type is well-formed.
+    A type is well-formed if it can be inferred to have a universe type.
+    Uses the basic type inference from GlobalEnv. -/
+def checkType (env : GlobalEnv) (ctx : List Expr) (ty : Expr) : Bool :=
+  let typingCtx : TypingCtx := {
+    global := env
+    local_ := ctx
+    dimCtx := []
+  }
+  match inferG typingCtx ty with
+  | .ok inferredTy =>
+    -- Type is well-formed if its type is a universe
+    match evalWithGlobals env inferredTy with
+    | .univ _ => true
+    | _ => false
+  | .error _ => false
+  | .unsolvedMeta _ _ => false  -- Unsolved metas mean we can't verify
 
 /-- Infer the type of a datatype expression -/
 def inferDataType (env : GlobalEnv) (dlbl : String) (params : List Expr) : Option Expr := do

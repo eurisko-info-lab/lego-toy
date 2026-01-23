@@ -7,3 +7,4 @@ lake-packages/
 *.c.o
 *.c.o.export*
 tmp/
+src/Lego/Cubical/gen/

@@ -39,6 +39,11 @@ lean_lib «LegoGenerated» where
   srcDir := "generated"
   roots := #[`BootstrapGrammar, `BootstrapTokenizer, `BootstrapRules, `MinimalBootstrapTokenizer]
 
+-- Generated Cubical code (from pipeline)
+lean_lib «CubicalGenerated» where
+  srcDir := "generated"
+  globs := #[.submodules `CubicalGen]
+
 -- Generated Rosetta Grammars (from Lean.lego, etc.)
 lean_lib «RosettaGenerated» where
   srcDir := "generated"
@@ -70,7 +75,8 @@ lean_exe «lego-test-minimal» where
   moreLinkArgs := #["-lInit"]
 
 -- Tools
-lean_lib «Cubical» where
+-- Cubical code generators (tools/Cubical/)
+lean_lib «CubicalTools» where
   srcDir := "tools"
   roots := #[`Cubical]
 
@@ -99,3 +105,8 @@ lean_exe «rosetta-pipeline» where
 -- Generated Pipeline: generated/*.lego → .lean
 lean_exe «generated-pipeline» where
   root := `tools.GeneratedPipeline
+
+-- Comparison test: hand-written vs generated Cubical
+@[default_target]
+lean_exe «cubical-compare» where
+  root := `TestCubicalComparison

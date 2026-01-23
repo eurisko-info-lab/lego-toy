@@ -90,22 +90,22 @@ token Token
   comment ::= '-' '-' nonnl* ;
   nonnl   ::= alpha | digit | symch | ' ' | '\t' | '\'' | '"' ;
 
-  -- Multi-character operators (ordered longest first for manual priority)
-  op3     ::= ':' ':' '='    -- ::=
-            | '=' 'I' '=' ;  -- =I=
-  op2     ::= '~' '~' '>'    -- ~~>
-            | ':' '='        -- :=
-            | '~' '>'        -- ~>
-            | '-' '>'        -- ->
-            | '<' '-'        -- <-
-            | '=' '>'        -- =>
-            | '@' '@' ;      -- @@
+  -- Operators: #longest ensures maximal munch (no manual length ordering needed)
+  operator ::= #longest[
+      ':' ':' '=',   -- ::=
+      '=' 'I' '=',   -- =I=
+      '~' '~' '>',   -- ~~>
+      ':' '=',       -- :=
+      '~' '>',       -- ~>
+      '-' '>',       -- ->
+      '<' '-',       -- <-
+      '=' '>',       -- =>
+      '@' '@',       -- @@
+      symch          -- single symbol (fallback)
+    ] ;
 
   -- Special <name> syntax
   special ::= '<' alpha+ '>' ;
-
-  -- Single symbol (fallback)
-  sym     ::= symch ;
 
 -----------------------------------------------------
 -- Atoms: Basic tokens (references Token piece outputs)

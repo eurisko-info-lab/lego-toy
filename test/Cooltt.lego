@@ -71,28 +71,27 @@ token Token
   comment ::= '-' '-' nonnl* ;
   nonnl   ::= alpha | digit | symch | ' ' | '\t' | '\'' | '"' ;
 
-  -- Multi-character operators (must be checked BEFORE single sym)
-  -- These are ordered longest-first for proper tokenization
-  op10    ::= '#' 'n' 'o' 'r' 'm' 'a' 'l' 'i' 'z' 'e' ;  -- #normalize
-  op7     ::= '#' 'p' 'r' 'i' 'n' 't'                    -- #print
-            | '#' 'd' 'e' 'b' 'u' 'g' ;                  -- #debug
-  op5     ::= '#' 'f' 'a' 'i' 'l'                        -- #fail
-            | '#' 'q' 'u' 'i' 't' ;                      -- #quit
-  op3     ::= ':' ':' '='          -- ::= (assignment with type)
-            | '=' '[' ']' ;        -- =[] (equation step, empty)
-  op2     ::= ':' '='              -- := (assignment)
-            | ':' ':'              -- :: (qualified name separator)
-            | '-' '>'              -- -> (arrow)
-            | '<' '-'              -- <- (back arrow)
-            | '<' '='              -- <= (less than or equal)
-            | '=' '>'              -- => (fat arrow)
-            | '{' '!'              -- {! (hole start)
-            | '!' '}'              -- !} (hole end)
-            | '?' '_'              -- ?_ (hole)
-            | '=' '[' ;            -- =[ (equation step start)
-
-  -- Single symbol (fallback)
-  sym     ::= symch ;
+  -- Operators: #longest ensures maximal munch (longest match wins)
+  operator ::= #longest[
+      '#' 'n' 'o' 'r' 'm' 'a' 'l' 'i' 'z' 'e',  -- #normalize
+      '#' 'p' 'r' 'i' 'n' 't',                   -- #print
+      '#' 'd' 'e' 'b' 'u' 'g',                   -- #debug
+      '#' 'f' 'a' 'i' 'l',                       -- #fail
+      '#' 'q' 'u' 'i' 't',                       -- #quit
+      ':' ':' '=',           -- ::= (assignment with type)
+      '=' '[' ']',           -- =[] (equation step, empty)
+      ':' '=',               -- := (assignment)
+      ':' ':',               -- :: (qualified name separator)
+      '-' '>',               -- -> (arrow)
+      '<' '-',               -- <- (back arrow)
+      '<' '=',               -- <= (less than or equal)
+      '=' '>',               -- => (fat arrow)
+      '{' '!',               -- {! (hole start)
+      '!' '}',               -- !} (hole end)
+      '?' '_',               -- ?_ (hole)
+      '=' '[',               -- =[ (equation step start)
+      symch                  -- single symbol (fallback)
+    ] ;
 
 -----------------------------------------------------
 -- File Structure

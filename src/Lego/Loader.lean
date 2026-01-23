@@ -193,16 +193,36 @@ partial def astToGrammarExpr (nameMap : HashMap String String := HashMap.emptyWi
         pure (GrammarExpr.ordered acc g')) first'
 
   -- Longest match: (longest "#longest" "[" g1 "," g2 "," ... "]")
+  -- Note: The exprList grammar produces (expr (seq "," expr) (seq "," expr) ...)
+  -- where each expr might itself be multiple tokens that need sequencing
   | .con "longest" args =>
-    -- Extract expressions from the list, skipping #longest, [, ], and commas
-    let exprs := args.filter fun t =>
+    -- First, filter out #longest, [, ]
+    let items := args.filter fun t =>
       match t with
       | .lit "#longest" => false
       | .lit "[" => false
       | .lit "]" => false
-      | .lit "," => false
       | _ => true
-    let gexprs := exprs.filterMap (astToGrammarExpr nameMap)
+    -- Group items: collect items until we see (seq "," ...), then start new group
+    let (groups, current) := items.foldl (init := ([], [])) fun (groups, current) t =>
+      match t with
+      | .con "seq" seqArgs =>
+        -- This is (seq "," expr1 expr2 ...) - finish current group, start new with seq contents
+        let exprs := seqArgs.filter (· != .lit ",")
+        if current.isEmpty then
+          (groups, exprs)
+        else
+          (groups ++ [current], exprs)
+      | other =>
+        (groups, current ++ [other])
+    let allGroups := if current.isEmpty then groups else groups ++ [current]
+    -- Convert each group to a grammar expression (fold into sequence)
+    let gexprs := allGroups.filterMap fun group =>
+      let converted := group.filterMap (astToGrammarExpr nameMap)
+      match converted with
+      | [] => none
+      | [g] => some g
+      | g :: gs => some (gs.foldl GrammarExpr.seq g)  -- avoid empty prefix
     if gexprs.isEmpty then none
     else some (GrammarExpr.longest gexprs)
 
@@ -419,26 +439,30 @@ where
     | _ => []
 
 /-- Main token production names - these are the top-level tokenizing productions.
-    These should be tried in order: longest matches first (op3 before op2 before sym).
+    Token.operator uses #longest internally for maximal munch.
     Character class productions (digit, alpha, etc.) are NOT included - they're
-    only used as building blocks for these main productions. -/
+    only used as building blocks for these main productions.
+    Note: We support both old-style (op3, op2, sym) and new-style (operator). -/
 def mainTokenProdNames : List String :=
-  [ "Token.op3"      -- Longest operators first (::=)
-  , "Token.op2"      -- Two-char operators (~>, ->)
-  , "Token.special"  -- <name> syntax
+  [ "Token.special"   -- <name> syntax
   , "Token.hashident" -- Hash-prefixed keywords (#longest)
-  , "Token.ident"    -- Identifiers
-  , "Token.number"   -- Numbers
-  , "Token.string"   -- String literals
-  , "Token.char"     -- Character literals
-  , "Token.ws"       -- Whitespace (skipped)
-  , "Token.comment"  -- Comments (skipped)
-  , "Token.sym"      -- Single symbol (fallback)
+  , "Token.ident"     -- Identifiers
+  , "Token.number"    -- Numbers
+  , "Token.string"    -- String literals
+  , "Token.char"      -- Character literals
+  , "Token.ws"        -- Whitespace (skipped)
+  , "Token.comment"   -- Comments (skipped)
+  , "Token.operator"  -- All operators (new-style, uses #longest)
+  , "Token.op3"       -- 3-char operators (old-style, for backwards compat)
+  , "Token.op2"       -- 2-char operators (old-style)
+  , "Token.sym"       -- Single symbol (old-style fallback)
   ]
 
-/-- Get main token production names for tokenization -/
-def getMainTokenProds (_tokenProds : Productions) : List String :=
-  mainTokenProdNames
+/-- Get main token production names for tokenization.
+    Filters to only include productions that actually exist in the grammar. -/
+def getMainTokenProds (tokenProds : Productions) : List String :=
+  let prodNames := tokenProds.map (·.1) |>.toArray
+  mainTokenProdNames.filter fun name => prodNames.contains name
 
 /-! ## Symbol Extraction for Tokenization -/
 

@@ -74,7 +74,22 @@ def getString : Term → Option String
   | .var s => some s
   | _ => none
 
-/-- Extract constructor name and arity from production -/
+/-- Count capturing positions in a grammar expression.
+    Captures are: ref (nonterminal references), special tokens (<ident>), variables. -/
+partial def countCaptures : Term → Nat
+  | .con "ref" _ => 1        -- nonterminal references capture
+  | .con "special" _ => 1    -- specials like <ident> capture
+  | .con "var" _ => 1        -- pattern variables capture
+  | .con "alt" args =>
+    -- alternation: take max of branches (they're choices, not both)
+    args.map countCaptures |>.foldl max 0
+  | .con "lit" _ => 0        -- literals don't capture
+  | .con "string" _ => 0     -- string literals don't capture
+  | .con _ args => args.map countCaptures |>.foldl (· + ·) 0
+  | .lit _ => 0
+  | _ => 0
+
+/-- Extract constructor name and arity from production (legacy) -/
 def extractConstr (prod : Term) : Option ConstrInfo := do
   -- Production shape: (proddecl name (seq ... → conName))
   match prod with
@@ -112,6 +127,19 @@ def getIdent : Term → Option String
   | .var s => some s
   | _ => none
 
+/-- Extract constructor info from DGrammar AST node -/
+def extractDGrammar (dg : Term) : Option ConstrInfo := do
+  match dg with
+  | .con "DGrammar" args =>
+    -- DGrammar: [ident name, "::=", expr₁, expr₂, ..., ";"]
+    -- The grammar expression may be a single element or multiple (implicit seq)
+    let name ← listGet? args 0 >>= getIdent
+    -- Drop first 2 (ident, "::=") and last 1 (";") to get grammar elements
+    let grammarArgs := args.drop 2 |>.dropLast
+    let arity := grammarArgs.map countCaptures |>.foldl (· + ·) 0
+    some { name := name, arity := arity }
+  | _ => none
+
 /-- Extract rule from DRule AST node -/
 def extractDRule (rule : Term) : Option RuleInfo := do
   match rule with
@@ -143,10 +171,10 @@ partial def extractPiece (piece : Term) : Option PieceInfo := do
     -- DPiece: [lit "piece", ident name, ...items...]
     let name ← listGet? args 1 >>= getIdent
     let items := args.drop 2  -- Skip "piece" and name
+    let constrs := items.filterMap extractDGrammar
     let rules := items.filterMap extractDRule
     let tests := items.filterMap extractDTest
-    -- TODO: extract constrs from DGrammar
-    some { name := name, constrs := [], rules := rules, tests := tests }
+    some { name := name, constrs := constrs, rules := rules, tests := tests }
   | _ => none
 
 /-- Extract all pieces from language AST -/

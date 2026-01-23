@@ -8,7 +8,6 @@ The same grammar drives parsing, printing, and validation bidirectionally.
 ```bash
 lake build
 lake exe pipeline           # Generate .lean from .lego
-lake build CubicalGenerated # Compile generated cubical TT
 ```
 
 ## Leverage Metrics
@@ -213,7 +212,6 @@ This is provable from the lawfulness of BiReducers.
 ```bash
 lake build
 lake exe pipeline           # Generate .lean from .lego files
-lake build CubicalGenerated # Compile generated code
 ```
 
 ## Example Languages

@@ -39,20 +39,6 @@ lean_lib «LegoGenerated» where
   srcDir := "generated"
   roots := #[`BootstrapGrammar, `BootstrapTokenizer, `BootstrapRules, `MinimalBootstrapTokenizer]
 
--- Generated Rosetta output (from Red.lego and Cool.lego)
-lean_lib «RedGenerated» where
-  srcDir := "generated"
-  globs := #[.submodules `Red]
-
-lean_lib «CoolGenerated» where
-  srcDir := "generated"
-  globs := #[.submodules `Cool]
-
--- Generated Cubical Lean code (from CubicalTT.lego and related files)
-lean_lib «CubicalGenerated» where
-  srcDir := "generated"
-  globs := #[.submodules `Cubical]
-
 -- Generated Rosetta Grammars (from Lean.lego, etc.)
 lean_lib «RosettaGenerated» where
   srcDir := "generated"

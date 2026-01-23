@@ -25,6 +25,8 @@ import CubicalGen.Cofibration
 import CubicalGen.HIT
 import CubicalGen.VType
 
+set_option linter.unusedVariables false
+
 open Lego
 
 /-! ## Conversion: Expr ↔ Term

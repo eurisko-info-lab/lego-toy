@@ -244,12 +244,87 @@ inductive Mode where
   | check : Mode  -- Check against expected
   deriving Repr, BEq
 
-/-! ## Core Type Operations -/
+/-! ## Substitution -/
 
-/-- Check if two types are definitionally equal (placeholder) -/
-def typeEq (t1 t2 : Term) : Bool :=
-  -- TODO: implement proper definitional equality
-  t1 == t2
+/-- Substitute a variable with a term in an expression -/
+partial def subst (name : String) (replacement : Term) : Term → Term
+  | .var n => if n == name then replacement else .var n
+  | .lit s => .lit s
+  | .con c args => .con c (args.map (subst name replacement))
+
+/-- Capture-avoiding substitution (renames binders if needed) -/
+partial def substAvoid (name : String) (replacement : Term) (freeVars : List String) : Term → Term
+  | .var n => if n == name then replacement else .var n
+  | .lit s => .lit s
+  | .con "lam" [.var x, ty, body] =>
+    if x == name then
+      -- Shadowed, don't substitute in body
+      .con "lam" [.var x, substAvoid name replacement freeVars ty, body]
+    else if freeVars.contains x then
+      -- x appears free in replacement, need to rename
+      let x' := freshName x freeVars
+      let body' := subst x (.var x') body
+      .con "lam" [.var x', substAvoid name replacement freeVars ty,
+                  substAvoid name replacement (x' :: freeVars) body']
+    else
+      .con "lam" [.var x, substAvoid name replacement freeVars ty,
+                  substAvoid name replacement freeVars body]
+  | .con "Pi" [.var x, dom, cod] =>
+    if x == name then
+      .con "Pi" [.var x, substAvoid name replacement freeVars dom, cod]
+    else if freeVars.contains x then
+      let x' := freshName x freeVars
+      let cod' := subst x (.var x') cod
+      .con "Pi" [.var x', substAvoid name replacement freeVars dom,
+                 substAvoid name replacement (x' :: freeVars) cod']
+    else
+      .con "Pi" [.var x, substAvoid name replacement freeVars dom,
+                 substAvoid name replacement freeVars cod]
+  | .con c args => .con c (args.map (substAvoid name replacement freeVars))
+where
+  freshName (base : String) (avoid : List String) : String :=
+    let rec go (i : Nat) : String :=
+      let candidate := if i == 0 then base else s!"{base}{i}"
+      if avoid.contains candidate then go (i + 1) else candidate
+    go 0
+
+/-- Get free variables in a term -/
+partial def freeVars : Term → List String
+  | .var n => [n]
+  | .lit _ => []
+  | .con "lam" [.var x, ty, body] =>
+    freeVars ty ++ (freeVars body).filter (· != x)
+  | .con "Pi" [.var x, dom, cod] =>
+    freeVars dom ++ (freeVars cod).filter (· != x)
+  | .con _ args => args.flatMap freeVars
+
+/-! ## Definitional Equality -/
+
+/-- Check if two types are definitionally equal (α-equivalence) -/
+partial def typeEq (t1 t2 : Term) : Bool :=
+  alphaEq [] t1 t2
+where
+  /-- Alpha-equivalence with bound variable tracking -/
+  alphaEq (binds : List (String × String)) (a b : Term) : Bool :=
+    match a, b with
+    | .var x, .var y =>
+      -- Check if bound variables correspond
+      match binds.find? (·.1 == x) with
+      | some (_, y') => y == y'
+      | none => match binds.find? (·.2 == y) with
+        | some _ => false  -- y is bound but x isn't
+        | none => x == y   -- Both free, must be same name
+    | .lit s1, .lit s2 => s1 == s2
+    | .con "lam" [.var x, ty1, body1], .con "lam" [.var y, ty2, body2] =>
+      alphaEq binds ty1 ty2 && alphaEq ((x, y) :: binds) body1 body2
+    | .con "Pi" [.var x, dom1, cod1], .con "Pi" [.var y, dom2, cod2] =>
+      alphaEq binds dom1 dom2 && alphaEq ((x, y) :: binds) cod1 cod2
+    | .con c1 args1, .con c2 args2 =>
+      c1 == c2 && args1.length == args2.length &&
+      (args1.zip args2).all fun (a, b) => alphaEq binds a b
+    | _, _ => false
+
+/-! ## Core Type Operations -/
 
 /-- Get domain of a function type -/
 def getDomain (ty : Term) : Option Term :=
@@ -265,12 +340,12 @@ def getCodomain (ty : Term) : Option Term :=
   | .con "Arrow" [_, cod] => some cod
   | _ => none
 
-/-- Substitute in codomain -/
-def substCodomain (ty : Term) (_arg : Term) : Term :=
-  -- TODO: implement proper substitution
+/-- Substitute argument in dependent function codomain -/
+def substCodomain (ty : Term) (arg : Term) : Term :=
   match ty with
-  | .con "Pi" [_name, _, cod] => cod  -- Should substitute name with arg
-  | .con "Arrow" [_, cod] => cod
+  | .con "Pi" [.var name, _, cod] =>
+    substAvoid name arg (freeVars arg) cod
+  | .con "Arrow" [_, cod] => cod  -- Non-dependent, no substitution needed
   | _ => ty
 
 /-! ## Attribute-Based Type Checking -/

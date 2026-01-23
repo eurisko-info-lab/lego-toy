@@ -74,6 +74,8 @@ token Token
   -- Note: '/' is allowed in identifiers for hierarchical names (e.g., trans/filler in redtt)
   -- Note: '\'' is allowed as a suffix for primed identifiers (e.g., symm' in redtt)
   ident   ::= alpha (alpha | digit | '-' | '/' | '\'')* ;
+  -- Hash-prefixed keywords (e.g., #longest, #ordered)
+  hashident ::= '#' alpha (alpha | digit)* ;
   number  ::= digit digit* ;
   string  ::= '"' strchar* '"' ;
   strchar ::= '\\' escape | printable ;
@@ -88,7 +90,7 @@ token Token
   comment ::= '-' '-' nonnl* ;
   nonnl   ::= alpha | digit | symch | ' ' | '\t' | '\'' | '"' ;
 
-  -- Multi-character operators (ordered longest first)
+  -- Multi-character operators (ordered longest first for manual priority)
   op3     ::= ':' ':' '='    -- ::=
             | '=' 'I' '=' ;  -- =I=
   op2     ::= '~' '~' '>'    -- ~~>
@@ -323,10 +325,17 @@ piece Template
 
 -----------------------------------------------------
 -- GrammarExpr: Grammar expressions
+-- Extended with PEG operators for lexer semantics:
+--   !g          - cut (commit point, no backtracking past this)
+--   g1 / g2     - ordered choice (PEG-style, first match wins)
+--   #longest[g1, g2, ...] - maximal munch (try all, pick longest)
 -----------------------------------------------------
 
 piece GrammarExpr
-  expr    ::= alt ;
+  expr    ::= ordered ;
+  -- Ordered choice (PEG): lower precedence than alt
+  ordered ::= alt "/" ordered → ordered
+            | alt ;
   alt     ::= seq "|" alt → alt
             | seq ;
   seq     ::= seqBase "→" ident → annotated
@@ -337,12 +346,15 @@ piece GrammarExpr
             | atom "+" → plus
             | atom "?" → opt
             | atom ;
-  atom    ::= string → lit
+  atom    ::= "!" atom → cut
+            | string → lit
             | char → chr
             | ident → ref
             | "(" expr ")" → group
+            | "#longest" "[" exprList "]" → longest
             | <special> → special
             | "ε" → empty ;
+  exprList ::= expr ("," expr)* ;
 
 -----------------------------------------------------
 -- File: Top-level declarations

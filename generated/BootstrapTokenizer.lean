@@ -35,6 +35,7 @@ def tokenPiece : Piece := {
     ("Token.alpha", ((ref "Token.lower").alt ((ref "Token.upper").alt ((ref "Token.greek").alt ((ref "Token.mathbb").alt ((ref "Token.super").alt ((ref "Token.sub").alt ((ref "Token.mathrel").alt ((ref "Token.mathop").alt (lit "_")))))))))),
     ("Token.symch", ((lit "(").alt ((lit ")").alt ((lit "[").alt ((lit "]").alt ((lit "{").alt ((lit "}").alt ((lit "<").alt ((lit ">").alt ((lit ":").alt ((lit ";").alt ((lit ",").alt ((lit ".").alt ((lit "|").alt ((lit "!").alt ((lit "?").alt ((lit "@").alt ((lit "#").alt ((lit "$").alt ((lit "%").alt ((lit "^").alt ((lit "&").alt ((lit "*").alt ((lit "+").alt ((lit "-").alt ((lit "=").alt ((lit "~").alt ((lit "/").alt ((lit "\\").alt ((lit "→").alt ((lit "←").alt ((lit "↔").alt ((lit "⊕").alt ((lit "⊢").alt ((lit "×").alt ((lit "λ").alt ((lit "∂").alt ((lit "∀").alt ((lit "∃").alt ((lit "⦉").alt ((lit "⦊").alt ((lit "«").alt ((lit "»").alt ((lit "★").alt ((lit "☆").alt ((lit "`").alt ((lit "↦").alt ((lit "↾").alt ((lit "⟨").alt (lit "⟩")))))))))))))))))))))))))))))))))))))))))))))))))),
     ("Token.ident", ((ref "Token.alpha").seq (((ref "Token.alpha").alt ((ref "Token.digit").alt ((lit "-").alt ((lit "/").alt (lit "'"))))).star))),
+    ("Token.hashident", (((lit "#").seq (ref "Token.alpha")).seq (((ref "Token.alpha").alt (ref "Token.digit")).star))),
     ("Token.number", ((ref "Token.digit").seq ((ref "Token.digit").star))),
     ("Token.string", (((lit "\"").seq ((ref "Token.strchar").star)).seq (lit "\""))),
     ("Token.strchar", (((empty.seq (lit "\\")).seq (ref "Token.escape")).alt (ref "Token.printable"))),
@@ -57,7 +58,7 @@ def tokenPiece : Piece := {
 def tokenProductions : Productions := tokenPiece.grammar
 
 /-- Main token productions in priority order -/
-def mainTokenProds : List String := ["Token.comment", "Token.ws", "Token.op3", "Token.op2", "Token.string", "Token.char", "Token.special", "Token.ident", "Token.number", "Token.sym"]
+def mainTokenProds : List String := ["Token.comment", "Token.ws", "Token.op3", "Token.op2", "Token.string", "Token.char", "Token.special", "Token.hashident", "Token.ident", "Token.number", "Token.sym"]
 
 /-! ## Tokenizer -/
 

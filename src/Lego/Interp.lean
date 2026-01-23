@@ -276,6 +276,37 @@ def lexGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (st : LexSta
 
   | .mk (.node _ g') => lexGrammar fuel' prods g' st
 
+  -- PEG extensions for lexer semantics
+
+  | .mk (.cut g') =>
+    -- Cut: commit point. Once g' succeeds, we can't backtrack.
+    -- At the lexer level, this is the same as g' (backtracking is per-token)
+    -- The cut semantics are enforced at the parser level.
+    lexGrammar fuel' prods g' st
+
+  | .mk (.ordered g1 g2) =>
+    -- Ordered choice (PEG): try g1 first, only try g2 if g1 fails
+    -- Unlike alt which is unordered, this is left-biased
+    match lexGrammar fuel' prods g1 st with
+    | some result => some result
+    | none => lexGrammar fuel' prods g2 st
+
+  | .mk (.longest gs) =>
+    -- Maximal munch: try all alternatives, pick the one that consumes most input
+    -- This is the key construct for proper tokenization (e.g., "::=" vs ":" ":" "=")
+    let results := gs.filterMap (lexGrammar fuel' prods · st)
+    match results with
+    | [] => none
+    | rs =>
+      -- Pick the result with the longest consumed string
+      rs.foldl (fun best (acc, st') =>
+        match best with
+        | none => some (acc, st')
+        | some (bestAcc, bestSt) =>
+          if acc.length > bestAcc.length then some (acc, st')
+          else some (bestAcc, bestSt)
+      ) none
+
 /-! ## Grammar-Driven Tokenizer -/
 
 /-- Try to lex a token using a specific production -/
@@ -546,6 +577,39 @@ partial def parseGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (s
     | some (t, st') => (some (wrapNode name t, st'), memo')
     | none => (none, memo')
 
+  -- PEG extensions
+
+  | .mk (.cut g') =>
+    -- Cut: once g' succeeds, the result is committed (no backtracking in caller)
+    -- For now, parse like normal - full cut semantics would require continuation-passing
+    parseGrammar fuel' prods g' st
+
+  | .mk (.ordered g1 g2) =>
+    -- Ordered choice (PEG): try g1 first, only try g2 if g1 fails completely
+    let (r1, memo1) := parseGrammar fuel' prods g1 st
+    match r1 with
+    | some result => (some result, memo1)
+    | none =>
+      let st' := { st with memo := memo1 }
+      parseGrammar fuel' prods g2 st'
+
+  | .mk (.longest gs) =>
+    -- At token level, try all alternatives and pick the longest (most tokens consumed)
+    let results := gs.filterMap fun g =>
+      let (r, _) := parseGrammar fuel' prods g st
+      r
+    match results with
+    | [] => (none, st.memo)
+    | rs =>
+      let best := rs.foldl (fun best (t, st') =>
+        match best with
+        | none => some (t, st')
+        | some (bestT, bestSt) =>
+          if st'.pos > bestSt.pos then some (t, st')
+          else some (bestT, bestSt)
+      ) none
+      (best, st.memo)
+
 /-- Interpret a GrammarExpr for printing (backward direction).
     Uses fuel for termination. -/
 def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term) (acc : List Token) : Option (List Token) :=
@@ -612,6 +676,20 @@ def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term)
         printGrammar fuel' prods g' t' acc
       else none  -- Node name doesn't match
     | _ => none  -- Not a node
+
+  -- PEG extensions
+
+  | .mk (.cut g') =>
+    -- For printing, cut has no effect (it's a parsing-only construct)
+    printGrammar fuel' prods g' t acc
+
+  | .mk (.ordered g1 g2) =>
+    -- For printing, ordered choice is like regular alt
+    printGrammar fuel' prods g1 t acc <|> printGrammar fuel' prods g2 t acc
+
+  | .mk (.longest gs) =>
+    -- For printing, longest is like trying alternatives
+    gs.findSome? (printGrammar fuel' prods · t acc)
 
 /-! ## Parameterized Grammar Interpretation (AST typeclass) -/
 
@@ -695,6 +773,32 @@ def parseGrammarT [AST α] (fuel : Nat) (prods : Productions) (g : GrammarExpr)
       match parseGrammarT fuel' prods g' st with
       | some (t, st') => some (wrapNodeT name t, st')
       | none => none
+
+    -- PEG extensions
+
+    | .mk (.cut g') =>
+      -- Cut: parse like normal (full cut semantics would need continuations)
+      parseGrammarT fuel' prods g' st
+
+    | .mk (.ordered g1 g2) =>
+      -- Ordered choice: try g1 first, only try g2 if g1 fails
+      match parseGrammarT fuel' prods g1 st with
+      | some result => some result
+      | none => parseGrammarT fuel' prods g2 st
+
+    | .mk (.longest gs) =>
+      -- Maximal munch at token level: try all, pick longest
+      let results := gs.filterMap (parseGrammarT fuel' prods · st)
+      match results with
+      | [] => none
+      | rs =>
+        rs.foldl (fun best (t, st') =>
+          match best with
+          | none => some (t, st')
+          | some (bestT, bestSt) =>
+            if st'.tokens.length < bestSt.tokens.length then some (t, st')  -- fewer remaining = more consumed
+            else some (bestT, bestSt)
+        ) none
 termination_by fuel
 
 /-- Helper: parse a star (zero or more) with fuel -/

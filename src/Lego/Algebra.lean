@@ -210,16 +210,24 @@ abbrev TokenStream := List Token
 /-! ## The Grammar Algebra -/
 
 /-- GrammarF: functor for grammar expressions.
-    This is the *-semiring (Kleene algebra) structure. -/
+    This is the *-semiring (Kleene algebra) structure extended with
+    PEG-style operators for lexer support:
+    - cut: commit point (no backtracking past this)
+    - ordered: PEG ordered choice (first match wins, left-biased)
+    - longest: maximal munch (try all alternatives, pick longest match) -/
 inductive GrammarF (α : Type) where
-  | empty : GrammarF α                      -- ε (identity for alt)
-  | lit   : String → GrammarF α             -- literal string
-  | ref   : String → GrammarF α             -- reference to production
-  | seq   : α → α → GrammarF α              -- sequence (monoidal)
-  | alt   : α → α → GrammarF α              -- alternative (coproduct)
-  | star  : α → GrammarF α                  -- Kleene star
-  | bind  : String → α → GrammarF α         -- capture binding
-  | node  : String → α → GrammarF α         -- AST node wrapper
+  | empty   : GrammarF α                    -- ε (identity for alt)
+  | lit     : String → GrammarF α           -- literal string
+  | ref     : String → GrammarF α           -- reference to production
+  | seq     : α → α → GrammarF α            -- sequence (monoidal)
+  | alt     : α → α → GrammarF α            -- alternative (coproduct, unordered)
+  | star    : α → GrammarF α                -- Kleene star
+  | bind    : String → α → GrammarF α       -- capture binding
+  | node    : String → α → GrammarF α       -- AST node wrapper
+  -- PEG extensions for lexer semantics
+  | cut     : α → GrammarF α                -- commit point: !g (no backtrack on success)
+  | ordered : α → α → GrammarF α            -- ordered choice: g1 / g2 (PEG-style, first wins)
+  | longest : List α → GrammarF α           -- maximal munch: try all, pick longest
   deriving Repr, BEq
 
 /-- Fixed point of GrammarF -/
@@ -238,10 +246,15 @@ def star (g : GrammarExpr) : GrammarExpr := mk (.star g)
 def plus (g : GrammarExpr) : GrammarExpr := g.seq g.star  -- one or more = g g*
 def bind (x : String) (g : GrammarExpr) : GrammarExpr := mk (.bind x g)
 def node (n : String) (g : GrammarExpr) : GrammarExpr := mk (.node n g)
+-- PEG extensions
+def cut (g : GrammarExpr) : GrammarExpr := mk (.cut g)           -- commit: !g
+def ordered (a b : GrammarExpr) : GrammarExpr := mk (.ordered a b)  -- ordered choice: a / b
+def longest (gs : List GrammarExpr) : GrammarExpr := mk (.longest gs)  -- maximal munch
 
 -- Infix notation
 infixr:65 " ⬝ " => seq   -- sequence
-infixr:60 " ⊕ " => alt   -- alternative
+infixr:60 " ⊕ " => alt   -- alternative (unordered)
+infixr:55 " // " => ordered  -- ordered choice (PEG)
 
 end GrammarExpr
 
@@ -258,6 +271,9 @@ end GrammarExpr
     - con "alt" [a,b] → alt a b
     - con "star" [g]  → star g
     - con "bind" [GrammarExpr.ref x, g] → bind x g
+    - con "cut" [g]   → cut g    (PEG commit)
+    - con "ordered" [a,b] → ordered a b  (PEG ordered choice)
+    - con "longest" gs → longest gs  (maximal munch)
     - con name args   → node name (seqAll args)  (general case)
 -/
 instance : AST GrammarExpr where
@@ -270,6 +286,10 @@ instance : AST GrammarExpr where
     | "bind", [GrammarExpr.mk (.ref x), g] => GrammarExpr.bind x g
     | "node", [GrammarExpr.mk (.lit n), g] => GrammarExpr.node n g
     | "node", [GrammarExpr.mk (.ref n), g] => GrammarExpr.node n g
+    -- PEG extensions
+    | "cut", [g] => GrammarExpr.cut g
+    | "ordered", [a, b] => GrammarExpr.ordered a b
+    | "longest", gs => GrammarExpr.longest gs
     | _, [] => GrammarExpr.lit name  -- nullary constructor as literal
     | _, [g] => GrammarExpr.node name g  -- wrap single arg
     | _, gs => GrammarExpr.node name (gs.foldl GrammarExpr.seq GrammarExpr.empty)

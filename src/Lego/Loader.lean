@@ -41,6 +41,25 @@ where
   | [t] => t
   | ts => .con "seq" ts
 
+/-- Split a list of Terms by .lit "/" tokens (PEG ordered choice separator).
+    Returns groups of terms that form each alternative.
+    Each group is combined into a seq if multiple elements. -/
+def splitBySlash (ts : List Term) : List Term :=
+  let rec go (acc : List Term) (current : List Term) : List Term :=
+    match current with
+    | [] =>
+      if acc.isEmpty then [] else [mkSeq acc.reverse]
+    | .lit "/" :: rest =>
+      mkSeq acc.reverse :: go [] rest
+    | t :: rest =>
+      go (t :: acc) rest
+  go [] ts
+where
+  mkSeq : List Term → Term
+  | [] => .con "empty" []
+  | [t] => t
+  | ts => .con "seq" ts
+
 /-! ## AST → GrammarExpr -/
 
 /-- Flatten nested seq terms into a list -/
@@ -150,6 +169,42 @@ partial def astToGrammarExpr (nameMap : HashMap String String := HashMap.emptyWi
   | .con "opt" [g, _] => do
     let g' ← astToGrammarExpr nameMap g
     pure (GrammarExpr.alt g' GrammarExpr.empty)
+
+  -- PEG extensions
+
+  -- Cut: (cut "!" g) - commit point
+  | .con "cut" [_, g] => do
+    let g' ← astToGrammarExpr nameMap g
+    pure (GrammarExpr.cut g')
+  | .con "cut" [g] => do
+    let g' ← astToGrammarExpr nameMap g
+    pure (GrammarExpr.cut g')
+
+  -- Ordered choice: (ordered g1 "/" g2) - PEG-style first match wins
+  | .con "ordered" args =>
+    let parts := splitBySlash args
+    match parts with
+    | [] => none
+    | [single] => astToGrammarExpr nameMap single
+    | first :: rest => do
+      let first' ← astToGrammarExpr nameMap first
+      rest.foldlM (fun acc part => do
+        let g' ← astToGrammarExpr nameMap part
+        pure (GrammarExpr.ordered acc g')) first'
+
+  -- Longest match: (longest "#longest" "[" g1 "," g2 "," ... "]")
+  | .con "longest" args =>
+    -- Extract expressions from the list, skipping #longest, [, ], and commas
+    let exprs := args.filter fun t =>
+      match t with
+      | .lit "#longest" => false
+      | .lit "[" => false
+      | .lit "]" => false
+      | .lit "," => false
+      | _ => true
+    let gexprs := exprs.filterMap (astToGrammarExpr nameMap)
+    if gexprs.isEmpty then none
+    else some (GrammarExpr.longest gexprs)
 
   -- Group: (group "(" expr... ")")
   -- The group may contain multiple expressions that need to be sequenced
@@ -397,6 +452,10 @@ partial def extractSymbols (g : GrammarExpr) : List String :=
   | .mk (.star g') => extractSymbols g'
   | .mk (.bind _ g') => extractSymbols g'
   | .mk (.node _ g') => extractSymbols g'
+  -- PEG extensions
+  | .mk (.cut g') => extractSymbols g'
+  | .mk (.ordered g1 g2) => extractSymbols g1 ++ extractSymbols g2
+  | .mk (.longest gs) => gs.flatMap extractSymbols
 
 /-- Extract all symbols from productions -/
 def extractAllSymbols (prods : Productions) : List String :=
@@ -417,6 +476,10 @@ partial def extractStartLiterals (g : GrammarExpr) : List String :=
   | .mk (.star g') => extractStartLiterals g'
   | .mk (.bind _ g') => extractStartLiterals g'
   | .mk (.node _ g') => extractStartLiterals g'
+  -- PEG extensions
+  | .mk (.cut g') => extractStartLiterals g'
+  | .mk (.ordered g1 g2) => extractStartLiterals g1 ++ extractStartLiterals g2
+  | .mk (.longest gs) => gs.flatMap extractStartLiterals
 
 /-- Check if a grammar expression ends with a star (greedy) -/
 partial def endsWithStar : GrammarExpr → Bool
@@ -428,6 +491,26 @@ partial def endsWithStar : GrammarExpr → Bool
   | .mk (.star _) => true
   | .mk (.bind _ g') => endsWithStar g'
   | .mk (.node _ g') => endsWithStar g'
+  -- PEG extensions
+  | .mk (.cut g') => endsWithStar g'
+  | .mk (.ordered g1 g2) => endsWithStar g1 || endsWithStar g2
+  | .mk (.longest gs) => gs.any endsWithStar
+
+/-- Helper: check if a grammar can end via ref to a star-ending production -/
+partial def canEndViaRef (starEnds : List String) (g : GrammarExpr) : Bool :=
+  match g with
+  | .mk .empty => false
+  | .mk (.lit _) => false
+  | .mk (.ref name) => starEnds.contains name
+  | .mk (.seq _ g2) => canEndViaRef starEnds g2
+  | .mk (.alt g1 g2) => canEndViaRef starEnds g1 || canEndViaRef starEnds g2
+  | .mk (.star _) => true
+  | .mk (.bind _ g') => canEndViaRef starEnds g'
+  | .mk (.node _ g') => canEndViaRef starEnds g'
+  -- PEG extensions
+  | .mk (.cut g') => canEndViaRef starEnds g'
+  | .mk (.ordered g1 g2) => canEndViaRef starEnds g1 || canEndViaRef starEnds g2
+  | .mk (.longest gs) => gs.any (canEndViaRef starEnds ·)
 
 /-- Compute which productions can transitively end with a star.
     Returns a set of production names that can end with star.
@@ -442,17 +525,6 @@ def computeStarEndingProds (prods : Productions) : List String :=
   -- Fixed-point: add productions that end with a ref to a star-ending prod
   go 20 prodMap directEnds
 where
-  canEndViaRef (starEnds : List String) (g : GrammarExpr) : Bool :=
-    match g with
-    | .mk .empty => false
-    | .mk (.lit _) => false
-    | .mk (.ref name) => starEnds.contains name
-    | .mk (.seq _ g2) => canEndViaRef starEnds g2
-    | .mk (.alt g1 g2) => canEndViaRef starEnds g1 || canEndViaRef starEnds g2
-    | .mk (.star _) => true
-    | .mk (.bind _ g') => canEndViaRef starEnds g'
-    | .mk (.node _ g') => canEndViaRef starEnds g'
-
   go : Nat → HashMap String GrammarExpr → List String → List String
     | 0, _, starEnds => starEnds
     | fuel+1, prodMap, starEnds =>
@@ -484,6 +556,16 @@ partial def extractEndRef : GrammarExpr → Option String
   | .mk (.star _) => none  -- star doesn't have a fixed end ref
   | .mk (.bind _ g') => extractEndRef g'
   | .mk (.node _ g') => extractEndRef g'
+  -- PEG extensions
+  | .mk (.cut g') => extractEndRef g'
+  | .mk (.ordered g1 g2) =>
+    match extractEndRef g1, extractEndRef g2 with
+    | some r1, some r2 => if r1 == r2 then some r1 else none
+    | _, _ => none
+  | .mk (.longest gs) =>
+    match gs.filterMap extractEndRef |>.eraseDups with
+    | [r] => some r
+    | _ => none
 
 /-- Find literals that follow a reference in a grammar.
     Returns pairs of (refName, literalThatFollows).
@@ -505,6 +587,10 @@ partial def findRefFollows (g : GrammarExpr) : List (String × String) :=
   | .mk (.star g') => findRefFollows g'
   | .mk (.bind _ g') => findRefFollows g'
   | .mk (.node _ g') => findRefFollows g'
+  -- PEG extensions
+  | .mk (.cut g') => findRefFollows g'
+  | .mk (.ordered g1 g2) => findRefFollows g1 ++ findRefFollows g2
+  | .mk (.longest gs) => gs.flatMap findRefFollows
 
 /-- Extract keywords that need to be reserved.
 

@@ -164,6 +164,10 @@ partial def extractRefs : GrammarExpr → HashSet String
     | .node _ g => extractRefs g
     | .empty => HashSet.emptyWithCapacity
     | .lit _ => HashSet.emptyWithCapacity
+    -- PEG extensions
+    | .cut g => extractRefs g
+    | .ordered g1 g2 => extractRefs g1 |>.insertMany (extractRefs g2)
+    | .longest gs => gs.foldl (fun acc g => acc.insertMany (extractRefs g)) HashSet.emptyWithCapacity
 
 /-- Check for undefined production references -/
 def checkUndefinedRefs (grammar : HashMap String GrammarExpr) : ValidationResult :=

@@ -32,8 +32,6 @@ open Lego
 structure Runtime where
   /-- The loaded grammar from Bootstrap.lego -/
   grammar : Loader.LoadedGrammar
-  /-- The tokenizer (currently still hardcoded, TODO: load from Bootstrap.lego) -/
-  tokenize : String → List Token
   /-- Loaded rules for normalization -/
   rules : List Rule
 
@@ -69,7 +67,6 @@ def loadBootstrap (path : String := defaultBootstrapPath) : IO (Except String Ru
       -- Step 3: Create runtime with loaded grammar
       let runtime : Runtime := {
         grammar := grammar
-        tokenize := Bootstrap.tokenize  -- Only used for Bootstrap.lego itself
         rules := rules
       }
       return Except.ok runtime

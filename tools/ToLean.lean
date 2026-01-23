@@ -113,6 +113,16 @@ partial def exprToLean (pieceName : String) (g : GrammarExpr) : String :=
     s!"(bind \"{x}\" {exprToLean pieceName g'})"
   | .mk (.node name g') =>
     s!"(node \"{name}\" {exprToLean pieceName g'})"
+  -- PEG extensions
+  | .mk (.cut g') =>
+    s!"(cut {exprToLean pieceName g'})"
+  | .mk (.ordered g1 g2) =>
+    let s1 := exprToLean pieceName g1
+    let s2 := exprToLean pieceName g2
+    s!"(ordered {s1} {s2})"
+  | .mk (.longest gs) =>
+    let exprs := gs.map (exprToLean pieceName) |> String.intercalate ", "
+    s!"(longest [{exprs}])"
 
 /-- Convert a single production to Lean tuple -/
 def prodToLean (pieceName : String) (name : String) (expr : GrammarExpr) : String :=
@@ -186,10 +196,11 @@ def generateTokenizerModule (langName : String) (tokenProds : Productions) : Str
   -- 5. string (before ident to handle "...")
   -- 6. char (before ident to handle '...')
   -- 7. special (before ident to handle <...>)
-  -- 8. ident
-  -- 9. number
-  -- 10. sym (single symbol fallback)
-  let priorityOrder := ["comment", "ws", "op3", "op2", "string", "char", "special", "ident", "number", "sym"]
+  -- 8. hashident (before ident to handle #longest etc)
+  -- 9. ident
+  -- 10. number
+  -- 11. sym (single symbol fallback)
+  let priorityOrder := ["comment", "ws", "op3", "op2", "string", "char", "special", "hashident", "ident", "number", "sym"]
   let mainProds := priorityOrder.filterMap fun shortName =>
     -- Find the production with this short name
     tokenProds.find? (fun (name, _) =>

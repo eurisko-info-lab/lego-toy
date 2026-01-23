@@ -1,0 +1,518 @@
+-----------------------------------------------------
+-- LEGO V2 PROJECT - SCRUM BACKLOG & TEAM
+-- Content-addressed, Pijul-like, API-first rebuild
+-- Written in Scala 3 LTS
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- PRODUCT VISION
+-----------------------------------------------------
+piece Vision
+  vision ::= "mkVision" <string> <string> goals → mkVision ;
+  
+  goals ::= "goalsEmpty" → goalsEmpty
+          | "goalsCons" <string> goals → goalsCons ;
+
+-- Product Vision Statement
+-- "LegoV2: A content-addressed language workbench where every artifact
+--  (language, piece, rule, grammar) is immutable and referenced by hash.
+--  Accessed via unified API serving CLI, Web IDE, and LSP for any language
+--  built with Lego. The database is append-only (Pijul-inspired), enabling
+--  perfect reproducibility, collaboration, and time-travel debugging."
+
+-----------------------------------------------------
+-- EPICS
+-----------------------------------------------------
+piece Epics
+  epic ::= "mkEpic" epicId <string> <string> epicStatus stories → mkEpic ;
+  
+  epicId ::= "epicId" <string> → epicId ;
+  
+  epicStatus ::= "epicNew" → epicNew
+               | "epicInProgress" → epicInProgress
+               | "epicDone" → epicDone ;
+  
+  stories ::= "storiesEmpty" → storiesEmpty
+            | "storiesCons" story stories → storiesCons ;
+  
+  story ::= "mkStory" storyId <string> <string> storyPoints acceptance → mkStory ;
+  
+  storyId ::= "storyId" <string> → storyId ;
+  
+  storyPoints ::= "sp1" → sp1 | "sp2" → sp2 | "sp3" → sp3 
+                | "sp5" → sp5 | "sp8" → sp8 | "sp13" → sp13 ;
+  
+  acceptance ::= "accEmpty" → accEmpty
+               | "accCons" <string> acceptance → accCons ;
+
+-----------------------------------------------------
+-- EPIC 1: CORE DATA MODEL (Foundation)
+-----------------------------------------------------
+-- E1: Content-Addressed Storage
+--
+-- S1.1: Hash-based Identity System (5 pts)
+--   - Implement cryptographic hashing (BLAKE3) for all artifacts
+--   - Define Hash type as primary identifier
+--   - AC: Any artifact can be serialized and hashed deterministically
+--
+-- S1.2: Core AST Types (8 pts)
+--   - Define Term, Pattern, Rule, Piece, Language ADTs
+--   - Implement Scala 3 enums with derives
+--   - AC: All Lego constructs representable as typed AST
+--
+-- S1.3: Immutable Artifact Store (5 pts)
+--   - Implement append-only storage interface
+--   - Hash → Artifact lookup with caching
+--   - AC: Once stored, artifacts never mutate
+--
+-- S1.4: Dependency Graph (3 pts)
+--   - Track hash references between artifacts
+--   - Compute transitive closure
+--   - AC: Can resolve all dependencies of any artifact
+
+-----------------------------------------------------
+-- EPIC 2: PIJUL-LIKE REPOSITORY
+-----------------------------------------------------
+-- E2: Version Control Model
+--
+-- S2.1: Patch Theory Foundation (8 pts)
+--   - Implement patch as diff between states
+--   - Commutative patch composition where possible
+--   - AC: Patches can be reordered without conflict when independent
+--
+-- S2.2: Branch Model (5 pts)
+--   - Branches as sets of patches
+--   - Merge = union of patch sets
+--   - AC: Merging branches with independent changes is automatic
+--
+-- S2.3: Conflict Detection (5 pts)
+--   - Detect non-commuting patches
+--   - Mark conflicts with resolution metadata
+--   - AC: Conflicts clearly identified with context
+--
+-- S2.4: Time Travel (3 pts)
+--   - Reconstruct any historical state from patches
+--   - Efficient checkpoint caching
+--   - AC: Can view project at any point in history
+
+-----------------------------------------------------
+-- EPIC 3: UNIFIED API
+-----------------------------------------------------
+-- E3: API Gateway
+--
+-- S3.1: API Core Design (5 pts)
+--   - Define OpenAPI spec for all operations
+--   - Implement with http4s + Tapir
+--   - AC: Full CRUD for languages, pieces, rules
+--
+-- S3.2: CLI Client (5 pts)
+--   - Scala CLI application using decline
+--   - Commands: init, add, parse, generate, serve
+--   - AC: All API operations available from command line
+--
+-- S3.3: WebSocket Support (3 pts)
+--   - Real-time updates for collaborative editing
+--   - Subscription to artifact changes
+--   - AC: Multiple clients see changes in <100ms
+--
+-- S3.4: Authentication & Namespaces (5 pts)
+--   - User/org namespace for artifacts
+--   - JWT-based auth
+--   - AC: Users can publish to their namespace
+
+-----------------------------------------------------
+-- EPIC 4: LANGUAGE SERVER PROTOCOL
+-----------------------------------------------------
+-- E4: LSP Implementation
+--
+-- S4.1: LSP Core for Lego (8 pts)
+--   - Implement LSP 3.17 spec
+--   - Diagnostics, completion, hover, goto-definition
+--   - AC: VS Code extension works with Lego files
+--
+-- S4.2: Generic LSP Generator (13 pts)
+--   - Generate LSP server from any Lego language spec
+--   - Syntax highlighting from grammar
+--   - Semantic tokens from type annotations
+--   - AC: Any language built with Lego gets free LSP
+--
+-- S4.3: Incremental Parsing (5 pts)
+--   - Tree-sitter style incremental updates
+--   - Only reparse changed regions
+--   - AC: Large files parse incrementally in <50ms
+--
+-- S4.4: Refactoring Support (5 pts)
+--   - Rename, extract, inline operations
+--   - Safe refactoring via hash references
+--   - AC: Refactoring preserves semantics
+
+-----------------------------------------------------
+-- EPIC 5: WEB IDE
+-----------------------------------------------------
+-- E5: Browser-Based Development Environment
+--
+-- S5.1: Monaco Editor Integration (5 pts)
+--   - Embed Monaco with Lego language support
+--   - Connect to LSP via WebSocket
+--   - AC: Syntax highlighting and completion in browser
+--
+-- S5.2: Project Explorer (3 pts)
+--   - Tree view of languages, pieces, rules
+--   - Hash-based navigation
+--   - AC: Browse and search all artifacts
+--
+-- S5.3: Live Preview (5 pts)
+--   - Real-time parse tree visualization
+--   - Generated code preview
+--   - AC: See output as you type
+--
+-- S5.4: Collaborative Editing (8 pts)
+--   - CRDT-based concurrent editing
+--   - Presence indicators
+--   - AC: Multiple users edit same file simultaneously
+--
+-- S5.5: Visual Rule Editor (8 pts)
+--   - Drag-and-drop pattern/template builder
+--   - Visual representation of rewrite rules
+--   - AC: Non-programmers can create rules
+
+-----------------------------------------------------
+-- EPIC 6: SCALA 3 CODE GENERATION
+-----------------------------------------------------
+-- E6: Scala 3 Backend
+--
+-- S6.1: AST to Scala 3 (8 pts)
+--   - Generate idiomatic Scala 3 from Lego specs
+--   - Use enums, derives, extension methods
+--   - AC: Generated code compiles with scala-cli
+--
+-- S6.2: SBT/Mill Integration (3 pts)
+--   - Generate build files
+--   - Dependency management
+--   - AC: One command to build generated project
+--
+-- S6.3: Runtime Library (5 pts)
+--   - Core Lego runtime in Scala 3
+--   - Pattern matching, rewriting engine
+--   - AC: Generated code links against runtime
+--
+-- S6.4: Native Image Support (3 pts)
+--   - GraalVM native-image compatible
+--   - Fast startup CLI tools
+--   - AC: CLI starts in <50ms
+
+-----------------------------------------------------
+-- EPIC 7: SCRUM UI
+-----------------------------------------------------
+-- E7: Scrum Management Interface
+--
+-- S7.1: Backlog Management (5 pts)
+--   - CRUD for epics, stories, tasks
+--   - Drag-and-drop prioritization
+--   - AC: PO can manage full backlog
+--
+-- S7.2: Sprint Board (5 pts)
+--   - Kanban-style sprint view
+--   - Task assignment, status updates
+--   - AC: Team sees sprint progress real-time
+--
+-- S7.3: Burndown & Metrics (3 pts)
+--   - Auto-generated charts
+--   - Velocity tracking
+--   - AC: Dashboard shows sprint health
+--
+-- S7.4: AI Agent Integration (8 pts)
+--   - Connect ScrumTeam.lego agents to UI
+--   - Agent actions visible in real-time
+--   - AC: Watch AI agents work on tasks
+
+-----------------------------------------------------
+-- SPRINT PLANNING
+-----------------------------------------------------
+piece SprintPlan
+  sprint ::= "mkSprint" sprintNum <string> sprintGoal storyList → mkSprint ;
+  
+  sprintNum ::= "sprintNum" <number> → sprintNum ;
+  
+  sprintGoal ::= "mkGoal" <string> → mkGoal ;
+  
+  storyList ::= "slEmpty" → slEmpty
+              | "slCons" storyId storyList → slCons ;
+
+-- SPRINT 1: Foundation (Velocity: 21 pts)
+-- Goal: "Establish core data model with content-addressed storage"
+-- Stories: S1.1 (5), S1.2 (8), S1.3 (5), S1.4 (3) = 21 pts
+--
+-- Deliverables:
+-- - Hash-based identity system
+-- - Core AST types in Scala 3
+-- - Append-only artifact store
+-- - Dependency resolution
+
+-- SPRINT 2: Repository (Velocity: 21 pts)
+-- Goal: "Implement Pijul-like version control"
+-- Stories: S2.1 (8), S2.2 (5), S2.3 (5), S2.4 (3) = 21 pts
+
+-- SPRINT 3: API Core (Velocity: 18 pts)
+-- Goal: "Launch unified API with CLI"
+-- Stories: S3.1 (5), S3.2 (5), S3.3 (3), S3.4 (5) = 18 pts
+
+-- SPRINT 4: LSP Foundation (Velocity: 21 pts)
+-- Goal: "LSP for Lego language"
+-- Stories: S4.1 (8), S4.3 (5), E6.S6.3 (5), S6.4 (3) = 21 pts
+
+-- SPRINT 5: LSP Generator (Velocity: 21 pts)
+-- Goal: "Any Lego language gets LSP"
+-- Stories: S4.2 (13), S4.4 (5), S6.2 (3) = 21 pts
+
+-- SPRINT 6: Web IDE Core (Velocity: 21 pts)
+-- Goal: "Browser-based editing"
+-- Stories: S5.1 (5), S5.2 (3), S5.3 (5), S6.1 (8) = 21 pts
+
+-- SPRINT 7: Collaboration (Velocity: 16 pts)
+-- Goal: "Multi-user editing"
+-- Stories: S5.4 (8), S5.5 (8) = 16 pts
+
+-- SPRINT 8: Scrum UI (Velocity: 21 pts)
+-- Goal: "Self-hosting Scrum management"
+-- Stories: S7.1 (5), S7.2 (5), S7.3 (3), S7.4 (8) = 21 pts
+
+-----------------------------------------------------
+-- SCRUM TEAM COMPOSITION
+-----------------------------------------------------
+piece Team
+  teamMember ::= "mkMember" memberId role <string> skills → mkMember ;
+  
+  memberId ::= "memberId" <string> → memberId ;
+  
+  role ::= "rPO" → rPO                    -- Product Owner (Human)
+         | "rSM" → rSM                    -- Scrum Master (AI)
+         | "rArchitect" → rArchitect      -- Scala 3 Architect (AI)
+         | "rBackend" → rBackend          -- Backend Dev (AI)
+         | "rFrontend" → rFrontend        -- Frontend Dev (AI)
+         | "rCompiler" → rCompiler        -- Compiler/PL Dev (AI)
+         | "rInfra" → rInfra              -- Infrastructure (AI)
+         | "rQA" → rQA ;                  -- QA Engineer (AI)
+  
+  skills ::= "skillsEmpty" → skillsEmpty
+           | "skillsCons" <string> skills → skillsCons ;
+
+-- Team Members:
+--
+-- 👤 Patrick (PO) - Product Owner
+--    - Vision, priorities, acceptance
+--    - Human-in-the-loop checkpoints
+--
+-- 🤖 ScrumBot (SM) - Scrum Master
+--    - Facilitates ceremonies
+--    - Removes blockers
+--    - Tracks metrics
+--
+-- 🤖 Archie (Architect) - Scala 3 Architect
+--    - System design decisions
+--    - ADR creation
+--    - Code review for architecture
+--    - Skills: Scala 3, Cats Effect, fs2, http4s
+--
+-- 🤖 Bruno (Backend) - Backend Developer
+--    - API implementation
+--    - Database layer
+--    - Skills: http4s, Tapir, Doobie, PostgreSQL
+--
+-- 🤖 Flora (Frontend) - Frontend Developer
+--    - Web IDE implementation
+--    - Monaco integration
+--    - Skills: TypeScript, React, Monaco, WebSocket
+--
+-- 🤖 Cleo (Compiler) - Compiler/PL Developer
+--    - Parser, AST, code generation
+--    - LSP implementation
+--    - Skills: Parsing, Tree-sitter, LSP, Scala macros
+--
+-- 🤖 Ivan (Infra) - Infrastructure Engineer
+--    - CI/CD, deployment
+--    - Database setup
+--    - Skills: Docker, GitHub Actions, Fly.io
+--
+-- 🤖 Quinn (QA) - QA Engineer
+--    - Test strategy
+--    - Property-based testing
+--    - Skills: ScalaCheck, munit, Playwright
+
+-----------------------------------------------------
+-- TECHNICAL STACK
+-----------------------------------------------------
+piece TechStack
+  technology ::= "mkTech" <string> <string> techCategory → mkTech ;
+  
+  techCategory ::= "tcLanguage" → tcLanguage
+                 | "tcFramework" → tcFramework
+                 | "tcDatabase" → tcDatabase
+                 | "tcTool" → tcTool ;
+
+-- Backend Stack:
+-- - Scala 3.3 LTS
+-- - Cats Effect 3 (async runtime)
+-- - fs2 (streaming)
+-- - http4s (HTTP server)
+-- - Tapir (API-first design)
+-- - Circe (JSON)
+-- - Skunk/Doobie (PostgreSQL)
+-- - BLAKE3 (hashing)
+-- - GraalVM native-image
+
+-- Frontend Stack:
+-- - TypeScript 5
+-- - React 18
+-- - Monaco Editor
+-- - Tailwind CSS
+-- - Vite
+
+-- Infrastructure:
+-- - PostgreSQL (append-only tables)
+-- - Redis (caching)
+-- - Docker
+-- - GitHub Actions
+-- - Fly.io (deployment)
+
+-----------------------------------------------------
+-- SPRINT 1 EXECUTION
+-----------------------------------------------------
+piece Sprint1
+  -- Sprint 1 Backlog
+  s1Backlog ::= "mkS1Backlog" → mkS1Backlog ;
+  
+  -- S1.1: Hash-based Identity (5 pts) - Archie + Cleo
+  -- S1.2: Core AST Types (8 pts) - Cleo + Archie
+  -- S1.3: Append-only Store (5 pts) - Bruno
+  -- S1.4: Dependency Graph (3 pts) - Cleo
+  
+  task ::= "mkTask" taskId <string> <string> assignee estimate taskStatus → mkTask ;
+  
+  taskId ::= "taskId" <string> → taskId ;
+  
+  assignee ::= "assigned" memberId → assigned
+             | "unassigned" → unassigned ;
+  
+  estimate ::= "hours" <number> → hours ;
+  
+  taskStatus ::= "tsTodo" → tsTodo
+               | "tsInProgress" → tsInProgress
+               | "tsReview" → tsReview
+               | "tsDone" → tsDone ;
+
+-- Sprint 1 Tasks:
+--
+-- T1.1.1: Define Hash type with BLAKE3 (Archie, 2h)
+-- T1.1.2: Implement deterministic serialization (Cleo, 4h)
+-- T1.1.3: Hash computation for all artifact types (Cleo, 4h)
+-- T1.1.4: Unit tests for hash identity (Quinn, 2h)
+--
+-- T1.2.1: Define Term ADT (Cleo, 4h)
+-- T1.2.2: Define Pattern/Rule ADTs (Cleo, 4h)
+-- T1.2.3: Define Piece/Language ADTs (Cleo, 4h)
+-- T1.2.4: Implement derives (Show, Eq, Hash) (Archie, 4h)
+-- T1.2.5: Property tests for AST invariants (Quinn, 4h)
+--
+-- T1.3.1: Design storage schema (Archie, 2h)
+-- T1.3.2: Implement ArtifactStore trait (Bruno, 4h)
+-- T1.3.3: In-memory implementation (Bruno, 4h)
+-- T1.3.4: PostgreSQL implementation (Bruno, 6h)
+-- T1.3.5: Caching layer (Bruno, 2h)
+--
+-- T1.4.1: Define dependency extraction (Cleo, 2h)
+-- T1.4.2: Implement transitive closure (Cleo, 4h)
+-- T1.4.3: Integration tests (Quinn, 2h)
+
+-----------------------------------------------------
+-- DEFINITION OF DONE
+-----------------------------------------------------
+piece DoD
+  dodItem ::= "mkDoDItem" <string> → mkDoDItem ;
+  
+  dod ::= "dodEmpty" → dodEmpty
+        | "dodCons" dodItem dod → dodCons ;
+
+-- Definition of Done:
+-- ✓ Code compiles with no warnings
+-- ✓ All tests pass (unit + property + integration)
+-- ✓ Code reviewed by at least one other agent
+-- ✓ ADR written for architectural decisions
+-- ✓ API documented (Scaladoc + OpenAPI)
+-- ✓ No critical security issues
+-- ✓ Performance benchmarks meet targets
+-- ✓ PO accepts deliverables
+
+-----------------------------------------------------
+-- CEREMONIES
+-----------------------------------------------------
+piece Ceremonies
+  ceremony ::= "sprintPlanning" sprint → sprintPlanning
+             | "dailyStandup" sprintDay → dailyStandup
+             | "sprintReview" sprint increment → sprintReview
+             | "retrospective" sprint feedback → retrospective ;
+  
+  sprintDay ::= "day" <number> → day ;
+  
+  increment ::= "mkIncrement" artifacts → mkIncrement ;
+  
+  artifacts ::= "artifactsEmpty" → artifactsEmpty
+              | "artifactsCons" <string> artifacts → artifactsCons ;
+  
+  feedback ::= "mkFeedback" goods improvements actions → mkFeedback ;
+  
+  goods ::= "goodsEmpty" → goodsEmpty
+          | "goodsCons" <string> goods → goodsCons ;
+  
+  improvements ::= "improvementsEmpty" → improvementsEmpty
+                 | "improvementsCons" <string> improvements → improvementsCons ;
+  
+  actions ::= "actionsEmpty" → actionsEmpty
+            | "actionsCons" <string> actions → actionsCons ;
+
+-----------------------------------------------------
+-- RULES: Sprint Execution
+-----------------------------------------------------
+
+rule startSprint1: (startSprint (sprintNum 1))
+  ~> (let $goal (mkGoal "Establish core data model with content-addressed storage")
+      (let $stories (slCons (storyId "S1.1") (slCons (storyId "S1.2") 
+                    (slCons (storyId "S1.3") (slCons (storyId "S1.4") slEmpty))))
+      (let $sprint (mkSprint (sprintNum 1) "Foundation" $goal $stories)
+      (let $planned (sprintPlanning $sprint)
+      (notifyTeam "Sprint 1 started: Foundation"))))) ;
+
+rule assignTask: (assignTask $taskId $memberId)
+  ~> (updateTask $taskId (assigned $memberId) tsInProgress) ;
+
+rule completeTask: (completeTask $taskId $reviewer)
+  ~> (let $reviewed (requestReview $taskId $reviewer)
+      (if (isApproved $reviewed)
+          (updateTask $taskId (currentAssignee $taskId) tsDone)
+          (updateTask $taskId (currentAssignee $taskId) tsInProgress))) ;
+
+rule commitSprint: (commitSprint $sprint)
+  ~> (let $increment (gatherIncrement $sprint)
+      (let $reviewed (sprintReview $sprint $increment)
+      (let $accepted (humanCheck (cpAcceptance "Accept sprint deliverables?") $increment)
+      (if $accepted
+          (let $commit (createCommit (sprintMessage $sprint) (incrementFiles $increment))
+          (retrospective $sprint (gatherFeedback $sprint)))
+          (rollbackSprint $sprint))))) ;
+
+-----------------------------------------------------
+-- DERIVES
+-----------------------------------------------------
+
+derive cata for storyList ;
+derive cata for skills ;
+derive cata for artifacts ;
+
+-----------------------------------------------------
+-- TESTS
+-----------------------------------------------------
+
+test "sprint1-velocity": (sumPoints (slCons (storyId "S1.1") (slCons (storyId "S1.2") 
+                         (slCons (storyId "S1.3") (slCons (storyId "S1.4") slEmpty)))))
+  ~~> (points 21) ;
+

@@ -2,7 +2,7 @@
 
 **Goal**: Make the Token piece in Bootstrap.lego actually drive the lexer, replacing the hardcoded `Bootstrap.tokenize`.
 
-## Status: Phase 1 Complete ✅
+## Status: Complete ✅
 
 **Decision**: Option 1 - Extend Grammar Algebra (most principled)
 
@@ -58,7 +58,7 @@ expr ::= ident "/" alt | alt ;  -- PEG: try ident first, then alt
 | **Regenerate tokenizer** | ✓ Done | `lake exe tolean --tokenizer` |
 | **Regenerate grammar** | ✓ Done | `lake exe tolean --grammar` |
 | **hashident token** | ✓ Added | `#longest` tokenizes as single token |
-| **Use in user grammars** | ⏳ TODO | Runtime parsing needs investigation |
+| **Use in user grammars** | ✓ Done | `mainTokenProdNames` updated in Loader.lean |
 
 ### Bootstrap Updates
 
@@ -67,7 +67,9 @@ Added `hashident` production to Token piece:
 hashident ::= '#' alpha (alpha | digit)* ;
 ```
 
-Updated `mainTokenProds` priority order in ToLean.lean to include `hashident` before `ident`.
+Updated priority order in:
+- `ToLean.lean`: `mainTokenProds` for generated tokenizers
+- `Loader.lean`: `mainTokenProdNames` for runtime parsing
 
 ## Mathematical Foundation
 

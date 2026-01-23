@@ -426,6 +426,7 @@ def mainTokenProdNames : List String :=
   [ "Token.op3"      -- Longest operators first (::=)
   , "Token.op2"      -- Two-char operators (~>, ->)
   , "Token.special"  -- <name> syntax
+  , "Token.hashident" -- Hash-prefixed keywords (#longest)
   , "Token.ident"    -- Identifiers
   , "Token.number"   -- Numbers
   , "Token.string"   -- String literals

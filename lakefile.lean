@@ -32,25 +32,11 @@ lean_lib «Rosetta» where
 lean_exe «rosetta» where
   root := `RosettaMain
 
--- Generated code (from ToLean)
--- These are build outputs conceptually, but checked in for bootstrap.
+-- Bootstrap code (required to regenerate itself)
 -- Regenerate with: ./scripts/bootstrap.sh
 lean_lib «LegoGenerated» where
   srcDir := "generated"
   roots := #[`BootstrapGrammar, `BootstrapTokenizer, `BootstrapRules, `MinimalBootstrapTokenizer]
-
--- Generated Cubical code (from pipeline)
-lean_lib «CubicalGenerated» where
-  srcDir := "generated"
-  globs := #[.submodules `CubicalGen]
-
--- Generated Rosetta Grammars (from Lean.lego, etc.)
--- NOTE: Uses explicit roots to avoid conflict with src/Rosetta/CodeGen.lean
-lean_lib «RosettaGenerated» where
-  srcDir := "generated"
-  roots := #[`Rosetta.Algebra, `Rosetta.Attr, `Rosetta.AttrEval, `Rosetta.Generated,
-             `Rosetta.Grammar, `Rosetta.Interp, `Rosetta.Lego, `Rosetta.Loader,
-             `Rosetta.Runtime, `Rosetta.Validation]
 
 -- Rosetta Pipeline (at root level)
 lean_lib «RosettaPipeline» where

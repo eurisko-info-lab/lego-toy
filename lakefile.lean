@@ -58,7 +58,7 @@ lean_lib «RosettaPipeline» where
   roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GenericPrettyPrinter, `GrammarDrivenPipeline]
 
 lean_exe «test-grammar-driven» where
-  root := `TestGrammarDriven
+  root := `test.TestGrammarDriven
 
 lean_exe «test-codegen» where
   root := `test.TestCodeGen
@@ -68,24 +68,24 @@ lean_exe «lego» where
   root := `Main
 
 lean_exe «lego-test» where
-  root := `Test
+  root := `test.Test
   -- Ensure proper linking with Init library
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-red» where
-  root := `TestRed
+  root := `test.TestRed
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-cool» where
-  root := `TestCool
+  root := `test.TestCool
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-runtime» where
-  root := `TestRuntime
+  root := `test.TestRuntime
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-minimal» where
-  root := `TestMinimalBootstrap
+  root := `test.TestMinimalBootstrap
   moreLinkArgs := #["-lInit"]
 
 -- Tools
@@ -127,4 +127,4 @@ lean_exe «generated-pipeline» where
 -- Comparison test: hand-written vs generated Cubical
 @[default_target]
 lean_exe «cubical-compare» where
-  root := `TestCubicalComparison
+  root := `test.TestCubicalComparison

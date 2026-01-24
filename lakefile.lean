@@ -38,9 +38,9 @@ lean_lib «LegoGenerated» where
   srcDir := "generated"
   roots := #[`BootstrapGrammar, `BootstrapTokenizer, `BootstrapRules, `MinimalBootstrapTokenizer]
 
--- Rosetta Pipeline (at root level)
+-- Code generation pipelines (pipelines/)
 lean_lib «RosettaPipeline» where
-  srcDir := "Rosetta"
+  srcDir := "pipelines"
   roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GenericPrettyPrinter, `GrammarDrivenPipeline]
 
 lean_exe «test-grammar-driven» where
@@ -92,19 +92,19 @@ lean_exe «tolean» where
 -- Code Generation (Single Source of Truth)
 -- Generates RedTT, CoolTT, and Lean from Grammar.sexpr
 lean_exe «lego-gen» where
-  root := `LegoGen
+  root := `tools.LegoGen
 
 -- Pipeline: CubicalTT → cubical2rosetta → rosetta2lean
 lean_exe «pipeline» where
-  root := `Rosetta.Pipeline
+  root := `pipelines.Pipeline
 
 -- Rosetta Pipeline: .rosetta → Rosetta.lego → rosetta2lean → Lean
 lean_exe «rosetta-pipeline» where
-  root := `Rosetta.RosettaPipeline
+  root := `pipelines.RosettaPipeline
 
 -- Multi-Target Pipeline: .lego → Rosetta IR → Lean/Scala/Haskell/Rust
 lean_exe «multi-target» where
-  root := `Rosetta.MultiTargetPipeline
+  root := `pipelines.MultiTargetPipeline
 
 -- Generated Pipeline: generated/*.lego → .lean
 lean_exe «generated-pipeline» where

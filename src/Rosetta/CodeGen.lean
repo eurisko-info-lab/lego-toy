@@ -1,10 +1,10 @@
 /-
   CodeGen.lean: Lean implementation of the CodeGen AST
-  
+
   This mirrors the types in CodeGen.rosetta and provides:
   - Frag: Output fragment representation
   - Rendering functions: Frag → String
-  
+
   This is the "Runtime" part that the codegen2*.rosetta rules target.
 -/
 

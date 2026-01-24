@@ -1,9 +1,9 @@
 /-
   UnifiedCodeGen.lean: Language-agnostic code generation via CodeGen AST
-  
+
   This replaces the duplicated termToLeanExpr/termToScalaExpr/etc. functions
   with a single set of functions that produce CodeGen.Frag AST nodes.
-  
+
   The target-specific rendering is handled by:
   1. LangConfig (keywords, escaping, syntax details)
   2. CodeGen.render (Frag → String)
@@ -41,7 +41,7 @@ partial def collectPatternVars (t : Term) : List String :=
   | .con _ args => args.flatMap collectPatternVars
 
 /-- Convert a Term to a pattern Frag, tracking duplicates -/
-partial def termToPatternFrag (cfg : LangConfig) (t : Term) (st : PatGenState) 
+partial def termToPatternFrag (cfg : LangConfig) (t : Term) (st : PatGenState)
     : (Frag × PatGenState) :=
   match t with
   | .var n =>
@@ -105,7 +105,7 @@ def emitLeanRewriteRule (name : String) (lhs rhs : Term) : Frag :=
   let patVars := collectPatternVars lhs
   let (patFrag, genSt) := termToPatternFrag cfg lhs PatGenState.init
   let resFrag := termToExprFrag cfg rhs patVars
-  
+
   if genSt.guards.isEmpty then
     .Lines [
       .Line (.FSeq [.Keyword "def", .Raw " ", .Ident name, .Raw " : Term → Option Term"]),
@@ -114,11 +114,11 @@ def emitLeanRewriteRule (name : String) (lhs rhs : Term) : Frag :=
       .FEmpty
     ]
   else
-    let guardChecks := genSt.guards.map (fun (fresh, orig) => 
+    let guardChecks := genSt.guards.map (fun (fresh, orig) =>
       .FSeq [.Ident fresh, .Op " == ", .Ident orig])
     .Lines [
       .Line (.FSeq [.Keyword "def", .Raw " ", .Ident name, .Raw " : Term → Option Term"]),
-      .Line (.FSeq [.Raw "  | ", patFrag, .Raw " => if ", .Sep " && " guardChecks, 
+      .Line (.FSeq [.Raw "  | ", patFrag, .Raw " => if ", .Sep " && " guardChecks,
                     .Raw " then some (", resFrag, .Raw ") else none"]),
       .Line (.Raw "  | _ => none"),
       .FEmpty
@@ -147,7 +147,7 @@ def emitScalaRewriteRule (name : String) (lhs rhs : Term) : Frag :=
   let patVars := collectPatternVars lhs
   let (patFrag, genSt) := termToPatternFrag cfg lhs PatGenState.init
   let resFrag := termToExprFrag cfg rhs patVars
-  
+
   if genSt.guards.isEmpty then
     .Lines [
       .Line (.FSeq [.Keyword "def", .Raw " ", .Ident name, .Raw "(t: Term): Option[Term] = t match {"]),
@@ -157,7 +157,7 @@ def emitScalaRewriteRule (name : String) (lhs rhs : Term) : Frag :=
       .FEmpty
     ]
   else
-    let guardChecks := genSt.guards.map (fun (fresh, orig) => 
+    let guardChecks := genSt.guards.map (fun (fresh, orig) =>
       .FSeq [.Ident fresh, .Op " == ", .Ident orig])
     .Lines [
       .Line (.FSeq [.Keyword "def", .Raw " ", .Ident name, .Raw "(t: Term): Option[Term] = t match {"]),
@@ -172,7 +172,7 @@ def emitScalaRewriteRule (name : String) (lhs rhs : Term) : Frag :=
 def emitScalaADT (name : String) (ctors : List (String × List String)) : Frag :=
   let ctorFrags := ctors.map fun (ctorName, args) =>
     if args.isEmpty then
-      .Line (.FSeq [.Keyword "case", .Raw " ", .Keyword "object", .Raw " ", 
+      .Line (.FSeq [.Keyword "case", .Raw " ", .Keyword "object", .Raw " ",
                     .Ident ctorName, .Raw " extends ", .Ident name])
     else
       let argParams := args.mapIdx (fun j ty => .FSeq [.Ident s!"arg{j}", .Raw ": ", .Ident ty])
@@ -190,7 +190,7 @@ def emitHaskellRewriteRule (name : String) (lhs rhs : Term) : Frag :=
   let patVars := collectPatternVars lhs
   let (patFrag, genSt) := termToPatternFrag cfg lhs PatGenState.init
   let resFrag := termToExprFrag cfg rhs patVars
-  
+
   if genSt.guards.isEmpty then
     .Lines [
       .Line (.FSeq [.Ident name, .Raw " :: Term -> Maybe Term"]),
@@ -199,7 +199,7 @@ def emitHaskellRewriteRule (name : String) (lhs rhs : Term) : Frag :=
       .FEmpty
     ]
   else
-    let guardChecks := genSt.guards.map (fun (fresh, orig) => 
+    let guardChecks := genSt.guards.map (fun (fresh, orig) =>
       .FSeq [.Ident fresh, .Op " == ", .Ident orig])
     .Lines [
       .Line (.FSeq [.Ident name, .Raw " :: Term -> Maybe Term"]),
@@ -232,10 +232,10 @@ def emitRustRewriteRule (name : String) (lhs rhs : Term) : Frag :=
   let patVars := collectPatternVars lhs
   let (patFrag, genSt) := termToPatternFrag cfg lhs PatGenState.init
   let resFrag := termToExprFrag cfg rhs patVars
-  
+
   if genSt.guards.isEmpty then
     .Lines [
-      .Line (.FSeq [.Keyword "pub", .Raw " ", .Keyword "fn", .Raw " ", .Ident name, 
+      .Line (.FSeq [.Keyword "pub", .Raw " ", .Keyword "fn", .Raw " ", .Ident name,
                     .Raw "(t: &Term) -> Option<Term> {"]),
       .Line (.FSeq [.Raw "    match t {"]),
       .Line (.FSeq [.Raw "        ", patFrag, .Raw " => Some(", resFrag, .Raw "),"]),
@@ -245,7 +245,7 @@ def emitRustRewriteRule (name : String) (lhs rhs : Term) : Frag :=
       .FEmpty
     ]
   else
-    let guardChecks := genSt.guards.map (fun (fresh, orig) => 
+    let guardChecks := genSt.guards.map (fun (fresh, orig) =>
       .FSeq [.Ident fresh, .Op " == ", .Ident orig])
     .Lines [
       .Line (.FSeq [.Keyword "pub", .Raw " ", .Keyword "fn", .Raw " ", .Ident name,

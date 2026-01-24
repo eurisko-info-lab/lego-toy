@@ -52,10 +52,10 @@ def testRewriteRule : IO Unit := do
   -- Simple rule: (Add (Zero) $n) ~> $n
   let lhs := Term.con "Add" [Term.con "Zero" [], Term.var "$n"]
   let rhs := Term.var "$n"
-  
+
   let frag := emitLeanRewriteRule "addZeroLeft" lhs rhs
   let code := render frag
-  
+
   if !code.containsSubstr "def addZeroLeft" then
     IO.eprintln s!"FAIL: emitLeanRewriteRule: missing 'def addZeroLeft'"
     IO.eprintln s!"Got:\n{code}"
@@ -75,7 +75,7 @@ def testInductive : IO Unit := do
   ]
   let frag := emitLeanInductive "Nat" ctors
   let code := render frag
-  
+
   if !code.containsSubstr "inductive Nat where" then
     IO.eprintln s!"FAIL: emitLeanInductive: missing 'inductive Nat where'"
     IO.eprintln s!"Got:\n{code}"
@@ -92,7 +92,7 @@ def testScalaADT : IO Unit := do
   ]
   let frag := emitScalaADT "Nat" ctors
   let code := render frag
-  
+
   if !code.containsSubstr "sealed trait Nat" then
     IO.eprintln s!"FAIL: emitScalaADT: missing 'sealed trait Nat'"
     IO.eprintln s!"Got:\n{code}"
@@ -109,7 +109,7 @@ def testHaskellADT : IO Unit := do
   ]
   let frag := emitHaskellADT "Nat" ctors
   let code := render frag
-  
+
   if !code.containsSubstr "data Nat" then
     IO.eprintln s!"FAIL: emitHaskellADT: missing 'data Nat'"
     IO.eprintln s!"Got:\n{code}"
@@ -126,7 +126,7 @@ def testRustADT : IO Unit := do
   ]
   let frag := emitRustADT "Nat" ctors
   let code := render frag
-  
+
   if !code.containsSubstr "pub enum Nat" then
     IO.eprintln s!"FAIL: emitRustADT: missing 'pub enum Nat'"
     IO.eprintln s!"Got:\n{code}"
@@ -139,13 +139,13 @@ def testRustADT : IO Unit := do
 def main : IO Unit := do
   IO.println "=== CodeGen Module Tests ==="
   IO.println ""
-  
+
   IO.println "--- Basic Frag Rendering ---"
   testRawFrag
   testSeqFrag
   testLineFrag
   testSepFrag
-  
+
   IO.println ""
   IO.println "--- UnifiedCodeGen Emitters ---"
   testRewriteRule
@@ -157,6 +157,6 @@ def main : IO Unit := do
   testHaskellADT
   IO.println ""
   testRustADT
-  
+
   IO.println ""
   IO.println "=== Tests Complete ==="

@@ -8,6 +8,12 @@
 --
 -- Input: Rosetta constructs (from Rosetta.lego)
 -- Output: Scala constructs (from Scala.lego)
+--
+-- NOTES on Scala-specific concerns:
+-- - Use brace syntax {} for multiline definitions (not Python-style colon)
+-- - enum cases need explicit constructor syntax (case Foo vs case Foo(x))
+-- - for-comprehensions need braces: for { x <- ... } yield ...
+-- - Scala 3 extension methods and given/using for implicits
 -----------------------------------------------------
 import Rosetta
 import Scala
@@ -33,9 +39,9 @@ piece CoreTransform
   rule appCurriedToScala: (toScala (App (App $f $a) $b)) ~~>
     (app (toScala $f) (termList (toScala $a) (toScala $b))) ;
   
-  -- Substitution → val binding
+  -- Substitution → val binding in block (with braces)
   rule substToScala: (toScala (Subst $x $s $body)) ~~>
-    (block (stmtVal $x (toScala $s)) (toScala $body)) ;
+    (blockBraces (stmtVal $x (toScala $s)) (toScala $body)) ;
 
 -----------------------------------------------------
 -- BinderTransform

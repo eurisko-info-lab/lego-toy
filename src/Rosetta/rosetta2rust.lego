@@ -8,6 +8,12 @@
 --
 -- Input: Rosetta constructs (from Rosetta.lego)
 -- Output: Rust constructs (from Rust.lego)
+--
+-- NOTES on Rust-specific concerns:
+-- - Lifetime annotations needed for references in closures
+-- - Explicit type annotations on closure params (Rust can't always infer)
+-- - Clone trait needed for value types in Iso operations
+-- - Box<dyn Fn> for storing closures in structs
 -----------------------------------------------------
 import Rosetta
 import Rust
@@ -42,15 +48,16 @@ piece CoreTransform
 -----------------------------------------------------
 -- BinderTransform
 -- Transform Rosetta binders to Rust closures
+-- Note: Rust closures need explicit type annotations when type can't be inferred
 -----------------------------------------------------
 piece BinderTransform
-  -- Lambda → closure
+  -- Lambda → closure with explicit param type annotation
   rule lamToRust: (toRust (Lam $x . $body)) ~~>
-    (closure (paramList (param $x (tyInfer))) (toRust $body)) ;
+    (closure (paramList (param $x (refTy (tyInfer)))) (toRust $body)) ;
   
-  -- Typed lambda → closure with typed param
+  -- Typed lambda → closure with typed param (use reference for ownership)
   rule lamTypedToRust: (toRust (Lam ($x : $A) . $body)) ~~>
-    (closure (paramList (param $x (toRustType $A))) (toRust $body)) ;
+    (closure (paramList (param $x (refTy (toRustType $A)))) (toRust $body)) ;
   
   -- Pi type → Fn trait (approximation)
   rule piToRust: (toRust (Pi ($x : $A) $B)) ~~>
@@ -116,14 +123,15 @@ piece ADTTransform
 -----------------------------------------------------
 piece RewriteTransform
   -- Rewrite rule → fn with match
+  -- Note: Rust requires explicit lifetime/type annotations on closures
   rule rewriteToRust: (toRust (rewriteRule $name: $pat ~~> $repl)) ~~>
     (fnItem (pubVis) $name
-      (paramList (param t (tyPath Term)))
+      (paramList (param t (refTy (tyPath Term))))
       (returnType (tyPath Term))
       (block (stmtList
         (matchExpr (var t)
           (matchArm (toRustPat $pat) (toRust $repl))
-          (matchArm (patIdent t) (var t)))))) ;
+          (matchArm (patIdent t) (call (var t) (exprList clone))))))) ;
   
   -- Pattern transforms
   rule patVarToRust: (toRustPat (Var $x)) ~~> (patIdent $x) ;

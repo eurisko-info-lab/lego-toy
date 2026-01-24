@@ -1,13 +1,13 @@
--- Lego/Generated.lean: What Lego.rosetta would generate via rosetta2lean
+-- LegoLean.lean: What Lego.rosetta would generate via rosetta2lean
 --
 -- This is a MANUAL rendering of what the pipeline should produce.
 -- Compare with src/Lego/Algebra.lean (reference implementation)
 --
--- Pipeline: Lego.rosetta → rosetta2lean → Generated.lean
+-- Pipeline: Lego.rosetta → rosetta2lean → LegoLean.lean
 --
 -- GOAL: Show the delta between generated and hand-written.
 
-namespace Lego.Generated
+namespace Lego.Lean
 
 /-! ## Iso: Partial Isomorphism
     From Lego.rosetta:

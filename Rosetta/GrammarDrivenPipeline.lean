@@ -35,10 +35,13 @@
 
 import Lego.Runtime
 import Lego.Loader
+import Rosetta.CodeGen
+import Rosetta.UnifiedCodeGen
 
 open Lego.Runtime
 open Lego.Loader
 open Lego
+open CodeGen
 
 /-! ## Target Language Configuration -/
 
@@ -52,6 +55,13 @@ instance : ToString TargetLang where
     | .Scala => "Scala"
     | .Haskell => "Haskell"
     | .Rust => "Rust"
+
+/-- Convert to UnifiedCodeGen.TargetLang for unified code generation -/
+def TargetLang.toUnified : TargetLang → UnifiedCodeGen.TargetLang
+  | .Lean => .Lean
+  | .Scala => .Scala
+  | .Haskell => .Haskell
+  | .Rust => .Rust
 
 def TargetLang.ext : TargetLang → String
   | .Lean => ".lean"
@@ -1582,11 +1592,10 @@ where
         -- Convert the AST to our Term representation
         let lhsTerm := parsedToTerm lhs
         let rhsTerm := parsedToTerm rhs
-        match lang with
-        | .Lean => emitLeanRewriteRule name lhsTerm rhsTerm st
-        | .Scala => emitScalaRewriteRule name lhsTerm rhsTerm st
-        | .Haskell => emitHaskellRewriteRule name lhsTerm rhsTerm st
-        | .Rust => emitRustRewriteRule name lhsTerm rhsTerm st
+        -- Use unified code generation via CodeGen AST
+        let frag := UnifiedCodeGen.emitRewriteRule lang.toUnified name lhsTerm rhsTerm
+        let code := CodeGen.render frag
+        st.emit code
       | _ => st.emit s!"-- rewriteRule({args.length})\n"
 
     | "DTest" =>

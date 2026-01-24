@@ -44,34 +44,34 @@ lean_lib «RosettaPipeline» where
   roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GenericPrettyPrinter, `GrammarDrivenPipeline]
 
 lean_exe «test-grammar-driven» where
-  root := `test.TestGrammarDriven
+  root := `test.lean.TestGrammarDriven
 
 lean_exe «test-codegen» where
-  root := `test.TestCodeGen
+  root := `test.lean.TestCodeGen
 
 @[default_target]
 lean_exe «lego» where
   root := `Main
 
 lean_exe «lego-test» where
-  root := `test.Test
+  root := `test.lean.Test
   -- Ensure proper linking with Init library
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-red» where
-  root := `test.TestRed
+  root := `test.lean.TestRed
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-cool» where
-  root := `test.TestCool
+  root := `test.lean.TestCool
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-runtime» where
-  root := `test.TestRuntime
+  root := `test.lean.TestRuntime
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-minimal» where
-  root := `test.TestMinimalBootstrap
+  root := `test.lean.TestMinimalBootstrap
   moreLinkArgs := #["-lInit"]
 
 -- Tools

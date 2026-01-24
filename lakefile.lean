@@ -27,7 +27,7 @@ lean_lib «Lego» where
 -- Rosetta code generation pipeline
 lean_lib «Rosetta» where
   srcDir := "src"
-  roots := #[`Rosetta.Rosetta]
+  roots := #[`Rosetta.Rosetta, `Rosetta.CodeGen, `Rosetta.UnifiedCodeGen]
 
 lean_exe «rosetta» where
   root := `RosettaMain

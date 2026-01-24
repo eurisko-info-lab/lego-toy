@@ -408,11 +408,12 @@ For full interchangeability:
 4. [x] Update `lakefile.lean` with new paths
 5. [x] Split `test/` into `test/lean/` and `test/lego/`
 
-### Phase 3: Code Cleanup
-1. [ ] Remove deprecated functions from `Interp.lean`, `Bootstrap.lean`
-2. [ ] Remove deprecated emitters from `GrammarDrivenPipeline.lean`
-3. [ ] Implement TODOs in `GenericPrettyPrinter.lean`
-4. [ ] Replace `sorry` with proper implementations
+### Phase 3: Code Cleanup ✅ PARTIAL
+1. [x] Remove unused deprecated: `String.findSubstrFrom`, `parseBootstrapOnly`, `extractConstr`
+2. [N/A] Language-specific emitters in GrammarDrivenPipeline.lean kept (used by tools/tests)
+3. [N/A] MultiTargetPipeline --combined mode kept (supported feature)
+4. [ ] Implement TODOs in `GenericPrettyPrinter.lean`
+5. [ ] Replace `sorry` with proper implementations
 
 ### Phase 4: Bootstrap Verification
 1. [ ] Create `scripts/verify-generated.sh` to diff hand-coded vs generated

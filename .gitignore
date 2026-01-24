@@ -16,3 +16,9 @@ src/Lego/Cubical/gen/
 .metals/
 generated/
 .vscode/
+
+# Build artifacts
+tmp/
+*.rlib
+*.o
+*.a

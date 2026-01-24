@@ -1,0 +1,17 @@
+2026.01.24 04:57:06 WARN  Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.[0m
+2026.01.24 04:57:06 INFO  Attempting to connect to the build server...[0m
+2026.01.24 04:57:06 INFO  Running BSP server List(/home/patrick/.local/share/coursier/bin/.scala-cli.aux, bsp, --json-options, /home/patrick/IdeaProjects/lego/toy/.scala-build/ide-options-v2.json, --json-launcher-options, /home/patrick/IdeaProjects/lego/toy/.scala-build/ide-launcher-options.json, --envs-file, /home/patrick/IdeaProjects/lego/toy/.scala-build/ide-envs.json, /home/patrick/IdeaProjects/lego/toy)[0m
+2026.01.24 04:57:06 INFO  tracing is disabled for protocol BSP, to enable tracing of incoming and outgoing JSON messages create an empty file at /home/patrick/IdeaProjects/lego/toy/.metals/bsp.trace.json or /home/patrick/.cache/metals/bsp.trace.json[0m
+2026.01.24 04:57:06 INFO  time: Connected to build server in 0.46s[0m
+2026.01.24 04:57:07 INFO  Connected to Build server: scala-cli v1.6.1[0m
+2026.01.24 04:57:06 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.24 04:57:06 INFO  time: compiled toy_a2f0c65cd7 in 0.19s[0m
+2026.01.24 04:57:07 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.24 04:57:08 WARN  Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.[0m
+2026.01.24 04:57:07 INFO  time: compiled toy_a2f0c65cd7 in 0.99s[0m
+2026.01.24 04:57:08 INFO  time: indexed workspace in 1.85s[0m
+2026.01.24 04:57:09 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.24 04:57:09 INFO  time: compiled toy_a2f0c65cd7 in 0.5s[0m
+2026.01.24 04:58:30 INFO  Skipping reload with status 'Installed'[0m
+2026.01.24 04:59:17 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.24 04:59:19 INFO  time: compiled toy_a2f0c65cd7 in 1.92s[0m

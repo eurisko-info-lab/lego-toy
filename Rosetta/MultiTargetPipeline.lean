@@ -259,6 +259,33 @@ def getDefinedAdtNames (t : Term) : List String :=
   | .con _ children => children.flatMap getDefinedAdtNames
   | _ => []
 
+/-- Extract import declarations from a Term AST -/
+def getImports (t : Term) : List String :=
+  match t with
+  | .con "seq" children => children.flatMap getImports
+  -- Rosetta grammar produces: con "DImport" [lit "import", con "modulePath" [con "ident" [var name]], lit ";"]
+  | .con "DImport" args =>
+    args.filterMap (fun arg =>
+      match arg with
+      | .con "modulePath" [.con "ident" [.var name]] => some name
+      | .con "modulePath" [.con "ident" [.lit name]] => some name
+      | .con "ident" [.var name] => some name
+      | .con "ident" [.lit name] => some name
+      | .var name => some name
+      | .lit name => if name != "import" && name != ";" then some name else none
+      | _ => none
+    )
+  -- Also check for importDecl (in case the grammar changed)
+  | .con "importDecl" args =>
+    args.filterMap (fun arg =>
+      match arg with
+      | .var name => some name
+      | .lit name => if name != "import" && name != ";" then some name else none
+      | _ => none
+    )
+  | .con _ children => children.flatMap getImports
+  | _ => []
+
 /-- Check if string starts with uppercase -/
 def startsWithUpper (s : String) : Bool :=
   match s.data.head? with
@@ -478,6 +505,37 @@ def getRequiredImports (result : ModuleResult) (typeToModule : Std.HashMap Strin
     |>.filter (· != result.moduleName)  -- Don't import self
     |>.eraseDups
 
+/-- Resolve import name to file path (assumes import in same directory as source) -/
+def resolveImportPath (sourcePath : String) (importName : String) : String :=
+  let dir := sourcePath.splitOn "/" |>.dropLast |> "/".intercalate
+  s!"{dir}/{importName}.rosetta"
+
+/-- Extract ADT definitions from AST as a list of (name, Term) pairs -/
+def extractAdtDefs (t : Term) : List (String × Term) :=
+  match t with
+  | .con "seq" children => children.flatMap extractAdtDefs
+  | .con "adtDef" args =>
+    if args.length >= 2 then
+      match args[1]! with
+      | .var n => [(n, t)]
+      | .lit s => [(s, t)]
+      | _ => []
+    else []
+  | .con _ children => children.flatMap extractAdtDefs
+  | _ => []
+
+/-- Remove import declarations from AST (they're handled separately) -/
+partial def stripImports (t : Term) : Term :=
+  match t with
+  | .con "seq" children =>
+    let filtered := children.filter (fun c =>
+      match c with
+      | .con "importDecl" _ => false
+      | _ => true)
+    .con "seq" (filtered.map stripImports)
+  | .con name children => .con name (children.map stripImports)
+  | other => other
+
 /-- Run pipeline in separate files mode -/
 def runSeparate (rt : Runtime) (args : Args) : IO (Except String (List TargetResult)) := do
   let { sourcePaths, outDir, targets, quiet, .. } := args
@@ -506,19 +564,38 @@ def runSeparate (rt : Runtime) (args : Args) : IO (Except String (List TargetRes
   -- Parse all source files
   unless quiet do IO.println s!"[1/4] Parsing {sourcePaths.length} source file(s)..."
   let mut sourceAsts : List (String × Term) := []
+  let mut importedTypes : Std.HashMap String Term := Std.HashMap.emptyWithCapacity 16
+
+  -- Helper to parse a rosetta file
+  let parseRosettaFile : String → IO (Except String Term) := fun path => do
+    match rosettaGrammar with
+    | some grammar =>
+      let content ← IO.FS.readFile path
+      match Loader.parseWithGrammarE grammar content with
+      | .error e => return .error s!"Parse error in {path}: {e}"
+      | .ok ast => return .ok ast
+    | none => return .error "Rosetta grammar not loaded"
 
   for sourcePath in sourcePaths do
     let ast ← do
       if sourcePath.endsWith ".rosetta" then
-        match rosettaGrammar with
-        | some grammar =>
-          let content ← IO.FS.readFile sourcePath
-          match Loader.parseWithGrammarE grammar content with
-          | .error e => return .error s!"Parse error in {sourcePath}: {e}"
-          | .ok ast =>
-            unless quiet do IO.println s!"      ✓ {sourcePath}"
-            pure ast
-        | none => return .error "Rosetta grammar not loaded"
+        match ← parseRosettaFile sourcePath with
+        | .error e => return .error e
+        | .ok ast =>
+          -- Extract imports and load them
+          let imports := getImports ast
+          for importName in imports do
+            if !importedTypes.contains importName then
+              let importPath := resolveImportPath sourcePath importName
+              unless quiet do IO.println s!"      → Loading import: {importName}"
+              match ← parseRosettaFile importPath with
+              | .error e =>
+                unless quiet do IO.println s!"      ⚠ Warning: Could not load import {importName}: {e}"
+              | .ok importAst =>
+                -- Store the entire import AST for later
+                importedTypes := importedTypes.insert importName importAst
+          unless quiet do IO.println s!"      ✓ {sourcePath}"
+          pure ast
       else
         match ← parseLegoFilePathE rt sourcePath with
         | .error e => return .error s!"Parse error in {sourcePath}: {e}"
@@ -537,14 +614,24 @@ def runSeparate (rt : Runtime) (args : Args) : IO (Except String (List TargetRes
     -- Generate all modules for this language
     let mut moduleResults : List ModuleResult := []
     for (sourcePath, ast) in sourceAsts do
-      match ← runForModule rt ast sourcePath lang outDir packagePrefix quiet with
+      -- Get imports for this module
+      let imports := getImports ast
+      -- Strip imports from AST and prepend imported type definitions
+      let strippedAst := stripImports ast
+      let importedDefs : List Term := imports.filterMap (fun imp => importedTypes.get? imp)
+      -- Create combined AST with imported types first
+      let combinedAst := if importedDefs.isEmpty then strippedAst else
+        match strippedAst with
+        | .con "seq" children => .con "seq" (importedDefs ++ children)
+        | other => .con "seq" (importedDefs ++ [other])
+
+      match ← runForModule rt combinedAst sourcePath lang outDir packagePrefix quiet with
       | .error e =>
         unless quiet do IO.println s!"      ✗ {lang}/{extractModuleName sourcePath}: {e}"
       | .ok r =>
         moduleResults := moduleResults ++ [r]
 
-    -- For now, generate standalone files without imports
-    -- Each file is self-contained with its own type definitions
+    -- Generate standalone files (imports already inlined)
     for r in moduleResults do
       let header := genModuleHeader lang r.moduleName [] packagePrefix
 

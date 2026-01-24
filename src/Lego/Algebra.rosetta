@@ -7,6 +7,8 @@
 -- - Types:   Term → Prop  (structure → validity)
 -----------------------------------------------------
 
+import Grammar;
+
 -----------------------------------------------------
 -- Partial Isomorphism: The atomic unit of computation
 -----------------------------------------------------
@@ -57,14 +59,8 @@ rewrite isoOrElse:
       (Lam b . (case (App $b1 b) (Some $x) (Some $x) None (App $b2 b)))) ;
 
 -----------------------------------------------------
--- Term: The Universal AST
+-- Term Convenience Constructors (Term imported from Grammar)
 -----------------------------------------------------
-
-adt Term {
-  Var : String -> Term,
-  Lit : String -> Term,
-  Con : String -> List Term -> Term
-}
 
 -- Convenience constructors
 rewrite termAtom:
@@ -192,26 +188,7 @@ adt TypeRule {
   MkTypeRule : String -> Term -> Term -> TypeRule
 }
 
--- Grammar expression: PEG-style grammar combinators
--- (also defined in Interp for parsing, but needed here for types)
-adt GrammarExpr {
-  GEmpty  : GrammarExpr,
-  GLit    : String -> GrammarExpr,
-  GRef    : String -> GrammarExpr,
-  GSeq    : GrammarExpr -> GrammarExpr -> GrammarExpr,
-  GAlt    : GrammarExpr -> GrammarExpr -> GrammarExpr,
-  GStar   : GrammarExpr -> GrammarExpr,
-  GPlus   : GrammarExpr -> GrammarExpr,
-  GOpt    : GrammarExpr -> GrammarExpr,
-  GNot    : GrammarExpr -> GrammarExpr,
-  GAnd    : GrammarExpr -> GrammarExpr,
-  GCon    : String -> GrammarExpr -> GrammarExpr
-}
-
--- Grammar production: name -> expr -> production name
-adt GrammarProduction {
-  MkGrammarProduction : String -> GrammarExpr -> String -> GrammarProduction
-}
+-- Note: GrammarExpr and GrammarProduction are imported from Grammar
 
 -- Piece: grammar fragment + rules + type rules
 adt Piece {

@@ -16,15 +16,7 @@
 --   - Non-terminating rule cycles
 -----------------------------------------------------
 
------------------------------------------------------
--- Core Types (needed for validation)
------------------------------------------------------
-
-adt Term {
-  Var : String -> Term,
-  Lit : String -> Term,
-  Con : String -> List Term -> Term
-}
+import Grammar;
 
 -----------------------------------------------------
 -- Severity Levels

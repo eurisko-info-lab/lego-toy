@@ -7,15 +7,11 @@
 -- Uses Rosetta constructs: adt, rewrite, module, test
 -----------------------------------------------------
 
------------------------------------------------------
--- Core Types: The Universal AST
------------------------------------------------------
+import Grammar;
 
-adt Term {
-  Var : String -> Term,
-  Lit : String -> Term,
-  Con : String -> List Term -> Term
-}
+-----------------------------------------------------
+-- Environment and Rule Types
+-----------------------------------------------------
 
 adt Env {
   Empty : Env,

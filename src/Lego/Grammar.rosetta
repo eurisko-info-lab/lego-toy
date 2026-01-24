@@ -1,0 +1,69 @@
+-----------------------------------------------------
+-- Grammar.rosetta: Core Grammar Data Structures
+--
+-- This module defines the fundamental types shared across
+-- the Lego language implementation:
+--
+-- - Term: Universal AST representation (var | lit | con)
+-- - GrammarExpr: PEG grammar combinators
+-- - GrammarProduction: Named grammar rules
+--
+-- All other modules should import this instead of
+-- redefining these types.
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- Term: The Universal AST
+--
+-- Everything in Lego is represented as a Term:
+-- - Var "x"           -- variable reference
+-- - Lit "hello"       -- literal string
+-- - Con "App" [f, x]  -- constructor application
+-----------------------------------------------------
+
+adt Term {
+  Var : String -> Term,
+  Lit : String -> Term,
+  Con : String -> List Term -> Term
+}
+
+-----------------------------------------------------
+-- GrammarExpr: PEG Grammar Combinators
+--
+-- A Kleene *-semiring for parsing:
+-- - GEmpty          -- ε (empty/success)
+-- - GLit "x"        -- literal match
+-- - GRef "name"     -- reference to production
+-- - GSeq e1 e2      -- sequence (e1 followed by e2)
+-- - GAlt e1 e2      -- alternation (e1 or e2)
+-- - GStar e         -- Kleene star (zero or more)
+-- - GPlus e         -- one or more
+-- - GOpt e          -- optional (zero or one)
+-- - GNot e          -- negative lookahead
+-- - GAnd e          -- positive lookahead
+-- - GCon "C" e      -- wrap result in constructor C
+-----------------------------------------------------
+
+adt GrammarExpr {
+  GEmpty  : GrammarExpr,
+  GLit    : String -> GrammarExpr,
+  GRef    : String -> GrammarExpr,
+  GSeq    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GAlt    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GStar   : GrammarExpr -> GrammarExpr,
+  GPlus   : GrammarExpr -> GrammarExpr,
+  GOpt    : GrammarExpr -> GrammarExpr,
+  GNot    : GrammarExpr -> GrammarExpr,
+  GAnd    : GrammarExpr -> GrammarExpr,
+  GCon    : String -> GrammarExpr -> GrammarExpr
+}
+
+-----------------------------------------------------
+-- GrammarProduction: Named Grammar Rules
+--
+-- A production is: name ::= expr → constructor
+-----------------------------------------------------
+
+adt GrammarProduction {
+  MkGrammarProduction : String -> GrammarExpr -> String -> GrammarProduction
+}

@@ -5,15 +5,11 @@
 -- Phase 9: Error reporting with source locations
 -----------------------------------------------------
 
------------------------------------------------------
--- Core Types (needed for evaluation)
------------------------------------------------------
+import Grammar;
 
-adt Term {
-  Var : String -> Term,
-  Lit : String -> Term,
-  Con : String -> List Term -> Term
-}
+-----------------------------------------------------
+-- Attribute Path and Environment
+-----------------------------------------------------
 
 adt AttrPath {
   Empty   : AttrPath,

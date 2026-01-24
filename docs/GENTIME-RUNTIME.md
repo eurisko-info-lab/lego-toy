@@ -142,11 +142,27 @@ Each Runtime library provides the same core API:
 
 The "gap" moves from "needs to be generated" to "provided by runtime" - which is the correct architecture since parsing/IO are genuinely target-specific.
 
-## Next Steps
+## Implementation Status
 
-1. ✅ Create Runtime libraries (done)
-2. ✅ Create GenTime template files (done)
-3. [ ] Refactor GrammarDrivenPipeline to load GenTime rules
-4. [ ] Remove hardcoded `match lang with` branches
-5. [ ] Test: generate code that imports Runtime
-6. [ ] Verify: Rosetta → Lean → compile → run
+### Phase 1: Foundation ✅
+1. ✅ Create Runtime libraries for 4 languages (~1,500 lines total)
+2. ✅ Create CodeGen.rosetta - abstract syntax for output
+3. ✅ Create codegen2*.rosetta - rewrite rules using Cons/Nil syntax
+4. ✅ Fix pipeline to parse .rosetta files correctly
+
+### Phase 2: Lean Implementation ✅
+5. ✅ CodeGen.lean - Frag AST with Inhabited, BEq, Repr
+6. ✅ UnifiedCodeGen.lean - termToPatternFrag, termToExprFrag
+7. ✅ Language-specific emitters: emitLeanRewriteRule, emitScalaADT, etc.
+8. ✅ TargetLang enum for dispatch
+
+### Phase 3: Pipeline Integration (TODO)
+9. [ ] Modify GrammarDrivenPipeline to use UnifiedCodeGen
+10. [ ] Remove duplicated termToLeanExpr/termToScalaExpr/etc.
+11. [ ] Wire up Frag → String rendering in pipeline
+
+### Phase 4: Testing (TODO)
+12. [ ] Test: generate code that imports Runtime
+13. [ ] Verify: Rosetta → Lean → compile → run
+14. [ ] Compare output with existing pipeline
+

@@ -45,9 +45,12 @@ lean_lib «CubicalGenerated» where
   globs := #[.submodules `CubicalGen]
 
 -- Generated Rosetta Grammars (from Lean.lego, etc.)
+-- NOTE: Uses explicit roots to avoid conflict with src/Rosetta/CodeGen.lean
 lean_lib «RosettaGenerated» where
   srcDir := "generated"
-  globs := #[.submodules `Rosetta]
+  roots := #[`Rosetta.Algebra, `Rosetta.Attr, `Rosetta.AttrEval, `Rosetta.Generated,
+             `Rosetta.Grammar, `Rosetta.Interp, `Rosetta.Lego, `Rosetta.Loader,
+             `Rosetta.Runtime, `Rosetta.Validation]
 
 -- Rosetta Pipeline (at root level)
 lean_lib «RosettaPipeline» where
@@ -56,6 +59,9 @@ lean_lib «RosettaPipeline» where
 
 lean_exe «test-grammar-driven» where
   root := `TestGrammarDriven
+
+lean_exe «test-codegen» where
+  root := `test.TestCodeGen
 
 @[default_target]
 lean_exe «lego» where

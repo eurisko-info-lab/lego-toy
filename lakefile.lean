@@ -41,7 +41,7 @@ lean_lib «LegoGenerated» where
 -- Code generation pipelines (pipelines/)
 lean_lib «RosettaPipeline» where
   srcDir := "pipelines"
-  roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GenericPrettyPrinter, `GrammarDrivenPipeline]
+  roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GrammarDrivenPipeline]
 
 lean_exe «test-grammar-driven» where
   root := `test.lean.TestGrammarDriven
@@ -105,10 +105,6 @@ lean_exe «rosetta-pipeline» where
 -- Multi-Target Pipeline: .lego → Rosetta IR → Lean/Scala/Haskell/Rust
 lean_exe «multi-target» where
   root := `pipelines.MultiTargetPipeline
-
--- Generated Pipeline: generated/*.lego → .lean
-lean_exe «generated-pipeline» where
-  root := `tools.GeneratedPipeline
 
 -- Comparison test: hand-written vs generated Cubical
 @[default_target]

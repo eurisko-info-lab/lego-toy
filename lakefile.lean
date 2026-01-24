@@ -49,6 +49,14 @@ lean_lib «RosettaGenerated» where
   srcDir := "generated"
   globs := #[.submodules `Rosetta]
 
+-- Rosetta Pipeline (at root level)
+lean_lib «RosettaPipeline» where
+  srcDir := "Rosetta"
+  roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GenericPrettyPrinter, `GrammarDrivenPipeline]
+
+lean_exe «test-grammar-driven» where
+  root := `TestGrammarDriven
+
 @[default_target]
 lean_exe «lego» where
   root := `Main
@@ -101,6 +109,10 @@ lean_exe «pipeline» where
 -- Rosetta Pipeline: .rosetta → Rosetta.lego → rosetta2lean → Lean
 lean_exe «rosetta-pipeline» where
   root := `Rosetta.RosettaPipeline
+
+-- Multi-Target Pipeline: .lego → Rosetta IR → Lean/Scala/Haskell/Rust
+lean_exe «multi-target» where
+  root := `Rosetta.MultiTargetPipeline
 
 -- Generated Pipeline: generated/*.lego → .lean
 lean_exe «generated-pipeline» where

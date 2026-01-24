@@ -2,10 +2,10 @@
   ToLean: Generate Lean code from Lego grammar
 
   Usage:
-    lake exe tolean test/Bootstrap.lego                    # Full module
-    lake exe tolean --grammar test/Bootstrap.lego          # Grammar only
-    lake exe tolean --tokenizer test/Bootstrap.lego        # Tokenizer only
-    lake exe tolean --rules test/Bootstrap.lego            # Rules only
+    lake exe tolean test/lego/Bootstrap.lego                    # Full module
+    lake exe tolean --grammar test/lego/Bootstrap.lego          # Grammar only
+    lake exe tolean --tokenizer test/lego/Bootstrap.lego        # Tokenizer only
+    lake exe tolean --rules test/lego/Bootstrap.lego            # Rules only
 
   This achieves meta-circularity: Bootstrap.lego can generate code
   equivalent to src/Lego/Bootstrap.lean, allowing the system to
@@ -581,8 +581,8 @@ def main (args : List String) : IO Unit := do
       IO.eprintln "  (default)    Generate complete standalone module"
       IO.eprintln ""
       IO.eprintln "Examples:"
-      IO.eprintln "  lake exe tolean test/Bootstrap.lego"
-      IO.eprintln "  lake exe tolean --grammar test/Bootstrap.lego -o generated/BootstrapGrammar.lean"
+      IO.eprintln "  lake exe tolean test/lego/Bootstrap.lego"
+      IO.eprintln "  lake exe tolean --grammar test/lego/Bootstrap.lego -o generated/BootstrapGrammar.lean"
       IO.Process.exit 1
 
   -- Generate code in memory first

@@ -21,7 +21,7 @@ def main : IO Unit := do
 
   -- Step 1: Load Bootstrap.lego
   IO.println "Step 1: Loading Bootstrap.lego with hardcoded grammar..."
-  match ← loadBootstrap "./test/Bootstrap.lego" with
+  match ← loadBootstrap "./test/lego/Bootstrap.lego" with
   | Except.error e =>
     IO.println s!"  ✗ Failed: {e}"
     return
@@ -56,7 +56,7 @@ def main : IO Unit := do
 
     -- Step 4: Parse Redtt.lego (cubical type theory!)
     IO.println "Step 4: Parsing Redtt.lego with RUNTIME grammar..."
-    match ← parseLegoFilePath rt "./test/Redtt.lego" with
+    match ← parseLegoFilePath rt "./test/lego/Redtt.lego" with
     | none =>
       IO.println "  ✗ Failed to parse Redtt.lego"
     | some ast =>

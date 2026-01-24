@@ -26,9 +26,9 @@
   - BootstrapRules.lean: interpreter rules
 
   To regenerate (if Bootstrap.lego changes):
-    lake exe tolean --grammar test/Bootstrap.lego -o generated/BootstrapGrammar.lean
-    lake exe tolean --tokenizer test/Bootstrap.lego -o generated/BootstrapTokenizer.lean
-    lake exe tolean --rules test/Bootstrap.lego -o generated/BootstrapRules.lean
+    lake exe tolean --grammar test/lego/Bootstrap.lego -o generated/BootstrapGrammar.lean
+    lake exe tolean --tokenizer test/lego/Bootstrap.lego -o generated/BootstrapTokenizer.lean
+    lake exe tolean --rules test/lego/Bootstrap.lego -o generated/BootstrapRules.lean
 -/
 
 import Lego.Algebra

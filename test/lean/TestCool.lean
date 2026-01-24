@@ -297,7 +297,7 @@ partial def findCoolttFiles (dir : String) : IO (List String) := do
 def runCoolttParsingTests (rt : Runtime) : IO (List TestResult) := do
   let grammarResult ← do
     try
-      let content ← IO.FS.readFile "./test/Cooltt.lego"
+      let content ← IO.FS.readFile "./test/lego/Cooltt.lego"
       pure (Runtime.parseLegoFile rt content)
     catch _ =>
       pure none

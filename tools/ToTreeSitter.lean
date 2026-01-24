@@ -99,6 +99,16 @@ partial def exprToTs : GrammarExpr → String
     s!"repeat({exprToTs g})"
   | .mk (.bind _ g) => exprToTs g
   | .mk (.node _ g) => exprToTs g
+  | .mk (.longest gs) =>
+    -- Tree-sitter doesn't have longest match; use choice (first match wins)
+    let altStrs := gs.map exprToTs
+    s!"choice({", ".intercalate altStrs})"
+  | .mk (.ordered g1 g2) =>
+    -- Ordered choice - tree-sitter choice is ordered
+    s!"choice({exprToTs g1}, {exprToTs g2})"
+  | .mk (.cut g) =>
+    -- Tree-sitter doesn't have cut; just emit the inner expression
+    exprToTs g
 where
   collectAlts : GrammarExpr → List GrammarExpr
     | .mk (.alt g1 g2) => collectAlts g1 ++ collectAlts g2

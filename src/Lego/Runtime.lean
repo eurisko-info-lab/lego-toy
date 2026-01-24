@@ -38,7 +38,7 @@ structure Runtime where
 /-! ## Bootstrap Loading -/
 
 /-- Default path to Bootstrap.lego -/
-def defaultBootstrapPath : String := "./test/Bootstrap.lego"
+def defaultBootstrapPath : String := "./test/lego/Bootstrap.lego"
 
 /-- Load Bootstrap.lego using the hardcoded grammar, return the full grammar -/
 def loadBootstrap (path : String := defaultBootstrapPath) : IO (Except String Runtime) := do

@@ -22,7 +22,7 @@ def testMain : IO Unit := do
 
   -- Test parsing the source
   IO.println "2. Parsing test source..."
-  match ← parseLegoFilePathE rt "./test/MinimalBootstrap.lego" with
+  match ← parseLegoFilePathE rt "./test/lego/MinimalBootstrap.lego" with
   | .error e => IO.println s!"Parse error: {e}"
   | .ok ast =>
     IO.println s!"   Parsed AST: {ast.toString.take 200}..."
@@ -41,3 +41,5 @@ def testMain : IO Unit := do
 
     IO.println ""
     IO.println "Done!"
+
+def main : IO Unit := testMain

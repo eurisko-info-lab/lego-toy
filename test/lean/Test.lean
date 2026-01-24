@@ -534,7 +534,7 @@ def analyzeLegoFile (rt : Runtime) (path : String) : IO (List TestResult) := do
 
 /-- Run .lego file parsing tests using the runtime grammar -/
 def runLegoFileTests (rt : Runtime) : IO (List TestResult) := do
-  let testPath := "./test"
+  let testPath := "./test/lego"
   let examplePath := "./examples"
   let files := [
     s!"{examplePath}/Lambda.lego",
@@ -575,7 +575,7 @@ def runGrammarExprTests : IO (List TestResult) := do
     { name := "parse_ident_as_GrammarExpr", passed := false, message := s!"✗ prod not found" }
 
   let (test2, test3) ← do
-    match ← loadBootstrapProductions "./test/Bootstrap.lego" with
+    match ← loadBootstrapProductions "./test/lego/Bootstrap.lego" with
     | some parsedProds =>
       let (isSubset, missing) := isSubsetOfProductions hardcodedProds parsedProds
       let compTest := if isSubset then

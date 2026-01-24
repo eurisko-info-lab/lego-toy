@@ -87,6 +87,16 @@ partial def exprToAntlr : GrammarExpr → String
   | .mk (.node _ g) =>
     -- ANTLR uses # for AST node labels (alternative labels)
     s!"{exprToAntlr g}"  -- We'll add # label at production level
+  | .mk (.longest gs) =>
+    -- ANTLR doesn't have longest match; use regular alternation
+    let alts := gs.map exprToAntlr
+    "(" ++ String.intercalate " | " alts ++ ")"
+  | .mk (.ordered g1 g2) =>
+    -- Ordered choice - in ANTLR alternation is ordered by default
+    s!"{exprToAntlr g1} | {exprToAntlr g2}"
+  | .mk (.cut g) =>
+    -- ANTLR doesn't have cut; just emit the inner expression
+    exprToAntlr g
 
 /-- Convert a single production to ANTLR rule -/
 def prodToAntlr (name : String) (expr : GrammarExpr) : String :=

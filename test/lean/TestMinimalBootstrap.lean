@@ -21,7 +21,7 @@ def main : IO Unit := do
   IO.println "═══════════════════════════════════════════════════════════════"
 
   -- Read Bootstrap.lego
-  let content ← IO.FS.readFile "test/Bootstrap.lego"
+  let content ← IO.FS.readFile "test/lego/Bootstrap.lego"
 
   IO.println s!"\nStep 1: Tokenizing Bootstrap.lego with MINIMAL tokenizer..."
   IO.println s!"        (ASCII-only grammar, Unicode handled specially)"

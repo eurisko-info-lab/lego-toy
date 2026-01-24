@@ -839,7 +839,7 @@ def printToString (grammar : LoadedGrammar) (prodName : String) (t : Term) : Opt
     NOTE: This function intentionally uses Bootstrap.parseLegoFile because
     it's specifically for loading and testing Bootstrap.lego itself.
     For parsing ANY OTHER .lego file, use Runtime.parseLegoFile instead. -/
-def loadBootstrapProductions (path : String := "./test/Bootstrap.lego") : IO (Option Productions) := do
+def loadBootstrapProductions (path : String := "./test/lego/Bootstrap.lego") : IO (Option Productions) := do
   try
     let content ← IO.FS.readFile path
     match Bootstrap.parseLegoFile content with

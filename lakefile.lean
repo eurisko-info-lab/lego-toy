@@ -59,9 +59,11 @@ lean_exe «lego-test» where
   -- Ensure proper linking with Init library
   moreLinkArgs := #["-lInit"]
 
-lean_exe «lego-test-red» where
-  root := `test.lean.TestRed
-  moreLinkArgs := #["-lInit"]
+-- TODO: Re-enable when Cubical examples are integrated into main build
+-- TestRed depends on examples/Cubical/* which isn't in Lego lib
+-- lean_exe «lego-test-red» where
+--   root := `test.lean.TestRed
+--   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-cool» where
   root := `test.lean.TestCool
@@ -108,4 +110,3 @@ lean_exe «multi-target» where
 -- @[default_target]
 -- lean_exe «cubical-compare» where
 --   root := `test.lean.TestCubicalComparison
-

@@ -1309,7 +1309,7 @@ def main : IO Unit := do
   -- Process multiple .lego files
   let files := [
     -- Core cubical files
-    ("./test/Redtt.lego", "./generated/Cubical/Redtt.lean"),
+    ("./test/lego/Redtt.lego", "./generated/Cubical/Redtt.lean"),
     ("./src/Lego/Cubical/CubicalTT.lego", "./generated/Cubical/CubicalTT.lean"),
     ("./src/Lego/Cubical/Red.lego", "./generated/Cubical/Red.lean"),
     -- Generated cubical modules (~6800 lines)

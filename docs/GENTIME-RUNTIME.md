@@ -156,13 +156,14 @@ The "gap" moves from "needs to be generated" to "provided by runtime" - which is
 7. ✅ Language-specific emitters: emitLeanRewriteRule, emitScalaADT, etc.
 8. ✅ TargetLang enum for dispatch
 
-### Phase 3: Pipeline Integration (TODO)
-9. [ ] Modify GrammarDrivenPipeline to use UnifiedCodeGen
-10. [ ] Remove duplicated termToLeanExpr/termToScalaExpr/etc.
-11. [ ] Wire up Frag → String rendering in pipeline
+### Phase 3: Pipeline Integration ✅
+9. ✅ Modify GrammarDrivenPipeline to use UnifiedCodeGen
+10. ✅ Wire up Frag → String rendering in pipeline via CodeGen.render
+11. ✅ Add TargetLang.toUnified conversion
+12. [ ] Remove duplicated termToLeanExpr/termToScalaExpr/etc. (can deprecate)
 
-### Phase 4: Testing (TODO)
-12. [ ] Test: generate code that imports Runtime
-13. [ ] Verify: Rosetta → Lean → compile → run
-14. [ ] Compare output with existing pipeline
+### Phase 4: Testing ✅
+13. ✅ Test: generated code from CodeGen.rosetta works
+14. [ ] Verify: Rosetta → Lean → compile → run (optional)
+15. [ ] Remove deprecated code (optional cleanup)
 

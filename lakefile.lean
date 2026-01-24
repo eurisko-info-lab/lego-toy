@@ -103,7 +103,9 @@ lean_exe «rosetta-pipeline» where
 lean_exe «multi-target» where
   root := `tools.MultiTargetPipeline
 
+-- TODO: Re-enable when hand-written Cubical implementation is restored
 -- Comparison test: hand-written vs generated Cubical
-@[default_target]
-lean_exe «cubical-compare» where
-  root := `test.TestCubicalComparison
+-- @[default_target]
+-- lean_exe «cubical-compare» where
+--   root := `test.lean.TestCubicalComparison
+

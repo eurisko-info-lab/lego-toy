@@ -25,7 +25,7 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-BOOTSTRAP_LEGO="test/Bootstrap.lego"
+BOOTSTRAP_LEGO="test/lego/Bootstrap.lego"
 GENERATED_DIR="generated"
 
 # Build tolean first (uses current generated files)

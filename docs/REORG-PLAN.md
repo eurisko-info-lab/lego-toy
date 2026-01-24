@@ -401,12 +401,12 @@ For full interchangeability:
 6. [x] Move `examples/Cubical/*.md` → `docs/cubical/`
 7. [x] Move `test/RED-TODO.md` → `docs/`
 
-### Phase 2: Structure Reorganization ✅ MOSTLY DONE
+### Phase 2: Structure Reorganization ✅ DONE
 1. [x] Rename root `Rosetta/` → `pipelines/`
 2. [x] Move `LegoGen.lean` → `tools/`
 3. [x] Move `Cubical/GeneratedPipeline.lean` → `tools/Cubical/`
 4. [x] Update `lakefile.lean` with new paths
-5. [ ] Split `test/` into `test/lean/` and `test/lego/` (optional)
+5. [x] Split `test/` into `test/lean/` and `test/lego/`
 
 ### Phase 3: Code Cleanup
 1. [ ] Remove deprecated functions from `Interp.lean`, `Bootstrap.lean`

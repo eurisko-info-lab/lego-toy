@@ -38,10 +38,11 @@ lean_lib «LegoGenerated» where
   srcDir := "generated"
   roots := #[`BootstrapGrammar, `BootstrapTokenizer, `BootstrapRules, `MinimalBootstrapTokenizer]
 
--- Code generation pipelines (pipelines/)
-lean_lib «RosettaPipeline» where
-  srcDir := "pipelines"
-  roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GrammarDrivenPipeline]
+-- Code generation tools and pipelines (tools/)
+lean_lib «ToolsLib» where
+  srcDir := "tools"
+  roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GrammarDrivenPipeline,
+             `ToLean, `ToAntlr, `ToTreeSitter, `LegoGen, `Cubical]
 
 lean_exe «test-grammar-driven» where
   root := `test.lean.TestGrammarDriven
@@ -74,11 +75,7 @@ lean_exe «lego-test-minimal» where
   root := `test.lean.TestMinimalBootstrap
   moreLinkArgs := #["-lInit"]
 
--- Tools
--- Cubical code generators (tools/Cubical/)
-lean_lib «CubicalTools» where
-  srcDir := "tools"
-  roots := #[`Cubical]
+-- Tools executables
 
 lean_exe «toantlr» where
   root := `tools.ToAntlr
@@ -96,15 +93,15 @@ lean_exe «lego-gen» where
 
 -- Pipeline: CubicalTT → cubical2rosetta → rosetta2lean
 lean_exe «pipeline» where
-  root := `pipelines.Pipeline
+  root := `tools.Pipeline
 
 -- Rosetta Pipeline: .rosetta → Rosetta.lego → rosetta2lean → Lean
 lean_exe «rosetta-pipeline» where
-  root := `pipelines.RosettaPipeline
+  root := `tools.RosettaPipeline
 
 -- Multi-Target Pipeline: .lego → Rosetta IR → Lean/Scala/Haskell/Rust
 lean_exe «multi-target» where
-  root := `pipelines.MultiTargetPipeline
+  root := `tools.MultiTargetPipeline
 
 -- Comparison test: hand-written vs generated Cubical
 @[default_target]

@@ -67,13 +67,11 @@ lego-toy/
 │   ├── BootstrapRules.lean
 │   └── MinimalBootstrapTokenizer.lean
 │
-├── pipelines/                   # Code generation pipelines (was Rosetta/)
-│   ├── Pipeline.lean           # Main pipeline
-│   ├── RosettaPipeline.lean
-│   ├── MultiTargetPipeline.lean
-│   └── GrammarDrivenPipeline.lean
-│
-├── tools/                       # CLI tools (consider merging with pipelines/)
+├── tools/                       # All code generation tools and pipelines
+│   ├── Pipeline.lean           # CubicalTT pipeline
+│   ├── RosettaPipeline.lean    # Rosetta pipeline
+│   ├── MultiTargetPipeline.lean # Multi-target code gen
+│   ├── GrammarDrivenPipeline.lean
 │   ├── ToLean.lean             # Generate Lean
 │   ├── ToAntlr.lean            # Generate ANTLR
 │   ├── ToTreeSitter.lean       # Generate Tree-sitter
@@ -418,16 +416,13 @@ For full interchangeability:
 3. [ ] Document the swap process in `docs/BOOTSTRAP.md`
 4. [ ] Add CI job for bootstrap verification
 
-### Phase 5: Merge tools/ and pipelines/ (Optional)
-Both directories contain code generation/transformation executables:
-- `pipelines/`: Pipeline, RosettaPipeline, MultiTargetPipeline, GrammarDrivenPipeline
-- `tools/`: ToLean, ToAntlr, ToTreeSitter, LegoGen, Cubical/*
-
-Proposed merge into single `tools/` directory:
-1. [ ] Move `pipelines/*.lean` → `tools/`
-2. [ ] Update `lakefile.lean` srcDir and roots
-3. [ ] Remove empty `pipelines/` directory
-4. [ ] Update imports if any
+### Phase 5: Merge tools/ and pipelines/ ✅ DONE
+Both directories contained code generation/transformation executables.
+Merged into single `tools/` directory:
+1. [x] Move `pipelines/*.lean` → `tools/`
+2. [x] Update `lakefile.lean` - merged into ToolsLib
+3. [x] Remove empty `pipelines/` directory
+4. [x] Update executable roots: `pipelines.*` → `tools.*`
 
 ---
 

@@ -1,0 +1,159 @@
+-----------------------------------------------------
+-- codegen2haskell.rosetta: Render CodeGen AST to Haskell
+--
+-- Uses Cons/Nil for lists (not [...] syntax).
+-----------------------------------------------------
+
+module CodeGenToHaskell {
+
+-- Module
+rewrite moduleToHaskell: (toHaskell (Module $name $body)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "module") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " where") Nil))))))
+         (Cons FEmpty (Cons (toHaskellDecls $body) Nil)))) ;
+
+-- Import
+rewrite importToHaskell: (toHaskell (ImportDecl $mod)) ~>
+  (Line (FSeq (Cons (Keyword "import") (Cons (Raw " ") (Cons (Ident $mod) Nil))))) ;
+
+-- Inductive type -> data type
+rewrite inductiveToHaskell: (toHaskell (InductiveType $name $ctors $derives)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "data") (Cons (Raw " ") (Cons (Ident $name) Nil)))))
+         (Cons (toHaskellCtors $ctors)
+         (Cons (toHaskellDeriving $derives) Nil)))) ;
+
+-- Structure -> data with record syntax
+rewrite structToHaskell: (toHaskell (StructType $name $fields $derives)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "data") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " = ") (Cons (Ident $name) Nil)))))))
+         (Cons (Line (Raw "  { "))
+         (Cons (Indent (toHaskellRecordFields $fields))
+         (Cons (Line (Raw "  }"))
+         (Cons (toHaskellDeriving $derives) Nil)))))) ;
+
+-- Type alias
+rewrite aliasToHaskell: (toHaskell (AliasType $name $def)) ~>
+  (Line (FSeq (Cons (Keyword "type") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " = ") (Cons (toHaskell $def) Nil))))))) ;
+
+-- Constructor with args
+rewrite ctorToHaskell: (toHaskellCtor (MkCtor $name $args)) ~>
+  (FSeq (Cons (Ident $name) (Cons (Raw " ") (Cons (Sep " " (map toHaskell $args)) Nil)))) ;
+
+-- Constructor no args
+rewrite ctorNoArgsHaskell: (toHaskellCtor (MkCtor $name Nil)) ~> (Ident $name) ;
+
+-- Deriving empty
+rewrite derivingEmptyHaskell: (toHaskellDeriving Nil) ~> FEmpty ;
+
+-- Deriving non-empty
+rewrite derivingHaskell: (toHaskellDeriving $derives) ~>
+  (Line (FSeq (Cons (Raw "  deriving (") (Cons (Sep ", " (map Ident $derives)) (Cons (Raw ")") Nil))))) ;
+
+-- Function definition
+rewrite funDefHaskell: (toHaskell (FunDef $name $params $retType $body)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Ident $name) (Cons (Raw " :: ") (Cons (Sep " -> " (toHaskellParamTypes $params)) (Cons (Raw " -> ") (Cons (toHaskell $retType) Nil)))))))
+         (Cons (Line (FSeq (Cons (Ident $name) (Cons (Raw " ") (Cons (Sep " " (toHaskellParamNames $params)) (Cons (Raw " =") Nil))))))
+         (Cons (Indent (toHaskell $body)) Nil)))) ;
+
+-- Variable
+rewrite varHaskell: (toHaskell (VarExpr $x)) ~> (Ident $x) ;
+
+-- Literal
+rewrite litHaskell: (toHaskell (LitExpr $v)) ~> (Raw $v) ;
+
+-- Application (curried)
+rewrite appHaskell: (toHaskell (AppExpr $f $args)) ~>
+  (FSeq (Cons (toHaskell $f) (Cons (Raw " ") (Cons (Sep " " (map toHaskell $args)) Nil)))) ;
+
+-- Lambda
+rewrite lamHaskell: (toHaskell (LamExpr $params $body)) ~>
+  (FSeq (Cons (Raw "\\") (Cons (Sep " " (map Ident $params)) (Cons (Raw " -> ") (Cons (toHaskell $body) Nil))))) ;
+
+-- Let binding
+rewrite letHaskell: (toHaskell (LetExpr $name $value $body)) ~>
+  (FSeq (Cons (Keyword "let") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " = ") (Cons (toHaskell $value) (Cons (Raw " in ") (Cons (toHaskell $body) Nil)))))))) ;
+
+-- Match expression -> case
+rewrite matchHaskell: (toHaskell (MatchExpr $scrutinee $cases)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "case") (Cons (Raw " ") (Cons (toHaskell $scrutinee) (Cons (Raw " of") Nil))))))
+         (Cons (Indent (toHaskellCases $cases)) Nil))) ;
+
+-- Case clause
+rewrite caseHaskell: (toHaskellCase (MkCase $pat $body)) ~>
+  (Line (FSeq (Cons (toHaskell $pat) (Cons (Raw " -> ") (Cons (toHaskell $body) Nil))))) ;
+
+-- If expression
+rewrite ifHaskell: (toHaskell (IfExpr $cond $then $else)) ~>
+  (FSeq (Cons (Keyword "if") (Cons (Raw " ") (Cons (toHaskell $cond) (Cons (Raw " then ") (Cons (toHaskell $then) (Cons (Raw " else ") (Cons (toHaskell $else) Nil)))))))) ;
+
+-- Do notation
+rewrite doHaskell: (toHaskell (DoExpr $stmts)) ~>
+  (Lines (Cons (Line (Keyword "do")) (Cons (Indent (toHaskellStmts $stmts)) Nil))) ;
+
+-- List literal
+rewrite listHaskell: (toHaskell (ListExpr $items)) ~>
+  (FSeq (Cons (Raw "[") (Cons (Sep ", " (map toHaskell $items)) (Cons (Raw "]") Nil)))) ;
+
+-- Tuple
+rewrite tupleHaskell: (toHaskell (TupleExpr $items)) ~>
+  (FSeq (Cons (Raw "(") (Cons (Sep ", " (map toHaskell $items)) (Cons (Raw ")") Nil)))) ;
+
+-- Option -> Maybe
+rewrite someHaskell: (toHaskell (SomeExpr $v)) ~> (FSeq (Cons (Ident "Just") (Cons (Raw " ") (Cons (toHaskell $v) Nil)))) ;
+rewrite noneHaskell: (toHaskell NoneExpr) ~> (Ident "Nothing") ;
+
+-- Dot access -> function application
+rewrite dotHaskell: (toHaskell (DotExpr $obj $field)) ~>
+  (FSeq (Cons (Ident $field) (Cons (Raw " ") (Cons (toHaskell $obj) Nil)))) ;
+
+rewrite dotAppHaskell: (toHaskell (DotAppExpr $obj $method $args)) ~>
+  (FSeq (Cons (Ident $method) (Cons (Raw " ") (Cons (toHaskell $obj) (Cons (Raw " ") (Cons (Sep " " (map toHaskell $args)) Nil)))))) ;
+
+-- Do statements
+rewrite bindStmtHaskell: (toHaskellStmt (BindStmt $name $expr)) ~>
+  (Line (FSeq (Cons (Ident $name) (Cons (Raw " <- ") (Cons (toHaskell $expr) Nil))))) ;
+
+rewrite letStmtHaskell: (toHaskellStmt (LetStmt $name $expr)) ~>
+  (Line (FSeq (Cons (Keyword "let") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " = ") (Cons (toHaskell $expr) Nil))))))) ;
+
+rewrite exprStmtHaskell: (toHaskellStmt (ExprStmt $expr)) ~>
+  (Line (toHaskell $expr)) ;
+
+rewrite returnStmtHaskell: (toHaskellStmt (ReturnStmt $expr)) ~>
+  (Line (FSeq (Cons (Keyword "return") (Cons (Raw " ") (Cons (toHaskell $expr) Nil))))) ;
+
+-- Operators
+rewrite eqOpHaskell: (toHaskell EqOp) ~> (Op "==") ;
+rewrite neqOpHaskell: (toHaskell NeqOp) ~> (Op "/=") ;
+rewrite ltOpHaskell: (toHaskell LtOp) ~> (Op "<") ;
+rewrite gtOpHaskell: (toHaskell GtOp) ~> (Op ">") ;
+rewrite leOpHaskell: (toHaskell LeOp) ~> (Op "<=") ;
+rewrite geOpHaskell: (toHaskell GeOp) ~> (Op ">=") ;
+rewrite andOpHaskell: (toHaskell AndOp) ~> (Op "&&") ;
+rewrite orOpHaskell: (toHaskell OrOp) ~> (Op "||") ;
+rewrite addOpHaskell: (toHaskell AddOp) ~> (Op "+") ;
+rewrite subOpHaskell: (toHaskell SubOp) ~> (Op "-") ;
+rewrite mulOpHaskell: (toHaskell MulOp) ~> (Op "*") ;
+rewrite divOpHaskell: (toHaskell DivOp) ~> (Op "`div`") ;
+rewrite modOpHaskell: (toHaskell ModOp) ~> (Op "`mod`") ;
+rewrite consOpHaskell: (toHaskell ConsOp) ~> (Op ":") ;
+rewrite appendOpHaskell: (toHaskell AppendOp) ~> (Op "++") ;
+rewrite notOpHaskell: (toHaskell NotOp) ~> (Ident "not") ;
+rewrite negOpHaskell: (toHaskell NegOp) ~> (Op "-") ;
+
+-- Base types
+rewrite stringTypeHaskell: (toHaskell StringType) ~> (Ident "String") ;
+rewrite intTypeHaskell: (toHaskell IntType) ~> (Ident "Int") ;
+rewrite natTypeHaskell: (toHaskell NatType) ~> (Ident "Int") ;
+rewrite boolTypeHaskell: (toHaskell BoolType) ~> (Ident "Bool") ;
+rewrite unitTypeHaskell: (toHaskell UnitType) ~> (Raw "()") ;
+rewrite floatTypeHaskell: (toHaskell FloatType) ~> (Ident "Double") ;
+rewrite charTypeHaskell: (toHaskell CharType) ~> (Ident "Char") ;
+
+rewrite listOfHaskell: (toHaskell (ListOf $t)) ~> (FSeq (Cons (Raw "[") (Cons (toHaskell $t) (Cons (Raw "]") Nil)))) ;
+rewrite optionOfHaskell: (toHaskell (OptionOf $t)) ~> (FSeq (Cons (Ident "Maybe") (Cons (Raw " ") (Cons (toHaskell $t) Nil)))) ;
+rewrite arrowTHaskell: (toHaskell (ArrowT $a $b)) ~> (FSeq (Cons (toHaskell $a) (Cons (Raw " -> ") (Cons (toHaskell $b) Nil)))) ;
+
+-- Comments
+rewrite commentHaskell: (toHaskell (CommentD $text)) ~> (Line (FSeq (Cons (Raw "-- ") (Cons (Raw $text) Nil)))) ;
+rewrite docHaskell: (toHaskell (DocD $text)) ~> (Line (FSeq (Cons (Raw "-- | ") (Cons (Raw $text) Nil)))) ;
+
+}

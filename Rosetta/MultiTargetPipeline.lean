@@ -571,7 +571,9 @@ def runSeparate (rt : Runtime) (args : Args) : IO (Except String (List TargetRes
     match rosettaGrammar with
     | some grammar =>
       let content ← IO.FS.readFile path
-      match Loader.parseWithGrammarE grammar content with
+      -- Use rosettaFile start production for .rosetta files
+      let rosettaParseGrammar := { grammar with startProd := "File.rosettaFile" }
+      match Loader.parseWithGrammarE rosettaParseGrammar content with
       | .error e => return .error s!"Parse error in {path}: {e}"
       | .ok ast => return .ok ast
     | none => return .error "Rosetta grammar not loaded"

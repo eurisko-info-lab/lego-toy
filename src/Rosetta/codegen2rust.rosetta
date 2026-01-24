@@ -1,0 +1,154 @@
+-----------------------------------------------------
+-- codegen2rust.rosetta: Render CodeGen AST to Rust
+--
+-- Uses Cons/Nil for lists (not [...] syntax).
+-----------------------------------------------------
+
+module CodeGenToRust {
+
+-- Module -> pub mod
+rewrite moduleToRust: (toRust (Module $name $body)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "pub") (Cons (Raw " mod ") (Cons (Ident $name) (Cons (Raw " {") Nil))))))
+         (Cons FEmpty (Cons (Indent (toRustDecls $body)) (Cons (Line (Raw "}")) Nil))))) ;
+
+-- Import -> use
+rewrite importToRust: (toRust (ImportDecl $mod)) ~>
+  (Line (FSeq (Cons (Keyword "use") (Cons (Raw " ") (Cons (Ident $mod) (Cons (Raw ";") Nil)))))) ;
+
+-- Inductive type -> pub enum
+rewrite inductiveToRust: (toRust (InductiveType $name $ctors $derives)) ~>
+  (Lines (Cons (toRustDerives $derives)
+         (Cons (Line (FSeq (Cons (Keyword "pub") (Cons (Raw " enum ") (Cons (Ident $name) (Cons (Raw " {") Nil))))))
+         (Cons (Indent (toRustEnumCtors $ctors))
+         (Cons (Line (Raw "}")) Nil))))) ;
+
+-- Structure -> pub struct
+rewrite structToRust: (toRust (StructType $name $fields $derives)) ~>
+  (Lines (Cons (toRustDerives $derives)
+         (Cons (Line (FSeq (Cons (Keyword "pub") (Cons (Raw " struct ") (Cons (Ident $name) (Cons (Raw " {") Nil))))))
+         (Cons (Indent (toRustStructFields $fields))
+         (Cons (Line (Raw "}")) Nil))))) ;
+
+-- Type alias
+rewrite aliasToRust: (toRust (AliasType $name $def)) ~>
+  (Line (FSeq (Cons (Keyword "pub") (Cons (Raw " type ") (Cons (Ident $name) (Cons (Raw " = ") (Cons (toRust $def) (Cons (Raw ";") Nil)))))))) ;
+
+-- Enum variant with args -> tuple variant
+rewrite ctorToRust: (toRustEnumCtor (MkCtor $name $args)) ~>
+  (Line (FSeq (Cons (Ident $name) (Cons (Raw "(") (Cons (Sep ", " (map toRust $args)) (Cons (Raw "),") Nil)))))) ;
+
+-- Enum variant no args -> unit variant
+rewrite ctorNoArgsRust: (toRustEnumCtor (MkCtor $name Nil)) ~>
+  (Line (FSeq (Cons (Ident $name) (Cons (Raw ",") Nil)))) ;
+
+-- Derive empty
+rewrite derivesEmptyRust: (toRustDerives Nil) ~> FEmpty ;
+
+-- Derive non-empty
+rewrite derivesRust: (toRustDerives $derives) ~>
+  (Line (FSeq (Cons (Raw "#[derive(") (Cons (Sep ", " (map Ident $derives)) (Cons (Raw ")]") Nil))))) ;
+
+-- Function definition -> pub fn
+rewrite funDefRust: (toRust (FunDef $name $params $retType $body)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "pub") (Cons (Raw " fn ") (Cons (Ident $name) (Cons (Raw "(") (Cons (Sep ", " (toRustParams $params)) (Cons (Raw ") -> ") (Cons (toRust $retType) (Cons (Raw " {") Nil))))))))))
+         (Cons (Indent (toRust $body))
+         (Cons (Line (Raw "}")) Nil)))) ;
+
+-- Parameter: name: Type
+rewrite paramRust: (toRustParam (MkParam $name $type)) ~>
+  (FSeq (Cons (Ident $name) (Cons (Raw ": ") (Cons (toRust $type) Nil)))) ;
+
+-- Variable
+rewrite varRust: (toRust (VarExpr $x)) ~> (Ident $x) ;
+
+-- Literal
+rewrite litRust: (toRust (LitExpr $v)) ~> (Raw $v) ;
+
+-- Application
+rewrite appRust: (toRust (AppExpr $f $args)) ~>
+  (FSeq (Cons (toRust $f) (Cons (Raw "(") (Cons (Sep ", " (map toRust $args)) (Cons (Raw ")") Nil))))) ;
+
+-- Lambda -> closure
+rewrite lamRust: (toRust (LamExpr $params $body)) ~>
+  (FSeq (Cons (Raw "|") (Cons (Sep ", " (map Ident $params)) (Cons (Raw "| ") (Cons (toRust $body) Nil))))) ;
+
+-- Let binding
+rewrite letRust: (toRust (LetExpr $name $value $body)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "let") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " = ") (Cons (toRust $value) (Cons (Raw ";") Nil))))))))
+         (Cons (toRust $body) Nil))) ;
+
+-- Match expression
+rewrite matchRust: (toRust (MatchExpr $scrutinee $cases)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "match") (Cons (Raw " ") (Cons (toRust $scrutinee) (Cons (Raw " {") Nil))))))
+         (Cons (Indent (toRustCases $cases))
+         (Cons (Line (Raw "}")) Nil)))) ;
+
+-- Match arm
+rewrite caseRust: (toRustCase (MkCase $pat $body)) ~>
+  (Line (FSeq (Cons (toRust $pat) (Cons (Raw " => ") (Cons (toRust $body) (Cons (Raw ",") Nil)))))) ;
+
+-- If expression
+rewrite ifRust: (toRust (IfExpr $cond $then $else)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "if") (Cons (Raw " ") (Cons (toRust $cond) (Cons (Raw " {") Nil))))))
+         (Cons (Indent (toRust $then))
+         (Cons (Line (Raw "} else {"))
+         (Cons (Indent (toRust $else))
+         (Cons (Line (Raw "}")) Nil)))))) ;
+
+-- List literal -> vec![]
+rewrite listRust: (toRust (ListExpr $items)) ~>
+  (FSeq (Cons (Raw "vec![") (Cons (Sep ", " (map toRust $items)) (Cons (Raw "]") Nil)))) ;
+
+-- Tuple
+rewrite tupleRust: (toRust (TupleExpr $items)) ~>
+  (FSeq (Cons (Raw "(") (Cons (Sep ", " (map toRust $items)) (Cons (Raw ")") Nil)))) ;
+
+-- Option
+rewrite someRust: (toRust (SomeExpr $v)) ~> (FSeq (Cons (Ident "Some") (Cons (Raw "(") (Cons (toRust $v) (Cons (Raw ")") Nil))))) ;
+rewrite noneRust: (toRust NoneExpr) ~> (Ident "None") ;
+
+-- Dot access
+rewrite dotRust: (toRust (DotExpr $obj $field)) ~>
+  (FSeq (Cons (toRust $obj) (Cons (Raw ".") (Cons (Ident $field) Nil)))) ;
+
+rewrite dotAppRust: (toRust (DotAppExpr $obj $method $args)) ~>
+  (FSeq (Cons (toRust $obj) (Cons (Raw ".") (Cons (Ident $method) (Cons (Raw "(") (Cons (Sep ", " (map toRust $args)) (Cons (Raw ")") Nil))))))) ;
+
+-- Operators
+rewrite eqOpRust: (toRust EqOp) ~> (Op "==") ;
+rewrite neqOpRust: (toRust NeqOp) ~> (Op "!=") ;
+rewrite ltOpRust: (toRust LtOp) ~> (Op "<") ;
+rewrite gtOpRust: (toRust GtOp) ~> (Op ">") ;
+rewrite leOpRust: (toRust LeOp) ~> (Op "<=") ;
+rewrite geOpRust: (toRust GeOp) ~> (Op ">=") ;
+rewrite andOpRust: (toRust AndOp) ~> (Op "&&") ;
+rewrite orOpRust: (toRust OrOp) ~> (Op "||") ;
+rewrite addOpRust: (toRust AddOp) ~> (Op "+") ;
+rewrite subOpRust: (toRust SubOp) ~> (Op "-") ;
+rewrite mulOpRust: (toRust MulOp) ~> (Op "*") ;
+rewrite divOpRust: (toRust DivOp) ~> (Op "/") ;
+rewrite modOpRust: (toRust ModOp) ~> (Op "%") ;
+rewrite notOpRust: (toRust NotOp) ~> (Op "!") ;
+rewrite negOpRust: (toRust NegOp) ~> (Op "-") ;
+
+-- Base types
+rewrite stringTypeRust: (toRust StringType) ~> (Ident "String") ;
+rewrite strTypeRust: (toRust StrType) ~> (FSeq (Cons (Raw "&") (Cons (Ident "str") Nil))) ;
+rewrite intTypeRust: (toRust IntType) ~> (Ident "i64") ;
+rewrite usizeTypeRust: (toRust UsizeType) ~> (Ident "usize") ;
+rewrite natTypeRust: (toRust NatType) ~> (Ident "u64") ;
+rewrite boolTypeRust: (toRust BoolType) ~> (Ident "bool") ;
+rewrite unitTypeRust: (toRust UnitType) ~> (Raw "()") ;
+rewrite floatTypeRust: (toRust FloatType) ~> (Ident "f64") ;
+rewrite charTypeRust: (toRust CharType) ~> (Ident "char") ;
+
+rewrite vecOfRust: (toRust (VecOf $t)) ~> (FSeq (Cons (Ident "Vec") (Cons (Raw "<") (Cons (toRust $t) (Cons (Raw ">") Nil))))) ;
+rewrite optionOfRust: (toRust (OptionOf $t)) ~> (FSeq (Cons (Ident "Option") (Cons (Raw "<") (Cons (toRust $t) (Cons (Raw ">") Nil))))) ;
+rewrite resultOfRust: (toRust (ResultOf $ok $err)) ~> (FSeq (Cons (Ident "Result") (Cons (Raw "<") (Cons (toRust $ok) (Cons (Raw ", ") (Cons (toRust $err) (Cons (Raw ">") Nil))))))) ;
+rewrite boxOfRust: (toRust (BoxOf $t)) ~> (FSeq (Cons (Ident "Box") (Cons (Raw "<") (Cons (toRust $t) (Cons (Raw ">") Nil))))) ;
+
+-- Comments
+rewrite commentRust: (toRust (CommentD $text)) ~> (Line (FSeq (Cons (Raw "// ") (Cons (Raw $text) Nil)))) ;
+rewrite docRust: (toRust (DocD $text)) ~> (Line (FSeq (Cons (Raw "/// ") (Cons (Raw $text) Nil)))) ;
+
+}

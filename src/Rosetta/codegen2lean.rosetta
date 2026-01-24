@@ -1,0 +1,165 @@
+-----------------------------------------------------
+-- codegen2lean.rosetta: Render CodeGen AST to Lean 4
+--
+-- Uses Cons/Nil for lists (not [...] syntax).
+-----------------------------------------------------
+
+module CodeGenToLean {
+
+-- Module -> namespace ... end
+rewrite moduleToLean: (toLean (Module $name $body)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "namespace") (Cons (Raw " ") (Cons (Ident $name) Nil)))))
+         (Cons FEmpty (Cons (toLeanDecls $body) (Cons (Line (FSeq (Cons (Keyword "end") (Cons (Raw " ") (Cons (Ident $name) Nil))))) Nil))))) ;
+
+-- Import
+rewrite importToLean: (toLean (ImportDecl $mod)) ~>
+  (Line (FSeq (Cons (Keyword "import") (Cons (Raw " ") (Cons (Ident $mod) Nil))))) ;
+
+-- Inductive type
+rewrite inductiveToLean: (toLean (InductiveType $name $ctors $derives)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "inductive") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " where") Nil))))))
+         (Cons (Indent (toLeanCtors $ctors))
+         (Cons (toLeanDeriving $derives) Nil)))) ;
+
+-- Structure
+rewrite structToLean: (toLean (StructType $name $fields $derives)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "structure") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " where") Nil))))))
+         (Cons (Indent (toLeanFields $fields))
+         (Cons (toLeanDeriving $derives) Nil)))) ;
+
+-- Type alias
+rewrite aliasToLean: (toLean (AliasType $name $def)) ~>
+  (Line (FSeq (Cons (Keyword "abbrev") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " := ") (Cons (toLean $def) Nil))))))) ;
+
+-- Constructor with args
+rewrite ctorToLean: (toLeanCtor (MkCtor $name $args)) ~>
+  (Line (FSeq (Cons (Raw "| ") (Cons (Ident $name) (Cons (Raw " : ") (Cons (Sep " -> " (map toLean $args)) (Cons (Raw " -> ") (Cons (Ident $name) Nil)))))))) ;
+
+-- Constructor no args
+rewrite ctorNoArgsLean: (toLeanCtor (MkCtor $name Nil)) ~>
+  (Line (FSeq (Cons (Raw "| ") (Cons (Ident $name) Nil)))) ;
+
+-- Deriving empty
+rewrite derivingEmptyLean: (toLeanDeriving Nil) ~> FEmpty ;
+
+-- Deriving non-empty
+rewrite derivingLean: (toLeanDeriving $derives) ~>
+  (Line (FSeq (Cons (Raw "  deriving ") (Cons (Sep ", " (map Ident $derives)) Nil)))) ;
+
+-- Function definition
+rewrite funDefLean: (toLean (FunDef $name $params $retType $body)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "def") (Cons (Raw " ") (Cons (Ident $name) (Cons (toLeanParams $params) (Cons (Raw " : ") (Cons (toLean $retType) (Cons (Raw " :=") Nil)))))))))
+         (Cons (Indent (toLean $body)) Nil))) ;
+
+-- Partial function
+rewrite partialDefLean: (toLean (PartialDef $name $params $retType $body)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "partial") (Cons (Raw " ") (Cons (Keyword "def") (Cons (Raw " ") (Cons (Ident $name) (Cons (toLeanParams $params) (Cons (Raw " : ") (Cons (toLean $retType) (Cons (Raw " :=") Nil)))))))))))
+         (Cons (Indent (toLean $body)) Nil))) ;
+
+-- Variable
+rewrite varLean: (toLean (VarExpr $x)) ~> (Ident $x) ;
+
+-- Literal
+rewrite litLean: (toLean (LitExpr $v)) ~> (Raw $v) ;
+
+-- Application
+rewrite appLean: (toLean (AppExpr $f $args)) ~>
+  (FSeq (Cons (toLean $f) (Cons (Raw " ") (Cons (Sep " " (map toLean $args)) Nil)))) ;
+
+-- Lambda
+rewrite lamLean: (toLean (LamExpr $params $body)) ~>
+  (FSeq (Cons (Keyword "fun") (Cons (Raw " ") (Cons (Sep " " (map Ident $params)) (Cons (Raw " => ") (Cons (toLean $body) Nil)))))) ;
+
+-- Let binding
+rewrite letLean: (toLean (LetExpr $name $value $body)) ~>
+  (FSeq (Cons (Keyword "let") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " := ") (Cons (toLean $value) (Cons (Raw "; ") (Cons (toLean $body) Nil)))))))) ;
+
+-- Match expression
+rewrite matchLean: (toLean (MatchExpr $scrutinee $cases)) ~>
+  (Lines (Cons (Line (FSeq (Cons (Keyword "match") (Cons (Raw " ") (Cons (toLean $scrutinee) (Cons (Raw " with") Nil))))))
+         (Cons (Indent (toLeanCases $cases)) Nil))) ;
+
+-- Match case
+rewrite caseLean: (toLeanCase (MkCase $pat $body)) ~>
+  (Line (FSeq (Cons (Raw "| ") (Cons (toLean $pat) (Cons (Raw " => ") (Cons (toLean $body) Nil)))))) ;
+
+-- If expression
+rewrite ifLean: (toLean (IfExpr $cond $then $else)) ~>
+  (FSeq (Cons (Keyword "if") (Cons (Raw " ") (Cons (toLean $cond) (Cons (Raw " then ") (Cons (toLean $then) (Cons (Raw " else ") (Cons (toLean $else) Nil)))))))) ;
+
+-- Do notation
+rewrite doLean: (toLean (DoExpr $stmts)) ~>
+  (Lines (Cons (Line (Keyword "do")) (Cons (Indent (toLeanStmts $stmts)) Nil))) ;
+
+-- List literal
+rewrite listLean: (toLean (ListExpr $items)) ~>
+  (FSeq (Cons (Raw "[") (Cons (Sep ", " (map toLean $items)) (Cons (Raw "]") Nil)))) ;
+
+-- Tuple
+rewrite tupleLean: (toLean (TupleExpr $items)) ~>
+  (FSeq (Cons (Raw "(") (Cons (Sep ", " (map toLean $items)) (Cons (Raw ")") Nil)))) ;
+
+-- Option
+rewrite someLean: (toLean (SomeExpr $v)) ~> (FSeq (Cons (Ident "some") (Cons (Raw " ") (Cons (toLean $v) Nil)))) ;
+rewrite noneLean: (toLean NoneExpr) ~> (Ident "none") ;
+
+-- Dot access
+rewrite dotLean: (toLean (DotExpr $obj $field)) ~>
+  (FSeq (Cons (toLean $obj) (Cons (Raw ".") (Cons (Ident $field) Nil)))) ;
+
+rewrite dotAppLean: (toLean (DotAppExpr $obj $method $args)) ~>
+  (FSeq (Cons (toLean $obj) (Cons (Raw ".") (Cons (Ident $method) (Cons (Raw " ") (Cons (Sep " " (map toLean $args)) Nil)))))) ;
+
+-- Do statements
+rewrite bindStmtLean: (toLeanStmt (BindStmt $name $expr)) ~>
+  (Line (FSeq (Cons (Keyword "let") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " <- ") (Cons (toLean $expr) Nil))))))) ;
+
+rewrite letStmtLean: (toLeanStmt (LetStmt $name $expr)) ~>
+  (Line (FSeq (Cons (Keyword "let") (Cons (Raw " ") (Cons (Ident $name) (Cons (Raw " := ") (Cons (toLean $expr) Nil))))))) ;
+
+rewrite exprStmtLean: (toLeanStmt (ExprStmt $expr)) ~>
+  (Line (toLean $expr)) ;
+
+rewrite returnStmtLean: (toLeanStmt (ReturnStmt $expr)) ~>
+  (Line (FSeq (Cons (Keyword "return") (Cons (Raw " ") (Cons (toLean $expr) Nil))))) ;
+
+-- Operators
+rewrite eqOpLean: (toLean EqOp) ~> (Op "==") ;
+rewrite neqOpLean: (toLean NeqOp) ~> (Op "!=") ;
+rewrite ltOpLean: (toLean LtOp) ~> (Op "<") ;
+rewrite gtOpLean: (toLean GtOp) ~> (Op ">") ;
+rewrite leOpLean: (toLean LeOp) ~> (Op "<=") ;
+rewrite geOpLean: (toLean GeOp) ~> (Op ">=") ;
+rewrite andOpLean: (toLean AndOp) ~> (Op "&&") ;
+rewrite orOpLean: (toLean OrOp) ~> (Op "||") ;
+rewrite addOpLean: (toLean AddOp) ~> (Op "+") ;
+rewrite subOpLean: (toLean SubOp) ~> (Op "-") ;
+rewrite mulOpLean: (toLean MulOp) ~> (Op "*") ;
+rewrite divOpLean: (toLean DivOp) ~> (Op "/") ;
+rewrite modOpLean: (toLean ModOp) ~> (Op "%") ;
+rewrite consOpLean: (toLean ConsOp) ~> (Op "::") ;
+rewrite appendOpLean: (toLean AppendOp) ~> (Op "++") ;
+rewrite notOpLean: (toLean NotOp) ~> (Ident "not") ;
+rewrite negOpLean: (toLean NegOp) ~> (Op "-") ;
+
+-- Base types
+rewrite stringTypeLean: (toLean StringType) ~> (Ident "String") ;
+rewrite intTypeLean: (toLean IntType) ~> (Ident "Int") ;
+rewrite natTypeLean: (toLean NatType) ~> (Ident "Nat") ;
+rewrite boolTypeLean: (toLean BoolType) ~> (Ident "Bool") ;
+rewrite unitTypeLean: (toLean UnitType) ~> (Ident "Unit") ;
+rewrite floatTypeLean: (toLean FloatType) ~> (Ident "Float") ;
+rewrite charTypeLean: (toLean CharType) ~> (Ident "Char") ;
+
+rewrite listOfLean: (toLean (ListOf $t)) ~> (FSeq (Cons (Ident "List") (Cons (Raw " ") (Cons (toLean $t) Nil)))) ;
+rewrite optionOfLean: (toLean (OptionOf $t)) ~> (FSeq (Cons (Ident "Option") (Cons (Raw " ") (Cons (toLean $t) Nil)))) ;
+rewrite arrowTLean: (toLean (ArrowT $a $b)) ~> (FSeq (Cons (toLean $a) (Cons (Raw " -> ") (Cons (toLean $b) Nil)))) ;
+
+-- Comments
+rewrite commentLean: (toLean (CommentD $text)) ~> (Line (FSeq (Cons (Raw "-- ") (Cons (Raw $text) Nil)))) ;
+rewrite docLean: (toLean (DocD $text)) ~> (Line (FSeq (Cons (Raw "/-- ") (Cons (Raw $text) (Cons (Raw " -/") Nil))))) ;
+
+-- Runtime import
+rewrite runtimeImportLean: toLeanRuntimeImport ~> (Line (FSeq (Cons (Keyword "import") (Cons (Raw " Lego.Runtime") Nil)))) ;
+
+}

@@ -371,7 +371,8 @@ def genModuleHeader (lang : TargetLang) (moduleName : String) (imports : List St
   match lang with
   | .Lean => importLines ++ (if imports.isEmpty then "" else "\n\n")
   | .Scala =>
-    let pkg := s!"package {packagePrefix.toLower}\n\n"
+    -- Each Scala module gets its own sub-package to avoid name collisions
+    let pkg := s!"package {packagePrefix.toLower}.{moduleName.toLower}\n\n"
     pkg ++ importLines ++ (if imports.isEmpty then "" else "\n\n")
   | .Haskell =>
     let modDecl := s!"module {moduleName} where\n\n"

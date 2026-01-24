@@ -1,0 +1,280 @@
+-----------------------------------------------------
+-- Lego.lego: Self-Specification of Lego in Rosetta
+--
+-- This specifies Lego itself as a Rosetta module, enabling
+-- compilation to all target languages (Lean, Scala, Haskell, Rust).
+--
+-- Architecture:
+--   1. Core Types: Term, Pattern, Rule
+--   2. Pattern Matching and Substitution
+--   3. Rewrite Rules
+--   4. Partial Isomorphisms (Iso)
+--   5. Grammar Representation
+--   6. Interpreter
+--
+-- This is TRUE SELF-HOSTING: Lego specifies itself.
+-----------------------------------------------------
+
+lang Lego :=
+
+-----------------------------------------------------
+-- PART 1: Core Types - The Universal AST
+--
+-- Everything in Lego is a Term:
+--   (var "x")           - Variable
+--   (lit "hello")       - String literal
+--   (con "f" t1 t2 ...) - Constructor application
+-----------------------------------------------------
+
+piece CoreTypes
+  term ::= "(var" <ident> ")" → var
+         | "(lit" <string> ")" → lit
+         | "(con" <ident> term* ")" → con
+         | "(atom" <ident> ")" → atom
+         | <ident> → var ;
+
+  -- Convenience: atom is a constructor with no arguments
+  rule atomExpand: (atom $name) ~~> (con $name) ;
+
+-----------------------------------------------------
+-- PART 2: Pattern Matching
+-- Patterns with $-prefixed metavariables
+-----------------------------------------------------
+
+piece Patterns
+  -- Environment: list of bindings
+  env ::= "(env" binding* ")" → env
+        | "()" → emptyEnv ;
+  binding ::= "(" <ident> term ")" → binding ;
+
+  -- Match: try to match pattern against term
+  rule matchVar: 
+    (match (var $name) $t)
+    ~~> (if (startsWith $name "$") 
+           (env ($name $t))
+           (if (eq (var $name) $t) (env) (fail))) ;
+
+  rule matchLit:
+    (match (lit $a) (lit $b))
+    ~~> (if (eq $a $b) (env) (fail)) ;
+
+  rule matchCon:
+    (match (con $n1 $args1) (con $n2 $args2))
+    ~~> (if (eq $n1 $n2) (matchList $args1 $args2) (fail)) ;
+
+  rule matchFail:
+    (match $p $t) ~~> (fail) ;
+
+  -- Match lists of patterns/terms
+  rule matchListNil:
+    (matchList () ()) ~~> (env) ;
+
+  rule matchListCons:
+    (matchList ($p $ps) ($t $ts))
+    ~~> (merge (match $p $t) (matchList $ps $ts)) ;
+
+  -- Merge two environments
+  rule mergeEnvs:
+    (merge (env $bs1) (env $bs2)) ~~> (env $bs1 $bs2) ;
+
+  rule mergeFail:
+    (merge (fail) $e) ~~> (fail) ;
+
+-----------------------------------------------------
+-- PART 3: Substitution
+-- Replace metavariables with their bindings
+-----------------------------------------------------
+
+piece Substitution
+  -- Substitute bindings into a template
+  rule substVar:
+    (subst (var $name) (env $bindings))
+    ~~> (lookup $name $bindings) ;
+
+  rule substLit:
+    (subst (lit $s) $env) ~~> (lit $s) ;
+
+  rule substCon:
+    (subst (con $name $args) $env)
+    ~~> (con $name (mapSubst $args $env)) ;
+
+  -- Map substitution over list
+  rule mapSubstNil:
+    (mapSubst () $env) ~~> () ;
+
+  rule mapSubstCons:
+    (mapSubst ($t $ts) $env)
+    ~~> ((subst $t $env) (mapSubst $ts $env)) ;
+
+  -- Lookup in binding list
+  rule lookupHit:
+    (lookup $name (($name $val) $rest))
+    ~~> $val ;
+
+  rule lookupMiss:
+    (lookup $name (($other $val) $rest))
+    ~~> (lookup $name $rest) ;
+
+  rule lookupFail:
+    (lookup $name ()) ~~> (var $name) ;
+
+-----------------------------------------------------
+-- PART 4: Rewrite Rules
+-----------------------------------------------------
+
+piece Rules
+  -- A rule: name, pattern, template
+  rule ::= "(rule" <ident> term term ")" → rule ;
+
+  -- Apply a rule to a term
+  rule applyRule:
+    (apply (rule $name $pat $tmpl) $t)
+    ~~> (case (match $pat $t)
+          (env $bs) (subst $tmpl (env $bs))
+          (fail) (fail)) ;
+
+  -- Try rules in order
+  rule tryFirst:
+    (tryRules ((rule $n $p $t) $rest) $term)
+    ~~> (case (apply (rule $n $p $t) $term)
+          (fail) (tryRules $rest $term)
+          $result $result) ;
+
+  rule tryEmpty:
+    (tryRules () $term) ~~> (fail) ;
+
+-----------------------------------------------------
+-- PART 5: Interpreter
+-- Normalize a term using rules until fixpoint
+-----------------------------------------------------
+
+piece Interpreter
+  -- Normalize: apply rules until no change
+  rule normalizeStep:
+    (normalize $rules $t)
+    ~~> (let $t' = (normalizeOnce $rules $t) in
+         (if (eq $t $t') $t (normalize $rules $t'))) ;
+
+  -- One step: try at top, then recurse
+  rule normalizeOnce:
+    (normalizeOnce $rules $t)
+    ~~> (case (tryRules $rules $t)
+          (fail) (normalizeChildren $rules $t)
+          $result $result) ;
+
+  -- Normalize children of a constructor
+  rule normalizeChildrenVar:
+    (normalizeChildren $rules (var $x)) ~~> (var $x) ;
+
+  rule normalizeChildrenLit:
+    (normalizeChildren $rules (lit $s)) ~~> (lit $s) ;
+
+  rule normalizeChildrenCon:
+    (normalizeChildren $rules (con $name $args))
+    ~~> (con $name (mapNormalize $rules $args)) ;
+
+  -- Map normalize over list
+  rule mapNormalizeNil:
+    (mapNormalize $rules ()) ~~> () ;
+
+  rule mapNormalizeCons:
+    (mapNormalize $rules ($t $ts))
+    ~~> ((normalizeOnce $rules $t) (mapNormalize $rules $ts)) ;
+
+-----------------------------------------------------
+-- PART 6: Partial Isomorphisms (Iso)
+-----------------------------------------------------
+
+piece Iso
+  -- An Iso has forward and backward directions
+  iso ::= "(iso" term term ")" → iso ;
+
+  -- Identity iso
+  rule isoId: (isoId) ~~> (iso ($x (some $x)) ($x (some $x))) ;
+
+  -- Composition
+  rule isoComp:
+    (isoComp (iso $fwd1 $bwd1) (iso $fwd2 $bwd2))
+    ~~> (iso 
+          ($a (bind (apply $fwd1 $a) $b (apply $fwd2 $b)))
+          ($c (bind (apply $bwd2 $c) $b (apply $bwd1 $b)))) ;
+
+  -- Symmetric (flip)
+  rule isoSym:
+    (isoSym (iso $fwd $bwd)) ~~> (iso $bwd $fwd) ;
+
+-----------------------------------------------------
+-- PART 7: Grammar Representation
+-----------------------------------------------------
+
+piece Grammar
+  -- Symbol in a production
+  symbol ::= "(terminal" <string> ")" → terminal
+           | "(nonterm" <ident> ")" → nonterm
+           | "(epsilon)" → epsilon ;
+
+  -- Production: name ::= body → tag
+  production ::= "(prod" <ident> symbol* <ident> ")" → prod ;
+
+  -- Grammar: list of productions
+  grammar ::= "(grammar" production* ")" → grammar ;
+
+-----------------------------------------------------
+-- PART 8: Built-in Operations
+-----------------------------------------------------
+
+piece Builtins
+  -- String operations
+  rule stringEq: (eq (lit $a) (lit $b)) ~~> (eqStrings $a $b) ;
+  rule startsWith: (startsWith $s $prefix) ~~> (startsWithBuiltin $s $prefix) ;
+
+  -- Boolean operations
+  rule ifTrue: (if (true) $then $else) ~~> $then ;
+  rule ifFalse: (if (false) $then $else) ~~> $else ;
+
+  -- Option operations
+  rule bindSome: (bind (some $x) $var $body) ~~> (subst $body (env ($var $x))) ;
+  rule bindNone: (bind (none) $var $body) ~~> (none) ;
+
+  -- Case/match
+  rule caseMatch: 
+    (case $scrutinee $pat1 $body1 $rest)
+    ~~> (case (match $pat1 $scrutinee)
+          (env $bs) (subst $body1 (env $bs))
+          (fail) (case $scrutinee $rest)) ;
+
+  rule caseEmpty:
+    (case $scrutinee) ~~> (stuck $scrutinee) ;
+
+-----------------------------------------------------
+-- PART 9: List Operations
+-----------------------------------------------------
+
+piece Lists
+  -- Map over a list
+  rule mapNil: (map $f ()) ~~> () ;
+  rule mapCons: (map $f ($x $xs)) ~~> ((apply $f $x) (map $f $xs)) ;
+
+  -- Fold over a list
+  rule foldNil: (fold $f $acc ()) ~~> $acc ;
+  rule foldCons: (fold $f $acc ($x $xs)) ~~> (fold $f (apply $f $acc $x) $xs) ;
+
+  -- Append two lists
+  rule appendNil: (append () $ys) ~~> $ys ;
+  rule appendCons: (append ($x $xs) $ys) ~~> ($x (append $xs $ys)) ;
+
+  -- Length
+  rule lengthNil: (length ()) ~~> (zero) ;
+  rule lengthCons: (length ($x $xs)) ~~> (succ (length $xs)) ;
+
+-----------------------------------------------------
+-- PART 10: Tests
+-----------------------------------------------------
+
+test "term_eq": (eq (var x) (var x)) ~~> (true) ;
+test "term_neq": (eq (var x) (var y)) ~~> (false) ;
+test "match_var": (match $x (lit "hello")) ~~> (env ($x (lit "hello"))) ;
+test "subst_simple": (subst (con f $x) (env ($x (lit "a")))) ~~> (con f (lit "a")) ;
+
+-- End of Lego.lego
+

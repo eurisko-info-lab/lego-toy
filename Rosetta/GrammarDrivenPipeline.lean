@@ -1774,9 +1774,16 @@ where
     match t with
     | .con "typeExpr" args =>
       match args with
-      | [left, .lit "->", right] => s!"({typeToHaskell left} -> {typeToHaskell right})"
+      | [left, .lit "->", right] =>
+        -- For Haskell, don't add extra parens here - the caller (goHaskellType)
+        -- will wrap in parens if needed for data constructor context
+        s!"{typeToHaskell left} -> {typeToHaskell right}"
       | [single] => typeToHaskell single
       | _ => args.map typeToHaskell |> " ".intercalate
+    | .con "parenType" args =>
+      -- Parenthesized type - add parens since source had them (needed for fn types in data ctors)
+      let inner := args.map typeToHaskell |>.filter (!·.isEmpty) |> "".intercalate
+      if inner.isEmpty then "" else s!"({inner})"
     | .con "typeApp" args =>
       -- First check for special type constructors before converting
       match args with
@@ -1789,6 +1796,24 @@ where
         match knownPolyTypes.find? (fun (tn, _) => tn == n) with
         | some (_, arity) => s!"({n} {String.join (List.replicate arity "() ")})"
         | none => n
+      -- Handle parenthesized type: typeApp [lit "(", typeExpr [...], lit ")"]
+      -- The AST puts parentheses as literal children, so we detect and unwrap
+      | [.lit "(", inner, .lit ")"] =>
+        -- Just process the inner type with parens (the source had parens so we keep them)
+        let innerStr := typeToHaskell inner
+        s!"({innerStr})"
+      | .var tyName :: restArgs =>
+        -- Type constructor with arguments: just emit "TyName arg1 arg2 ..."
+        let argStrs := restArgs.map typeToHaskell
+        s!"({tyName} {argStrs.foldl (fun acc s => if acc.isEmpty then s else acc ++ " " ++ s) ""})"
+      | .lit tyName :: restArgs =>
+        -- But skip if tyName is just a paren
+        if tyName == "(" || tyName == ")" then
+          let argStrs := restArgs.map typeToHaskell |>.filter (!·.isEmpty)
+          s!"({argStrs.foldl (fun acc s => if acc.isEmpty then s else acc ++ " " ++ s) ""})"
+        else
+          let argStrs := restArgs.map typeToHaskell
+          s!"({tyName} {argStrs.foldl (fun acc s => if acc.isEmpty then s else acc ++ " " ++ s) ""})"
       | _ =>
         let names := args.map typeToHaskell
         match names with
@@ -1807,9 +1832,11 @@ where
         match knownPolyTypes.find? (fun (tn, _) => tn == name) with
         | some (_, arity) => s!"({name} {String.join (List.replicate arity "() ")})"
         | none => name
-    | .lit s => if s == "(" || s == ")" then "" else s
-    | .con _ args => args.map typeToHaskell |>.filter (!·.isEmpty) |> " ".intercalate
-
+    | .lit s =>
+      -- Filter out literal parentheses (they're handled by structure)
+      if s == "(" || s == ")" || s.trim == "(" || s.trim == ")" then "" else s
+    | .con _ _ =>
+      ""  -- Unknown node types produce empty string
   goHaskellTypeAtom (t : Term) (st : PPState') : PPState' :=
     match t with
     | .con "typeApp" args =>

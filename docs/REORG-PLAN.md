@@ -71,15 +71,13 @@ lego-toy/
 │   ├── Pipeline.lean           # Main pipeline
 │   ├── RosettaPipeline.lean
 │   ├── MultiTargetPipeline.lean
-│   ├── GrammarDrivenPipeline.lean
-│   └── GenericPrettyPrinter.lean
+│   └── GrammarDrivenPipeline.lean
 │
-├── tools/                       # CLI tools
+├── tools/                       # CLI tools (consider merging with pipelines/)
 │   ├── ToLean.lean             # Generate Lean
 │   ├── ToAntlr.lean            # Generate ANTLR
 │   ├── ToTreeSitter.lean       # Generate Tree-sitter
 │   ├── LegoGen.lean            # RedTT/CoolTT generator
-│   ├── GeneratedPipeline.lean
 │   └── Cubical/                # Cubical-specific tools
 │
 ├── test/                        # Tests
@@ -408,18 +406,28 @@ For full interchangeability:
 4. [x] Update `lakefile.lean` with new paths
 5. [x] Split `test/` into `test/lean/` and `test/lego/`
 
-### Phase 3: Code Cleanup ✅ PARTIAL
+### Phase 3: Code Cleanup ✅ DONE
 1. [x] Remove unused deprecated: `String.findSubstrFrom`, `parseBootstrapOnly`, `extractConstr`
-2. [N/A] Language-specific emitters in GrammarDrivenPipeline.lean kept (used by tools/tests)
-3. [N/A] MultiTargetPipeline --combined mode kept (supported feature)
-4. [ ] Implement TODOs in `GenericPrettyPrinter.lean`
-5. [ ] Replace `sorry` with proper implementations
+2. [x] Remove unused files: `GenericPrettyPrinter.lean`, `GeneratedPipeline.lean`
+3. [x] Remove 507 lines of unused emitters from `GrammarDrivenPipeline.lean`
+   (superseded by `UnifiedCodeGen.lean`)
 
 ### Phase 4: Bootstrap Verification
 1. [ ] Create `scripts/verify-generated.sh` to diff hand-coded vs generated
 2. [ ] Create `scripts/build-with-generated.sh` to test generated-only build
 3. [ ] Document the swap process in `docs/BOOTSTRAP.md`
 4. [ ] Add CI job for bootstrap verification
+
+### Phase 5: Merge tools/ and pipelines/ (Optional)
+Both directories contain code generation/transformation executables:
+- `pipelines/`: Pipeline, RosettaPipeline, MultiTargetPipeline, GrammarDrivenPipeline
+- `tools/`: ToLean, ToAntlr, ToTreeSitter, LegoGen, Cubical/*
+
+Proposed merge into single `tools/` directory:
+1. [ ] Move `pipelines/*.lean` → `tools/`
+2. [ ] Update `lakefile.lean` srcDir and roots
+3. [ ] Remove empty `pipelines/` directory
+4. [ ] Update imports if any
 
 ---
 

@@ -159,6 +159,128 @@ lego-toy/
 
 ---
 
+## 5-Way Interchangeability Architecture
+
+**Goal**: The same `.rosetta` spec compiles to 5 equivalent implementations:
+1. **Hand-coded Lean** (`src/Lego/*.lean`) - reference implementation
+2. **Generated Lean** (`lake exe multi-target *.rosetta -t lean`)
+3. **Generated Scala** (`lake exe multi-target *.rosetta -t scala`)
+4. **Generated Haskell** (`lake exe multi-target *.rosetta -t haskell`)
+5. **Generated Rust** (`lake exe multi-target *.rosetta -t rust`)
+
+### Architecture Layers
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    .rosetta Specifications                       │
+│  (ADTs + Rewrite Rules = Declarative Semantics)                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  GenTime Code Generators                         │
+│  GrammarDrivenPipeline.lean → termToPatternFrag, emitRewriteRule│
+└─────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┬──────────────┐
+              ▼               ▼               ▼              ▼
+        ┌─────────┐     ┌─────────┐     ┌─────────┐    ┌─────────┐
+        │  Lean   │     │  Scala  │     │ Haskell │    │  Rust   │
+        │ Runtime │     │ Runtime │     │ Runtime │    │ Runtime │
+        └─────────┘     └─────────┘     └─────────┘    └─────────┘
+              │               │               │              │
+              ▼               ▼               ▼              ▼
+        ┌─────────────────────────────────────────────────────────┐
+        │        Generated ADTs + Generated Rewrite Functions      │
+        │        (import Runtime; generated code uses Runtime)     │
+        └─────────────────────────────────────────────────────────┘
+```
+
+### Current Coverage Analysis
+
+| Module | Hand-coded Lean | .rosetta Spec | Coverage | Gap |
+|--------|----------------|---------------|----------|-----|
+| `Algebra` | 427 lines | 259 lines | 61% | Core types OK, BiReducer partial |
+| `Attr` | 298 lines | 284 lines | 95% | Good |
+| `AttrEval` | 615 lines | 408 lines | 66% | Missing: error handling, complex eval |
+| `Interp` | 881 lines | 206 lines | **23%** | Missing: lexer, packrat, IO |
+| `Loader` | 1203 lines | 242 lines | **20%** | Missing: file IO, caching |
+| `Runtime` | 312 lines | 312 lines | 100% | ✅ Complete |
+| `Validation` | 363 lines | 395 lines | 109% | ✅ Complete (rosetta has more) |
+| `Bootstrap` | 122 lines | N/A | N/A | Uses generated/ |
+
+### Runtime Libraries Status
+
+| Language | File | Lines | Status |
+|----------|------|-------|--------|
+| Lean | `src/Runtime/Lean/Runtime.lean` | 306 | ✅ Complete |
+| Scala | `src/Runtime/Scala/Runtime.scala` | 340 | ✅ Complete |
+| Haskell | `src/Runtime/Haskell/Runtime.hs` | 320 | ✅ Complete |
+| Rust | `src/Runtime/Rust/runtime.rs` | 480 | ✅ Complete |
+
+### What's Missing for True Interchangeability
+
+#### 1. **Interp.rosetta** needs expansion (23% coverage)
+Current `.rosetta` has: ADTs (Token, ParseState, ParseResult) + rewrite rules
+Missing from `.rosetta`:
+- `lexGrammar` - character-level parsing
+- `parseGrammar` - token-level parsing with packrat
+- `tokenizeWithGrammar` - IO-aware tokenization
+- `computeLineCol` - source location tracking
+- `printGrammar` - unparsing
+
+**Challenge**: These are algorithmic, not just rewrite rules. Options:
+- Extend Rosetta with `partial def` / recursive functions
+- Put algorithms in Runtime, call from generated code
+
+#### 2. **Loader.rosetta** needs expansion (20% coverage)
+Missing:
+- File I/O (`readFile`, `writeFile`)
+- Module caching
+- Import resolution
+- Pretty printing
+
+**Challenge**: IO operations vary by target language.
+
+#### 3. **Bootstrap interchangeability**
+Currently `src/Lego/Bootstrap.lean` imports from `generated/`.
+For full interchangeability:
+- Bootstrap.rosetta → generates Bootstrap.lean/scala/hs/rs
+- Runtime imports remain target-specific
+- Generated code must work with any Runtime
+
+### Action Plan for 5-Way Interchangeability
+
+#### Phase A: Complete Runtime Libraries
+1. [x] Lean Runtime - Complete
+2. [x] Scala Runtime - Complete  
+3. [x] Haskell Runtime - Complete
+4. [x] Rust Runtime - Complete
+
+#### Phase B: Expand Rosetta Specs
+1. [ ] Add algorithmic constructs to Rosetta grammar
+   - `def` for pure functions
+   - `partial def` for recursive algorithms
+   - Pattern guards / conditional rewrites
+2. [ ] Expand Interp.rosetta with parsing algorithms
+3. [ ] Expand Loader.rosetta with module management
+4. [ ] Add IO abstraction layer to rosetta
+
+#### Phase C: Verification Infrastructure
+1. [ ] Create `scripts/verify-interop.sh`:
+   - Generate all 4 targets from each .rosetta
+   - Run equivalent test suite on each
+   - Compare outputs for behavioral equivalence
+2. [ ] CI job for cross-target testing
+3. [ ] Property-based testing across implementations
+
+#### Phase D: Documentation
+1. [ ] Document Runtime API contract (what generated code expects)
+2. [ ] Document how to add new target languages
+3. [ ] Document testing methodology for equivalence
+
+---
+
 ## Bootstrap Process Documentation
 
 ### Current Bootstrap Chain

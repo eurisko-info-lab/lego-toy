@@ -245,14 +245,14 @@ lego-toy/
 
 ## Recommended Execution Order
 
-### Phase 1: Quick Wins (No Code Changes)
-1. [ ] Delete duplicate `src/Rosetta/REDESIGN.md`
-2. [ ] Move `doc/redtt-ir.lego` → `examples/`
-3. [ ] Delete empty `doc/` directory
-4. [ ] Move `run-cooltt-tests.sh` → `scripts/`
-5. [ ] Add `tmp/`, `*.rlib` to `.gitignore`
-6. [ ] Move `examples/Cubical/*.md` → `docs/cubical/`
-7. [ ] Move `test/RED-TODO.md` → `docs/`
+### Phase 1: Quick Wins (No Code Changes) ✅ DONE
+1. [x] Delete duplicate `src/Rosetta/REDESIGN.md`
+2. [x] Move `doc/redtt-ir.lego` → `examples/`
+3. [x] Delete empty `doc/` directory
+4. [x] Move `run-cooltt-tests.sh` → `scripts/`
+5. [x] Add `tmp/`, `*.rlib` to `.gitignore`
+6. [x] Move `examples/Cubical/*.md` → `docs/cubical/`
+7. [x] Move `test/RED-TODO.md` → `docs/`
 
 ### Phase 2: Structure Reorganization
 1. [ ] Rename root `Rosetta/` → `pipelines/`

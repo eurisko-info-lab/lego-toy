@@ -549,11 +549,28 @@ def runMultiTargetPipeline (rt : Runtime) (sourcePath : String)
     (outDir : String := "./generated/Rosetta")
     : IO (Except String (List TargetResult)) := do
 
-  -- Step 1: Parse source .lego file
+  -- Step 1: Parse source file (use Rosetta grammar for .rosetta files)
   IO.println s!"[1] Parsing source: {sourcePath}"
-  let sourceAst ← match ← parseLegoFilePathE rt sourcePath with
-    | .error e => return .error s!"Failed to parse source: {e}"
-    | .ok ast => pure ast
+
+  let sourceAst ← do
+    if sourcePath.endsWith ".rosetta" then
+      -- Load Rosetta grammar for .rosetta files
+      IO.println s!"    Loading Rosetta grammar..."
+      match ← loadLanguage rt "./src/Rosetta/Rosetta.lego" with
+      | .error e => return .error s!"Failed to load Rosetta grammar: {e}"
+      | .ok rosettaGrammar =>
+        IO.println s!"    ✓ Rosetta grammar loaded ({rosettaGrammar.productions.length} productions)"
+        -- Parse with rosettaFile as start production
+        let grammar := { rosettaGrammar with startProd := "File.rosettaFile" }
+        let content ← IO.FS.readFile sourcePath
+        match parseWithGrammarE grammar content with
+        | .error e => return .error s!"Failed to parse source: {e}"
+        | .ok ast => pure ast
+    else
+      -- Use Bootstrap grammar for .lego files
+      match ← parseLegoFilePathE rt sourcePath with
+      | .error e => return .error s!"Failed to parse source: {e}"
+      | .ok ast => pure ast
   IO.println s!"    ✓ Parsed AST"
 
   -- Step 2: Direct transformation to target code
@@ -563,7 +580,7 @@ def runMultiTargetPipeline (rt : Runtime) (sourcePath : String)
     IO.println s!"    → {lang}..."
 
     -- Generate code directly from source AST
-    let moduleName := sourcePath.splitOn "/" |>.getLast! |>.replace ".lego" "" |> capitalize
+    let moduleName := sourcePath.splitOn "/" |>.getLast! |>.replace ".lego" "" |>.replace ".rosetta" "" |> capitalize
     let code := genCode lang moduleName sourceAst
 
     -- Determine output path

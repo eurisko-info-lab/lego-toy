@@ -1,299 +1,276 @@
 -----------------------------------------------------
--- Lean.lego: Complete Lean Grammar/AST for Rosetta
+-- Lean.lego: Lean 4 AST Definition for Rosetta
 --
--- Comprehensive Lean 4 syntax specification in Lego format.
--- Uses coreAtom/coreArg* corePattern to eliminate left recursion.
+-- This defines the Lean 4 abstract syntax tree as a Lego specification.
+-- It serves as the TARGET representation for rosetta2lean transformation.
 --
--- Structure:
--- - Core: atoms, args, terms (no left recursion)
--- - Binders: lambda, function binders
--- - Types: Pi, Sigma, forall, arrow
--- - Match: corePattern matching
--- - Declarations: inductive, def, structure, namespace
--- - Attributes: deriving, partial, where
--- - Tactics: by, rfl, sorry
--- - Monads: do notation, bind
--- - Records: structure, field access
--- - Instances: instance, class
+-- Structure follows the Rosetta design pattern:
+-- - Term syntax via 'term ::=' grammar
+-- - Type syntax via 'type ::=' grammar  
+-- - Declaration syntax via 'decl ::=' grammar
+-- - No transformation rules here - those go in rosetta2lean.lego
+--
+-- This is the "what Lean code looks like" specification.
 -----------------------------------------------------
 lang Lean :=
 
 -----------------------------------------------------
--- Core
--- Uses coreAtom/coreArg* corePattern to avoid left recursion.
--- coreTerm = coreAtom coreArg*
--- This handles app, proj, operators, etc.
+-- Core Terms
+-- Basic Lean expressions
 -----------------------------------------------------
-piece Core
-  -- Atoms: things that can START an expression
-  -- IMPORTANT: Keyword-prefixed forms MUST come BEFORE <ident>
-  -- otherwise "fun" matches as var before funExpr is tried!
-  coreAtom ::= 
-         -- Keywords FIRST (before <ident>)
-         "true" → trueLit
-         | "false" → falseLit
-         | "none" → noneLit
-         | "some" coreAtom → someLit
-         | "fun" binderSeq "=>" coreTerm → funExpr
-         | "λ" binderSeq "=>" coreTerm → lamExpr
-         | "∀" binderSeq "," coreTerm → forall
-         | "Π" binderSeq "," coreTerm → piType
-         | "Σ" binderSeq "," coreTerm → sigmaType
-         | "Type" levelSpec? → typeUniv
-         | "Prop" → propUniv
-         | "Sort" levelSpec? → sortUniv
-         | "Option" coreAtom → optionType
-         | "List" coreAtom → listType
-         | "Array" coreAtom → arrayType
-         | "match" matchScrutinee matchScrutineeTail* "with" coreAlt* → matchExpr
-         | "if" "let" corePattern ":=" coreTerm "then" coreTerm "else" coreTerm → ifLetExpr
-         | "if" coreTerm "then" coreTerm "else" coreTerm → ifExpr
-         | "let" "rec" <ident> typeAnn? ":=" coreTerm "in"? coreTerm → letRecExpr
-         | "let" <ident> typeAnn? ":=" coreTerm "in"? coreTerm → letExpr
-         | "have" <ident>? ":" coreTerm ":=" coreTerm coreAtom → haveExpr
-         | "do" doElem+ → doBlock
-         | "by" tacticSeq → byTactic
-         | "rfl" → rflTerm
-         -- Symbol prefixed (before general punctuation)
-         | "↑" coreAtom → coeUp
-         | "!" coreAtom → notOp
-         | "-" coreAtom → negOp
-         | "#" "[" termList "]" → arrayLit
-         | "⟨" termList "⟩" → anonCtor
-         | "s!" <string> → interpStr
-         -- Punctuation-delimited
-         | "(" ")" → unitLit
-         | "(" coreTerm "," coreTerm ")" → tuple
-         | "(" coreTerm ")" → paren
-         | "[" termList "]" → listLit
-         | "{" fieldAssigns "}" → structLit
-         | "_" → hole
-         -- General atoms LAST
-         | <number> → numLit
-         | <string> → strLit
-         | <ident> → var
-         ;
+piece CoreTerms
+  term ::= 
+    -- Universes
+    "Type" level?                       → typeUniv
+    | "Prop"                            → propUniv
+    | "Sort" level?                     → sortUniv
+    -- Variables and literals
+    | <ident>                           → var
+    | <number>                          → numLit
+    | <string>                          → strLit
+    | "true"                            → trueLit
+    | "false"                           → falseLit
+    | "()" | "Unit.unit"                → unitLit
+    -- Application
+    | term term                         → app
+    | term "@" term                     → explicitApp
+    -- Lambda and function
+    | "fun" binder+ "=>" term           → lam
+    | "λ" binder+ "=>" term             → lamUnicode
+    -- Pi and arrow types
+    | "∀" binder+ "," term              → forallTy
+    | "Π" binder+ "," term              → piTy
+    | term "→" term                     → arrowTy
+    -- Sigma and product types
+    | "Σ" binder+ "," term              → sigmaTy
+    | term "×" term                     → prodTy
+    -- Pairs and projections
+    | "(" term "," term ")"             → pair
+    | "⟨" termList "⟩"                  → anonCtor
+    | term ".1" | term ".fst"           → fst
+    | term ".2" | term ".snd"           → snd
+    | term "." <ident>                  → proj
+    -- Let expressions
+    | "let" <ident> typeAnn? ":=" term "in"? term → letExpr
+    | "let" "rec" <ident> typeAnn? ":=" term "in"? term → letRecExpr
+    -- Conditionals
+    | "if" term "then" term "else" term → ifExpr
+    | "if" "let" pattern ":=" term "then" term "else" term → ifLetExpr
+    -- Match
+    | "match" termList "with" matchAlt* → matchExpr
+    -- Lists and arrays
+    | "[" termList "]"                  → listLit
+    | "#[" termList "]"                 → arrayLit
+    | term "::" term                    → cons
+    | term "++" term                    → append
+    -- Option
+    | "none"                            → noneLit
+    | "some" term                       → someLit
+    | "Option" term                     → optionTy
+    -- Operators (arithmetic)
+    | term "+" term                     → add
+    | term "-" term                     → sub
+    | term "*" term                     → mul
+    | term "/" term                     → div
+    | term "%" term                     → mod
+    | "-" term                          → neg
+    -- Operators (comparison)
+    | term "==" term                    → beq
+    | term "!=" term                    → bne
+    | term "<" term                     → lt
+    | term ">" term                     → gt
+    | term "<=" term                    → le
+    | term ">=" term                    → ge
+    -- Operators (logical)
+    | term "&&" term                    → and
+    | term "||" term                    → or
+    | "!" term                          → not
+    -- Do notation
+    | "do" doElem+                      → doBlock
+    -- Tactics
+    | "by" tactic+                      → byTactic
+    -- Parentheses and hole
+    | "(" term ")"                      → paren
+    | "_"                               → hole
+    -- Coercion
+    | "↑" term                          → coeUp
+    -- Dollar application
+    | term "$" term                     → dollarApp
+    -- Pipe operators  
+    | term "|>" term                    → pipeRight
+    | term "<|" term                    → pipeLeft
+    -- Structure literal
+    | "{" fieldAssign* "}"              → structLit
+    | term "with" "{" fieldAssign* "}"  → structUpdate
+    -- Error/stuck
+    | "panic!" <string>                 → panic
+    | "sorry"                           → sorryTerm
+    ;
 
-  -- Term: an coreAtom followed by zero or more arguments
-  coreTerm ::= coreAtom coreArg* → expr ;
-
-  -- Args: things that follow an coreAtom
-  -- NOTE: We use "@" for explicit application to avoid keyword ambiguity.
-  -- Bare atom would greedily consume keywords like "in", "then", "else", "with".
-  -- NOTE: Multi-char operators split by tokenizer: use ":" ":" for ::, etc.
-  coreArg ::= "@" coreAtom → appArg
-        | "." <ident> → projArg
-        | "." <number> → projNumArg
-        -- Binary operators (right-associative parse)
-        -- Multi-char ops as split tokens
-        | ":" ":" coreTerm → consArg
-        | "|" ">" coreTerm → pipeRightArg
-        | "<" "|" coreTerm → pipeLeftArg
-        | "=" "=" coreTerm → eqArg
-        | "!" "=" coreTerm → neArg
-        | "<" "=" coreTerm → leArg
-        | ">" "=" coreTerm → geArg
-        | "&" "&" coreTerm → andArg
-        | "|" "|" coreTerm → orArg
-        | "+" "+" coreTerm → appendArg
-        -- Single-char ops
-        | "→" coreTerm → arrowArg
-        | "×" coreTerm → prodArg
-        | "$" coreTerm → dollarArg
-        | "+" coreTerm → addArg
-        | "-" coreTerm → subArg
-        | "*" coreTerm → mulArg
-        | "/" coreTerm → divArg
-        | "%" coreTerm → modArg
-        | "<" coreTerm → ltArg
-        | ">" coreTerm → gtArg
-        -- Where clause
-        | "where" letDecl+ → whereArg
-        -- With for records
-        | "with" fieldUpdates → withArg
-        -- Substitution
-        | "[" <ident> ":=" coreTerm "]" → substArg
-        ;
-
-  -- termList handles comma-separated or space-separated terms
-  -- Empty list: []
-  -- With commas: [1, 2, 3]
-  -- For match: match x, y with ...
-  termList ::= termListItem* → termList ;
-  termListItem ::= coreTerm → termItem
-                 | "," → termComma
-                 ;
-  fieldAssigns ::= fieldAssign* → fieldAssigns ;
-  fieldAssign ::= <ident> ":=" coreTerm → fieldAssign ;
-  levelSpec ::= <number> → levelSpec ;
+  termList ::= term ("," term)*         → termList ;
+  level ::= <number>                    → levelLit
+          | "max" level level           → levelMax
+          | "imax" level level          → levelIMax
+          | level "+" <number>          → levelSucc
+          ;
 
 -----------------------------------------------------
 -- Binders
--- Binder sequences for fun/lambda/forall
+-- Lambda/forall binders
 -----------------------------------------------------
 piece Binders
-  binderSeq ::= binder+ → binderSeq ;
-  binder ::= <ident> → simpleBind
-           | "(" <ident> ":" coreTerm ")" → typedBind
-           | "{" <ident> ":" coreTerm "}" → implicitBind
-           | "[" <ident> ":" coreTerm "]" → instBind
-           | "(" <ident> ")" → parenBind
+  binder ::= <ident>                              → simpleBinder
+           | "(" <ident> ":" term ")"             → explicitBinder
+           | "{" <ident> ":" term "}"             → implicitBinder
+           | "[" <ident> ":" term "]"             → instBinder
+           | "(" <ident> ")"                      → parenBinder
            ;
-  typeAnn ::= ":" coreTerm → typeAnn ;
-  letDecl ::= <ident> ":=" coreTerm → letDecl ;
+  typeAnn ::= ":" term                            → typeAnn ;
 
 -----------------------------------------------------
--- Match
--- Match alternatives and patterns
+-- Patterns
+-- Match patterns
 -----------------------------------------------------
-piece Match
-  coreAlt ::= "|" patternList "=>" coreTerm → coreAlt ;
-  patternList ::= corePattern patternTail* → patternList ;
-  patternTail ::= "," corePattern → patternTail ;
-  
-  -- Match scrutinees: limited to atoms/paren/projections to avoid consuming "with"
-  -- A scrutinee is a simple term that won't match keywords
-  matchScrutinee ::= <number> → scrNum
-                   | <string> → scrStr
-                   | "(" coreTerm ")" → scrParen
-                   | <ident> scrArg* → scrVar
-                   ;
-  scrArg ::= "." <ident> → scrProj
-           | "." <number> → scrProjNum
-           ;
-  matchScrutineeTail ::= "," matchScrutinee → scrTail ;
-  
-  -- Pattern atoms (non-left-recursive)
-  patternAtom ::= <ident> → patVar
-                | "_" → patWild
-                | "." <ident> → patCtor
-                | <number> → patNum
-                | <string> → patStr
-                | "⟨" patternList "⟩" → patAnon
-                | "(" patternList ")" → patTuple
-                ;
-  
-  -- Pattern with optional tail operators
-  corePattern ::= patternAtom patternArg* → corePattern ;
-  
-  -- NOTE: :: splits to : : by tokenizer
-  patternArg ::= ":" ":" corePattern → patConsArg
-              | "+" <number> → patSuccArg
-              ;
-
------------------------------------------------------
--- Declarations
--- Top-level decls: inductive, def, theorem, namespace
------------------------------------------------------
-piece Declarations
-  decl ::= "inductive" <ident> params? whereConstrs? derivingClause? → inductiveDecl
-         | "structure" <ident> params? extendsClause? "where" fieldDecls? derivingClause? → structureDecl
-         | "class" <ident> params? extendsClause? "where" fieldDecls? → classDecl
-         | "instance" instName? ":" coreTerm "where" fieldDefs? → instanceDecl
-         | "def" <ident> params? typeAnn? whereClause? ":=" coreTerm → defDecl
-         | "partial" "def" <ident> params? typeAnn? ":=" coreTerm → partialDefDecl
-         | "theorem" <ident> params? ":" coreTerm ":=" coreTerm → theoremDecl
-         | "lemma" <ident> params? ":" coreTerm ":=" coreTerm → lemmaDecl
-         | "example" ":" coreTerm ":=" coreTerm → exampleDecl
-         | "abbrev" <ident> params? typeAnn? ":=" coreTerm → abbrevDecl
-         | "namespace" <ident> decl* "end" <ident> → namespaceDecl
-         | "section" <ident>? decl* "end" <ident>? → sectionDecl
-         | "import" modulePath → importDecl
-         | "open" modulePath inClause? → openDecl
-         | "variable" varDecls → variableDecl
-         | "attribute" attrSpec → attributeDecl
-         ;
-  params ::= param+ → params ;
-  param ::= "(" <ident> ":" coreTerm ")" → param
-          | "{" <ident> ":" coreTerm "}" → implicitParam
-          | "[" <ident> ":" coreTerm "]" → instParam
-          | <ident> → simpleParam
-          ;
-  whereClause ::= "where" letDecl* → whereClause ;
-  whereConstrs ::= "where" constr* → whereConstrs ;
-  constr ::= "|" <ident> constrParams? ":" coreTerm → constr ;
-  constrParams ::= param+ → constrParams ;
-  derivingClause ::= "deriving" <ident> → derivingClause ;
-  fieldDecls ::= fieldDecl* → fieldDecls ;
-  fieldDecl ::= <ident> ":" coreTerm defaultVal? → fieldDecl ;
-  fieldDefs ::= fieldDef* → fieldDefs ;
-  fieldDef ::= <ident> ":=" coreTerm → fieldDef ;
-  defaultVal ::= ":=" coreTerm → defaultVal ;
-  extendsClause ::= "extends" coreTerm → extendsClause ;
-  instName ::= <ident> → instName ;
-  modulePath ::= <ident> → modulePath ;
-  inClause ::= "in" coreTerm → inClause ;
-  varDecls ::= varDecl+ → varDecls ;
-  varDecl ::= "(" <ident> ":" coreTerm ")" → varDecl
-            | "{" <ident> ":" coreTerm "}" → implicitVarDecl
+piece Patterns
+  pattern ::= <ident>                             → patVar
+            | "_"                                 → patWild
+            | <number>                            → patNum
+            | <string>                            → patStr
+            | "." <ident>                         → patCtor
+            | <ident> pattern*                    → patApp
+            | "(" patternList ")"                 → patTuple
+            | "⟨" patternList "⟩"                 → patAnon
+            | pattern "::" pattern                → patCons
+            | pattern "+" <number>                → patSucc
             ;
-  attrSpec ::= "[" <ident> "]" <ident> → attrSpec ;
+  patternList ::= pattern ("," pattern)*          → patternList ;
+  matchAlt ::= "|" patternList "=>" term          → matchAlt ;
 
 -----------------------------------------------------
 -- Do Notation
 -- Monadic do blocks
 -----------------------------------------------------
 piece DoNotation
-  doElem ::= "let" <ident> "←" coreTerm → doLet
-           | "let" <ident> ":=" coreTerm → doLetPure
-           | <ident> "←" coreTerm → doBind
-           | "if" coreTerm "then" doElem+ "else"? doElem* → doIf
-           | "for" <ident> "in" coreTerm "do" doElem+ → doFor
-           | "return" coreTerm → doReturn
-           | "pure" coreTerm → doPure
-           | coreTerm → doExpr
+  doElem ::= "let" <ident> "←" term               → doLetBind
+           | "let" <ident> ":=" term              → doLetPure
+           | <ident> "←" term                     → doBind
+           | "return" term                        → doReturn
+           | "pure" term                          → doPure
+           | "if" term "then" doElem+ "else"? doElem* → doIf
+           | "for" <ident> "in" term "do" doElem+ → doFor
+           | term                                 → doExpr
            ;
 
 -----------------------------------------------------
--- Proofs and Tactics
--- Basic proofs: by rfl, by sorry, intro, exact
+-- Tactics
+-- Proof tactics
 -----------------------------------------------------
-piece Proofs
-  tacticSeq ::= tactic* → tacticSeq ;
-  tactic ::= "rfl" → rfl
-           | "sorry" → sorry
-           | "trivial" → trivial
-           | "decide" → decide
-           | "assumption" → assumption
-           | "intro" <ident>* → intro
-           | "exact" coreTerm → exact
-           | "apply" coreTerm → apply
-           | "simp" simpArgs? → simp
-           | "cases" coreTerm → cases
-           | "induction" coreTerm "with" inductionAlts → induction
-           | "constructor" → constructor
-           | "rw" "[" rwRules "]" → rewrite
-           | "first" "[" tacticSeq "]" → first
-           | "repeat" tactic → repeat
-           | <ident> coreTerm* → tacticApp
-           | <ident> → tacticIdent
+piece Tactics
+  tactic ::= "rfl"                                → tacRfl
+           | "sorry"                              → tacSorry
+           | "trivial"                            → tacTrivial
+           | "decide"                             → tacDecide
+           | "assumption"                         → tacAssumption
+           | "intro" <ident>*                     → tacIntro
+           | "exact" term                         → tacExact
+           | "apply" term                         → tacApply
+           | "simp" simpArgs?                     → tacSimp
+           | "cases" term                         → tacCases
+           | "induction" term "with" inductAlt*  → tacInduction
+           | "constructor"                        → tacConstructor
+           | "rw" "[" rwRule* "]"                 → tacRewrite
+           | <ident> term*                        → tacApp
            ;
-  simpArgs ::= "[" simpRule* "]" → simpArgs ;
-  simpRule ::= coreTerm → simpRule ;
-  inductionAlts ::= inductionAlt* → inductionAlts ;
-  inductionAlt ::= "|" <ident> <ident>* "=>" tacticSeq → inductionAlt ;
-  rwRules ::= rwRule* → rwRules ;
-  rwRule ::= "←"? coreTerm → rwRule ;
+  simpArgs ::= "[" term* "]"                      → simpArgs ;
+  inductAlt ::= "|" <ident> <ident>* "=>" tactic+ → inductAlt ;
+  rwRule ::= "←"? term                            → rwRule ;
 
 -----------------------------------------------------
--- Records
--- Field updates for with expressions
+-- Declarations
+-- Top-level declarations
 -----------------------------------------------------
-piece Records
-  fieldUpdates ::= "{" fieldUpdate+ "}" → fieldUpdates ;
-  fieldUpdate ::= <ident> ":=" coreTerm → fieldUpdate ;
+piece Declarations
+  decl ::= 
+    -- Inductive types
+    "inductive" <ident> param* whereCtors? derivingClause?
+      → inductiveDecl
+    -- Structures
+    | "structure" <ident> param* extendsClause? "where" fieldDecl* derivingClause?
+      → structureDecl
+    -- Classes
+    | "class" <ident> param* extendsClause? "where" fieldDecl*
+      → classDecl
+    -- Instances
+    | "instance" instName? ":" term "where" fieldDef*
+      → instanceDecl
+    -- Definitions
+    | "def" <ident> param* typeAnn? whereClause? ":=" term
+      → defDecl
+    | "partial" "def" <ident> param* typeAnn? ":=" term
+      → partialDefDecl
+    | "abbrev" <ident> param* typeAnn? ":=" term
+      → abbrevDecl
+    -- Theorems
+    | "theorem" <ident> param* ":" term ":=" term
+      → theoremDecl
+    | "lemma" <ident> param* ":" term ":=" term
+      → lemmaDecl
+    | "example" ":" term ":=" term
+      → exampleDecl
+    -- Namespaces
+    | "namespace" <ident> decl* "end" <ident>
+      → namespaceDecl
+    | "section" <ident>? decl* "end" <ident>?
+      → sectionDecl
+    -- Imports and opens
+    | "import" modulePath
+      → importDecl
+    | "open" modulePath inClause?
+      → openDecl
+    -- Variables
+    | "variable" varDecl+
+      → variableDecl
+    -- Attributes
+    | "attribute" "[" <ident> "]" <ident>
+      → attributeDecl
+    ;
+
+  param ::= <ident>                               → simpleParam
+          | "(" <ident> ":" term ")"              → explicitParam
+          | "{" <ident> ":" term "}"              → implicitParam
+          | "[" <ident> ":" term "]"              → instParam
+          ;
+  whereCtors ::= "where" ctor*                    → whereCtors ;
+  ctor ::= "|" <ident> param* ":" term            → ctor ;
+  derivingClause ::= "deriving" <ident> ("," <ident>)* → derivingClause ;
+  fieldDecl ::= <ident> ":" term defaultVal?      → fieldDecl ;
+  fieldDef ::= <ident> ":=" term                  → fieldDef ;
+  fieldAssign ::= <ident> ":=" term               → fieldAssign ;
+  defaultVal ::= ":=" term                        → defaultVal ;
+  extendsClause ::= "extends" term                → extendsClause ;
+  instName ::= <ident>                            → instName ;
+  modulePath ::= <ident> ("." <ident>)*           → modulePath ;
+  inClause ::= "in" term                          → inClause ;
+  varDecl ::= "(" <ident> ":" term ")"            → explicitVarDecl
+            | "{" <ident> ":" term "}"            → implicitVarDecl
+            ;
+  whereClause ::= "where" letDecl*                → whereClause ;
+  letDecl ::= <ident> ":=" term                   → letDecl ;
+
+-----------------------------------------------------
+-- Module
+-- Top-level module structure
+-----------------------------------------------------
+piece Module
+  module ::= decl*                                → module ;
 
 -----------------------------------------------------
 -- Tests
--- Example validations (using simplified coreTerm syntax)
+-- Syntax validation examples
 -----------------------------------------------------
-test "defEx": (defDecl reduce (params (t : Term)) (typeAnn Term) (body (match t with | (Fst (Pair a b)) => a | _ => t))) ;
-test "inductiveEx": (inductiveDecl Term (ctors (ctor Univ Term) (ctor Lam (arrow Term Term)))) ;
-test "structEx": (structDecl Point (fields (field x Nat) (field y Nat))) ;
-test "namespaceEx": (namespace Core (inductiveDecl Term (ctors (ctor Univ Term)))) ;
-test "importEx": (import Prelude) ;
-test "funEx": (fun x => x) ;
-test "forallEx": (forall (x : Type) (arrow x x)) ;
-test "matchEx": (match x with | 0 => 1 | (add n 1) => n) ;
-test "doEx": (do (bind x getLine) (pure x)) ;
-test "tacticEx": (by (intro x) (exact x)) ;
+test "lam": (lam (explicitBinder x Nat) (add (var x) (numLit 1))) ;
+test "forall": (forallTy (explicitBinder x Type) (arrowTy (var x) (var x))) ;
+test "inductive": (inductiveDecl Term (whereCtors (ctor Var (explicitParam x Nat) (var Term)))) ;
+test "def": (defDecl id (explicitParam A Type) (explicitParam x (var A)) (typeAnn (var A)) (var x)) ;
+test "match": (matchExpr (termList (var x)) (matchAlt (patVar n) (add (var n) (numLit 1)))) ;
+

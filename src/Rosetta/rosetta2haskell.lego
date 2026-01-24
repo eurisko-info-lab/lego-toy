@@ -1,0 +1,266 @@
+-----------------------------------------------------
+-- rosetta2haskell.lego: Transform Rosetta IR to Haskell Code
+--
+-- This transforms the Rosetta intermediate representation into 
+-- Haskell syntax as defined in Haskell.lego.
+--
+-- Pipeline: Lego source → lego2rosetta → Rosetta IR → rosetta2haskell → Haskell
+--
+-- Input: Rosetta constructs (from Rosetta.lego)
+-- Output: Haskell constructs (from Haskell.lego)
+-----------------------------------------------------
+import Rosetta
+import Haskell
+
+lang RosettaToHaskell (Rosetta Haskell) :=
+
+-----------------------------------------------------
+-- CoreTransform
+-- Transform Rosetta core terms to Haskell expressions
+-----------------------------------------------------
+piece CoreTransform
+  -- Universe → Type (kind)
+  rule univToHaskell: (toHaskell Univ) ~~> (var Type) ;
+  
+  -- Variable → var
+  rule varToHaskell: (toHaskell (Var $x)) ~~> (var $x) ;
+  
+  -- Application → app (juxtaposition)
+  rule appToHaskell: (toHaskell (App $f $a)) ~~>
+    (app (toHaskell $f) (toHaskell $a)) ;
+  
+  -- Substitution → let expression
+  rule substToHaskell: (toHaskell (Subst $x $s $body)) ~~>
+    (letExpr (letBind $x (toHaskell $s)) (toHaskell $body)) ;
+
+-----------------------------------------------------
+-- BinderTransform
+-- Transform Rosetta binders to Haskell lambda/forall
+-----------------------------------------------------
+piece BinderTransform
+  -- Lambda → Haskell lambda
+  rule lamToHaskell: (toHaskell (Lam $x . $body)) ~~>
+    (lam (patVar $x) (toHaskell $body)) ;
+  
+  -- Typed lambda → lambda with pattern
+  rule lamTypedToHaskell: (toHaskell (Lam ($x : $A) . $body)) ~~>
+    (lam (patVar $x) (toHaskell $body)) ;
+  
+  -- Pi type → forall (dependent) or arrow (non-dependent)
+  rule piToHaskell: (toHaskell (Pi ($x : $A) $B)) ~~>
+    (tyForall $x (tyFun (toHaskellType $A) (toHaskellType $B))) ;
+  
+  -- Arrow type → function type
+  rule arrowToHaskell: (toHaskell (Arrow $A $B)) ~~>
+    (tyFun (toHaskellType $A) (toHaskellType $B)) ;
+
+-----------------------------------------------------
+-- ProductTransform
+-- Transform Rosetta pairs/products to Haskell tuples
+-----------------------------------------------------
+piece ProductTransform
+  -- Pair → tuple
+  rule pairToHaskell: (toHaskell (Pair $a $b)) ~~>
+    (tuple (exprList (toHaskell $a) (toHaskell $b))) ;
+  
+  -- Fst → fst
+  rule fstToHaskell: (toHaskell (Fst $p)) ~~>
+    (app (var fst) (toHaskell $p)) ;
+  
+  -- Snd → snd
+  rule sndToHaskell: (toHaskell (Snd $p)) ~~>
+    (app (var snd) (toHaskell $p)) ;
+  
+  -- Product type → tuple type
+  rule prodToHaskell: (toHaskell (Prod $A $B)) ~~>
+    (tyTuple (typeList (toHaskellType $A) (toHaskellType $B))) ;
+
+-----------------------------------------------------
+-- ADTTransform
+-- Transform Rosetta ADT definitions to Haskell data
+-----------------------------------------------------
+piece ADTTransform
+  -- adtDef → data declaration
+  rule adtToHaskell: (toHaskell (adtDef $name { $constrs })) ~~>
+    (dataDecl $name (toHaskellDataCons $constrs)) ;
+  
+  -- Transform constructor list
+  rule dataconsToHaskell: (toHaskellDataCons ($c $rest)) ~~>
+    ((toHaskellDataCon $c) (toHaskellDataCons $rest)) ;
+  rule dataconsToHaskellNil: (toHaskellDataCons ()) ~~> () ;
+  
+  -- Transform single constructor
+  rule dataconToHaskell: (toHaskellDataCon ($name : $ty)) ~~>
+    (dataCon $name (toHaskellConTypes $ty)) ;
+  
+  -- Extract types from arrow type for constructor
+  rule conTypesFromArrow: (toHaskellConTypes (Arrow $A $B)) ~~>
+    ((toHaskellType $A) (toHaskellConTypes $B)) ;
+  rule conTypesFromBase: (toHaskellConTypes $T) ~~> () ;
+
+-----------------------------------------------------
+-- GADTTransform
+-- Transform Rosetta ADT with precise types to GADTs
+-----------------------------------------------------
+piece GADTTransform
+  -- adtDef with indexed types → GADT
+  rule adtGadtToHaskell: (toHaskellGadt (adtDef $name { $constrs })) ~~>
+    (gadtDecl $name (toHaskellGadtCons $constrs)) ;
+  
+  rule gadtconsToHaskell: (toHaskellGadtCons ($c $rest)) ~~>
+    ((toHaskellGadtCon $c) (toHaskellGadtCons $rest)) ;
+  rule gadtconsToHaskellNil: (toHaskellGadtCons ()) ~~> () ;
+  
+  rule gadtconToHaskell: (toHaskellGadtCon ($name : $ty)) ~~>
+    (gadtCon $name (toHaskellType $ty)) ;
+
+-----------------------------------------------------
+-- RewriteTransform
+-- Transform Rosetta rewrite rules to Haskell functions
+-----------------------------------------------------
+piece RewriteTransform
+  -- Rewrite rule → function with case
+  rule rewriteToHaskell: (toHaskell (rewriteRule $name: $pat ~~> $repl)) ~~>
+    (funDecl $name (patVar t)
+      (caseExpr (var t)
+        (caseAlt (toHaskellPat $pat) (toHaskell $repl))
+        (caseAlt (patWild) (var t)))) ;
+  
+  -- Pattern transforms
+  rule patVarToHaskell: (toHaskellPat (Var $x)) ~~> (patVar $x) ;
+  rule patCtorToHaskell: (toHaskellPat ($f $args)) ~~>
+    (patCtor $f (toHaskellPats $args)) ;
+  rule patWildToHaskell: (toHaskellPat _) ~~> (patWild) ;
+  rule patsToHaskell: (toHaskellPats ($p $rest)) ~~>
+    ((toHaskellPat $p) (toHaskellPats $rest)) ;
+  rule patsToHaskellNil: (toHaskellPats ()) ~~> () ;
+
+-----------------------------------------------------
+-- JudgmentTransform
+-- Transform Rosetta type judgments to Haskell type signatures
+-----------------------------------------------------
+piece JudgmentTransform
+  -- Type judgment → type signature + undefined implementation
+  rule typeToHaskell: (toHaskell (typeDecl $name: $term : $ty when $conds)) ~~>
+    ((typeSigDecl $name (toHaskellJudgmentType $conds $term $ty))
+     (funDecl $name (undefinedExpr))) ;
+  
+  -- Build judgment type from conditions
+  rule judgmentTypeToHaskell: (toHaskellJudgmentType (($t : $T) $rest) $term $ty) ~~>
+    (tyFun (toHaskellType $T) (toHaskellJudgmentType $rest $term $ty)) ;
+  rule judgmentTypeBaseToHaskell: (toHaskellJudgmentType () $term $ty) ~~>
+    (toHaskellType $ty) ;
+
+-----------------------------------------------------
+-- TestTransform
+-- Transform Rosetta tests to Haskell HUnit/QuickCheck
+-----------------------------------------------------
+piece TestTransform
+  -- test → assertEqual (HUnit style)
+  rule testToHaskell: (toHaskell (testDecl $name: $lhs ~~> $rhs)) ~~>
+    (funDecl $name
+      (app (app (var assertEqual) (strLit $name))
+           (app (app (var (==)) (toHaskell $lhs)) (toHaskell $rhs)))) ;
+
+-----------------------------------------------------
+-- ModuleTransform
+-- Transform Rosetta modules to Haskell modules
+-----------------------------------------------------
+piece ModuleTransform
+  -- module → Haskell module
+  rule moduleToHaskell: (toHaskell (moduleDecl $name { $decls })) ~~>
+    ((moduleDecl (modulePath $name))
+     (toHaskellDecls $decls)) ;
+  
+  -- import → import
+  rule importToHaskell: (toHaskell (importDecl $name)) ~~>
+    (importDecl (modulePath $name)) ;
+  
+  -- Transform decl list
+  rule declsToHaskell: (toHaskellDecls ($d $rest)) ~~>
+    ((toHaskell $d) (toHaskellDecls $rest)) ;
+  rule declsToHaskellNil: (toHaskellDecls ()) ~~> () ;
+
+-----------------------------------------------------
+-- BuiltinTransform
+-- Transform Rosetta builtins to Haskell equivalents
+-----------------------------------------------------
+piece BuiltinTransform
+  -- Bool
+  rule boolTyToHaskell: (toHaskellType Bool) ~~> (tyVar Bool) ;
+  rule trueToHaskell: (toHaskell true) ~~> (trueLit) ;
+  rule falseToHaskell: (toHaskell false) ~~> (falseLit) ;
+  
+  -- Nat → Int (or Integer)
+  rule natTyToHaskell: (toHaskellType Nat) ~~> (tyVar Int) ;
+  rule zeroToHaskell: (toHaskell zero) ~~> (intLit 0) ;
+  rule succToHaskell: (toHaskell (succ $n)) ~~> (add (toHaskell $n) (intLit 1)) ;
+  
+  -- If-then-else
+  rule ifToHaskell: (toHaskell (if $c $t $f)) ~~>
+    (ifExpr (toHaskell $c) (toHaskell $t) (toHaskell $f)) ;
+
+-----------------------------------------------------
+-- ListTransform
+-- Transform Rosetta lists to Haskell lists
+-----------------------------------------------------
+piece ListTransform
+  rule nilToHaskell: (toHaskell Nil) ~~> (nilLit) ;
+  rule consToHaskell: (toHaskell (Cons $h $t)) ~~>
+    (cons (toHaskell $h) (toHaskell $t)) ;
+  rule listToHaskell: (toHaskell (List $items)) ~~>
+    (listLit (toHaskellExprList $items)) ;
+
+-----------------------------------------------------
+-- MaybeTransform
+-- Transform Rosetta Option to Haskell Maybe
+-----------------------------------------------------
+piece MaybeTransform
+  rule noneToHaskell: (toHaskell None) ~~> (nothingLit) ;
+  rule someToHaskell: (toHaskell (Some $x)) ~~> (justExpr (toHaskell $x)) ;
+  rule optionTyToHaskell: (toHaskellType (Option $A)) ~~>
+    (tyMaybe (toHaskellType $A)) ;
+
+-----------------------------------------------------
+-- ErrorTransform
+-- Transform Rosetta errors to Haskell error
+-----------------------------------------------------
+piece ErrorTransform
+  rule errorToHaskell: (toHaskell (Error $msg)) ~~> (errorExpr $msg) ;
+  rule stuckToHaskell: (toHaskell (Stuck $t)) ~~>
+    (app (var Stuck) (toHaskell $t)) ;
+
+-----------------------------------------------------
+-- TypeTransform
+-- Transform Rosetta types to Haskell types
+-----------------------------------------------------
+piece TypeTransform
+  rule typeVarToHaskell: (toHaskellType (Var $x)) ~~> (tyVar $x) ;
+  rule typeAppToHaskell: (toHaskellType (App $f $a)) ~~>
+    (tyApp (toHaskellType $f) (toHaskellType $a)) ;
+  rule typeUnivToHaskell: (toHaskellType Univ) ~~> (tyVar Type) ;
+
+-----------------------------------------------------
+-- Entry Point
+-----------------------------------------------------
+piece Entry
+  rule transformProgram: (rosettaToHaskell $program) ~~> (toHaskell $program) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+test "lamToHaskell": (toHaskell (Lam x . (Var x))) ~~>
+  (lam (patVar x) (var x)) ;
+
+test "pairToHaskell": (toHaskell (Pair (Var a) (Var b))) ~~>
+  (tuple (exprList (var a) (var b))) ;
+
+test "dataToHaskell": (toHaskell (adtDef Maybe { (Nothing : Maybe) (Just : Term → Maybe) })) ~~>
+  (dataDecl Maybe (dataCon Nothing) (dataCon Just (tyVar Term))) ;
+
+test "caseToHaskell": (toHaskell (rewriteRule fromJust: (Just $x) ~~> $x)) ~~>
+  (funDecl fromJust (patVar t)
+    (caseExpr (var t)
+      (caseAlt (patCtor Just (patVar x)) (var x))
+      (caseAlt (patWild) (var t)))) ;
+

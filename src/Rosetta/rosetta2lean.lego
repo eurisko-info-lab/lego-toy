@@ -1,80 +1,267 @@
 -----------------------------------------------------
--- rosetta2lean.lego: Transform Lego AST to Lean Code
+-- rosetta2lean.lego: Transform Rosetta IR to Lean Code
 --
--- Transforms the parsed AST from .lego files into 
--- Lean 4 syntax for code generation.
--- Patterns match the actual Bootstrap.lego parse output.
+-- This transforms the Rosetta intermediate representation into 
+-- Lean 4 syntax as defined in Lean.lego.
+--
+-- Pipeline: Lego source → lego2rosetta → Rosetta IR → rosetta2lean → Lean
+--
+-- Input: Rosetta constructs (from Rosetta.lego)
+--   - Core: Univ, Var, App, Subst, Lam, Pair, Fst, Snd
+--   - ADT: adtDef, constr
+--   - Rules: rewriteRule
+--   - Types: typeDecl (judgments)
+--   - Tests: testDecl
+--   - Modules: moduleDecl, importDecl
+--
+-- Output: Lean constructs (from Lean.lego)
+--   - Terms: typeUniv, var, app, lam, pair, fst, snd, matchExpr
+--   - Decls: inductiveDecl, defDecl, theoremDecl, namespaceDecl
 -----------------------------------------------------
+import Rosetta
+import Lean
 
-lang RosettaToLean :=
-
------------------------------------------------------
--- GrammarTransform
--- Transform DGrammar rules to inductive types
--- Actual AST: (DGrammar (ident name) "::=" body ";")
------------------------------------------------------
-piece GrammarTransform
-  rule transformGrammar: (DGrammar (ident $name) $defn $body $semi) ~~>
-    (inductive $name $body) ;
-
------------------------------------------------------
--- AltTransform
--- Transform alt nodes to choice
------------------------------------------------------
-piece AltTransform
-  rule transformAlt: (alt $left $bar $right) ~~> (choice $left $right) ;
-
------------------------------------------------------
--- StarTransform  
--- Transform star nodes to many
------------------------------------------------------
-piece StarTransform
-  rule transformStar: (star $inner $op) ~~> (many $inner) ;
+lang RosettaToLean (Rosetta Lean) :=
 
 -----------------------------------------------------
--- OptTransform
--- Transform opt nodes to optional
+-- CoreTransform
+-- Transform Rosetta core terms to Lean terms
 -----------------------------------------------------
-piece OptTransform
-  rule transformOpt: (opt $inner $op) ~~> (optional $inner) ;
-
------------------------------------------------------
--- RefTransform
--- Transform ref nodes
------------------------------------------------------
-piece RefTransform
-  rule transformRef: (ref (ident $name)) ~~> (ref $name) ;
-
------------------------------------------------------
--- LitTransform
--- Transform lit nodes
------------------------------------------------------
-piece LitTransform
-  rule transformLit: (lit (string $s)) ~~> (terminal $s) ;
-
------------------------------------------------------
--- ChrTransform
--- Transform chr nodes for character classes
------------------------------------------------------
-piece ChrTransform
-  rule transformChr: (chr (char $c)) ~~> (char $c) ;
-
------------------------------------------------------
--- TermTransform
--- Transform term construction nodes
------------------------------------------------------
-piece TermTransform
-  -- Con terms: (con "(" head args... ")")
-  rule transformCon: (con $lp (ident $head) $args $rp) ~~>
-    (app $head $args) ;
+piece CoreTransform
+  -- Universe → Type
+  rule univToLean: (toLean Univ) ~~> (typeUniv) ;
   
-  -- Var terms: (var "$" (ident name))
-  rule transformVar: (var $dollar (ident $name)) ~~>
-    (metavar $name) ;
+  -- Variable → var
+  rule varToLean: (toLean (Var $x)) ~~> (var $x) ;
   
-  -- Identifier nodes: (ident name) -> just name
-  rule transformIdent: (ident $name) ~~> $name ;
+  -- Application → app
+  rule appToLean: (toLean (App $f $a)) ~~> (app (toLean $f) (toLean $a)) ;
   
-  -- Unit: empty parens
-  rule transformUnit: (unit) ~~> () ;
+  -- Substitution → let expression
+  rule substToLean: (toLean (Subst $x $s $body)) ~~>
+    (letExpr $x (toLean $s) (toLean $body)) ;
+
+-----------------------------------------------------
+-- BinderTransform
+-- Transform Rosetta binders to Lean lambda/forall
+-----------------------------------------------------
+piece BinderTransform
+  -- Lambda → fun
+  rule lamToLean: (toLean (Lam $x . $body)) ~~>
+    (lam (simpleBinder $x) (toLean $body)) ;
+  
+  -- Typed lambda → fun with explicit binder
+  rule lamTypedToLean: (toLean (Lam ($x : $A) . $body)) ~~>
+    (lam (explicitBinder $x (toLean $A)) (toLean $body)) ;
+  
+  -- Pi type → forall
+  rule piToLean: (toLean (Pi ($x : $A) $B)) ~~>
+    (forallTy (explicitBinder $x (toLean $A)) (toLean $B)) ;
+  
+  -- Arrow type (non-dependent) → arrow
+  rule arrowToLean: (toLean (Arrow $A $B)) ~~>
+    (arrowTy (toLean $A) (toLean $B)) ;
+
+-----------------------------------------------------
+-- ProductTransform
+-- Transform Rosetta pairs/products to Lean
+-----------------------------------------------------
+piece ProductTransform
+  -- Pair → tuple
+  rule pairToLean: (toLean (Pair $a $b)) ~~>
+    (pair (toLean $a) (toLean $b)) ;
+  
+  -- Fst → .fst
+  rule fstToLean: (toLean (Fst $p)) ~~> (fst (toLean $p)) ;
+  
+  -- Snd → .snd  
+  rule sndToLean: (toLean (Snd $p)) ~~> (snd (toLean $p)) ;
+  
+  -- Product type → Prod
+  rule prodToLean: (toLean (Prod $A $B)) ~~>
+    (prodTy (toLean $A) (toLean $B)) ;
+
+-----------------------------------------------------
+-- ADTTransform
+-- Transform Rosetta ADT definitions to Lean inductives
+-----------------------------------------------------
+piece ADTTransform
+  -- adtDef → inductive
+  rule adtToLean: (toLean (adtDef $name { $constrs })) ~~>
+    (inductiveDecl $name (whereCtors (toLeanCtors $constrs))) ;
+  
+  -- Transform constructor list
+  rule ctorsToLean: (toLeanCtors ($c $rest)) ~~>
+    ((toLeanCtor $c) (toLeanCtors $rest)) ;
+  rule ctorsToLeanNil: (toLeanCtors ()) ~~> () ;
+  
+  -- Transform single constructor: Name : Type → | Name : Type
+  rule ctorToLean: (toLeanCtor ($name : $ty)) ~~>
+    (ctor $name (toLean $ty)) ;
+
+-----------------------------------------------------
+-- RewriteTransform
+-- Transform Rosetta rewrite rules to Lean defs with match
+-----------------------------------------------------
+piece RewriteTransform
+  -- Simple rewrite → def with match
+  rule rewriteToLean: (toLean (rewriteRule $name: $pat ~~> $repl)) ~~>
+    (defDecl $name 
+      (explicitParam t Term)
+      (typeAnn (var Term))
+      (matchExpr 
+        (termList (var t))
+        (matchAlt (toLeanPat $pat) (toLean $repl))
+        (matchAlt (patWild) (var t)))) ;
+  
+  -- Pattern transform: preserve structure
+  rule patVarToLean: (toLeanPat (Var $x)) ~~> (patVar $x) ;
+  rule patAppToLean: (toLeanPat ($f $args)) ~~> 
+    (patApp $f (toLeanPats $args)) ;
+  rule patWildToLean: (toLeanPat _) ~~> (patWild) ;
+  rule patsToLean: (toLeanPats ($p $rest)) ~~> 
+    ((toLeanPat $p) (toLeanPats $rest)) ;
+  rule patsToLeanNil: (toLeanPats ()) ~~> () ;
+
+-----------------------------------------------------
+-- JudgmentTransform
+-- Transform Rosetta type judgments to Lean theorems
+-----------------------------------------------------
+piece JudgmentTransform
+  -- Type judgment → theorem (structural representation)
+  rule typeToLean: (toLean (typeDecl $name: $term : $ty when $conds)) ~~>
+    (theoremDecl $name
+      (toLeanParams $conds)
+      (app (app (var HasType) (toLean $term)) (toLean $ty))
+      (byTactic (tacSorry))) ;
+  
+  -- Simple type judgment without conditions
+  rule typeSimpleToLean: (toLean (typeDecl $name: $term : $ty)) ~~>
+    (theoremDecl $name
+      (app (app (var HasType) (toLean $term)) (toLean $ty))
+      (byTactic (tacSorry))) ;
+  
+  -- Transform conditions to parameters
+  rule condsToParams: (toLeanParams (($t : $T) $rest)) ~~>
+    ((implicitParam h (app (app (var HasType) (toLean $t)) (toLean $T)))
+     (toLeanParams $rest)) ;
+  rule condsToParamsNil: (toLeanParams ()) ~~> () ;
+
+-----------------------------------------------------
+-- TestTransform
+-- Transform Rosetta tests to Lean examples/tests
+-----------------------------------------------------
+piece TestTransform
+  -- test → example with eq proof
+  rule testToLean: (toLean (testDecl $name: $lhs ~~> $rhs)) ~~>
+    (exampleDecl 
+      (beq (toLean $lhs) (toLean $rhs))
+      (byTactic (tacRfl))) ;
+
+-----------------------------------------------------
+-- ModuleTransform
+-- Transform Rosetta modules to Lean namespaces
+-----------------------------------------------------
+piece ModuleTransform
+  -- module → namespace
+  rule moduleToLean: (toLean (moduleDecl $name { $decls })) ~~>
+    (namespaceDecl $name (toLeanDecls $decls) $name) ;
+  
+  -- import → import
+  rule importToLean: (toLean (importDecl $name)) ~~>
+    (importDecl (modulePath $name)) ;
+  
+  -- Transform declaration list
+  rule declsToLean: (toLeanDecls ($d $rest)) ~~>
+    ((toLean $d) (toLeanDecls $rest)) ;
+  rule declsToLeanNil: (toLeanDecls ()) ~~> () ;
+
+-----------------------------------------------------
+-- BuiltinTransform
+-- Transform Rosetta builtins to Lean equivalents
+-----------------------------------------------------
+piece BuiltinTransform
+  -- Bool type
+  rule boolTyToLean: (toLean Bool) ~~> (var Bool) ;
+  rule trueToLean: (toLean true) ~~> (trueLit) ;
+  rule falseToLean: (toLean false) ~~> (falseLit) ;
+  
+  -- Nat type
+  rule natTyToLean: (toLean Nat) ~~> (var Nat) ;
+  rule zeroToLean: (toLean zero) ~~> (numLit 0) ;
+  rule succToLean: (toLean (succ $n)) ~~> (add (toLean $n) (numLit 1)) ;
+  
+  -- If-then-else
+  rule ifToLean: (toLean (if $c $t $f)) ~~>
+    (ifExpr (toLean $c) (toLean $t) (toLean $f)) ;
+
+-----------------------------------------------------
+-- ListTransform
+-- Transform Rosetta lists to Lean lists
+-----------------------------------------------------
+piece ListTransform
+  rule nilToLean: (toLean Nil) ~~> (listLit (termList)) ;
+  rule consToLean: (toLean (Cons $h $t)) ~~>
+    (cons (toLean $h) (toLean $t)) ;
+  rule listToLean: (toLean (List $items)) ~~>
+    (listLit (toLeanTermList $items)) ;
+  rule termListToLean: (toLeanTermList ($t $rest)) ~~>
+    (termList (toLean $t) (toLeanTermList $rest)) ;
+  rule termListToLeanNil: (toLeanTermList ()) ~~> (termList) ;
+
+-----------------------------------------------------
+-- ErrorTransform
+-- Transform Rosetta errors to Lean panic
+-----------------------------------------------------
+piece ErrorTransform
+  rule errorToLean: (toLean (Error $msg)) ~~> (panic $msg) ;
+  rule stuckToLean: (toLean (Stuck $t)) ~~> 
+    (app (var Stuck) (toLean $t)) ;
+
+-----------------------------------------------------
+-- AnnotationTransform
+-- Transform Rosetta annotations
+-----------------------------------------------------
+piece AnnotationTransform
+  -- Ann → type annotation (stripped for now)
+  rule annToLean: (toLean (Ann $t $T)) ~~> (toLean $t) ;
+  -- Loc → stripped (source locations not preserved)
+  rule locToLean: (toLean (Loc $l $c $t)) ~~> (toLean $t) ;
+
+-----------------------------------------------------
+-- LiteralTransform
+-- Transform Rosetta constants to Lean literals
+-----------------------------------------------------
+piece LiteralTransform
+  rule constIntToLean: (toLean (Const (IntLit $n))) ~~> (numLit $n) ;
+  rule constStrToLean: (toLean (Const (StrLit $s))) ~~> (strLit $s) ;
+  rule constBoolToLean: (toLean (Const (BoolLit true))) ~~> (trueLit) ;
+  rule constBoolFalseToLean: (toLean (Const (BoolLit false))) ~~> (falseLit) ;
+
+-----------------------------------------------------
+-- Entry Point
+-- Main transformation function
+-----------------------------------------------------
+piece Entry
+  -- Entry: transform a full Rosetta module/program to Lean
+  rule transformProgram: (rosettaToLean $program) ~~> (toLean $program) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+test "lamToLean": (toLean (Lam x . (Var x))) ~~> 
+  (lam (simpleBinder x) (var x)) ;
+
+test "appToLean": (toLean (App (Var f) (Var x))) ~~>
+  (app (var f) (var x)) ;
+
+test "adtToLean": (toLean (adtDef Term { (Var : Ident → Term) })) ~~>
+  (inductiveDecl Term (whereCtors (ctor Var (arrowTy (var Ident) (var Term))))) ;
+
+test "rewriteToLean": (toLean (rewriteRule beta: (App (Lam $x . $b) $a) ~~> (Subst $x $a $b))) ~~>
+  (defDecl beta (explicitParam t Term) (typeAnn (var Term))
+    (matchExpr (termList (var t))
+      (matchAlt (patApp App (patApp Lam (patVar x) (patVar b)) (patVar a))
+                (letExpr x (var a) (var b)))
+      (matchAlt (patWild) (var t)))) ;
 

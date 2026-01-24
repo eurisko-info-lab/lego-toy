@@ -1,0 +1,279 @@
+-----------------------------------------------------
+-- Haskell.lego: Haskell AST Definition for Rosetta
+--
+-- This defines the Haskell abstract syntax tree as a Lego specification.
+-- It serves as the TARGET representation for rosetta2haskell transformation.
+--
+-- Haskell features:
+-- - GADTs for precise ADTs
+-- - Type classes and instances
+-- - Pattern matching
+-- - do-notation
+-- - where clauses
+-- - guards
+-----------------------------------------------------
+lang Haskell :=
+
+-----------------------------------------------------
+-- Core Terms
+-- Basic Haskell expressions
+-----------------------------------------------------
+piece CoreTerms
+  expr ::= 
+    -- Variables and literals
+    <ident>                             → var
+    | <number>                          → intLit
+    | <string>                          → strLit
+    | "True"                            → trueLit
+    | "False"                           → falseLit
+    | "()"                              → unitLit
+    -- Application (juxtaposition)
+    | expr expr                         → app
+    -- Lambda
+    | "\\" pattern+ "->" expr           → lam
+    -- Let
+    | "let" letBind+ "in" expr          → letExpr
+    | "let" "{" letBind+ "}" "in" expr  → letExprBraces
+    -- Where (at expression level via do)
+    | expr "where" letBind+             → whereExpr
+    -- If-then-else
+    | "if" expr "then" expr "else" expr → ifExpr
+    -- Case
+    | "case" expr "of" caseAlt+         → caseExpr
+    | "case" expr "of" "{" caseAlt+ "}" → caseExprBraces
+    -- Tuples
+    | "(" exprList ")"                  → tuple
+    | "fst" expr                        → fst
+    | "snd" expr                        → snd
+    -- Lists
+    | "[" exprList "]"                  → listLit
+    | "[]"                              → nilLit
+    | expr ":" expr                     → cons
+    | expr "++" expr                    → append
+    | "[" expr "|" qual+ "]"            → listComp
+    -- Operators (sections)
+    | "(" expr op ")"                   → leftSection
+    | "(" op expr ")"                   → rightSection
+    -- Operators (arithmetic)
+    | expr "+" expr                     → add
+    | expr "-" expr                     → sub
+    | expr "*" expr                     → mul
+    | expr "/" expr                     → div
+    | expr "`div`" expr                 → intDiv
+    | expr "`mod`" expr                 → mod
+    | "-" expr                          → neg
+    -- Operators (comparison)
+    | expr "==" expr                    → eq
+    | expr "/=" expr                    → neq
+    | expr "<" expr                     → lt
+    | expr ">" expr                     → gt
+    | expr "<=" expr                    → le
+    | expr ">=" expr                    → ge
+    -- Operators (logical)
+    | expr "&&" expr                    → and
+    | expr "||" expr                    → or
+    | "not" expr                        → not
+    -- Function composition/application
+    | expr "." expr                     → compose
+    | expr "$" expr                     → dollarApp
+    -- Do notation
+    | "do" doStmt+                      → doExpr
+    | "do" "{" doStmt+ "}"              → doExprBraces
+    -- Monadic
+    | expr ">>=" expr                   → bind
+    | expr ">>" expr                    → seqOp
+    | "return" expr                     → returnExpr
+    | "pure" expr                       → pureExpr
+    -- Maybe
+    | "Nothing"                         → nothingLit
+    | "Just" expr                       → justExpr
+    -- Either
+    | "Left" expr                       → leftExpr
+    | "Right" expr                      → rightExpr
+    -- Error
+    | "error" <string>                  → errorExpr
+    | "undefined"                       → undefinedExpr
+    -- Parentheses
+    | "(" expr ")"                      → paren
+    -- Type annotation
+    | expr "::" type                    → typeAnn
+    -- Record syntax
+    | <ident> "{" fieldBind+ "}"        → recordCtor
+    | expr "{" fieldBind+ "}"           → recordUpdate
+    -- Field access
+    | expr "." <ident>                  → fieldAccess
+    ;
+
+  exprList ::= expr ("," expr)*         → exprList ;
+  op ::= "+" | "-" | "*" | "/" | "." | "$" | "==" | "<" | ">" | ":" | "++" → op ;
+
+-----------------------------------------------------
+-- Let Bindings
+-----------------------------------------------------
+piece LetBindings
+  letBind ::= <ident> "=" expr          → letBind
+            | <ident> pattern* "=" expr → funBind
+            | <ident> pattern* guards   → funBindGuards
+            ;
+  guards ::= guard+                     → guards ;
+  guard ::= "|" expr "=" expr           → guard ;
+
+-----------------------------------------------------
+-- Do Notation
+-----------------------------------------------------
+piece DoNotation
+  doStmt ::= <ident> "<-" expr          → doBind
+           | "let" letBind+             → doLet
+           | "let" "{" letBind+ "}"     → doLetBraces
+           | expr                       → doExpr
+           ;
+
+-----------------------------------------------------
+-- List Comprehension
+-----------------------------------------------------
+piece ListComprehension
+  qual ::= <ident> "<-" expr            → genQual
+         | expr                         → filterQual
+         | "let" <ident> "=" expr       → letQual
+         ;
+
+-----------------------------------------------------
+-- Types
+-- Haskell type expressions
+-----------------------------------------------------
+piece Types
+  type ::= <ident>                      → tyVar
+         | <ident> type+                → tyApp
+         | type "->" type               → tyFun
+         | "(" typeList ")"             → tyTuple
+         | "[" type "]"                 → tyList
+         | "Maybe" type                 → tyMaybe
+         | "Either" type type           → tyEither
+         | "IO" type                    → tyIO
+         | "forall" <ident>+ "." type   → tyForall
+         | "(" type ")"                 → tyParen
+         ;
+  typeList ::= type ("," type)*         → typeList ;
+
+-----------------------------------------------------
+-- Patterns
+-----------------------------------------------------
+piece Patterns
+  pattern ::= <ident>                   → patVar
+            | "_"                       → patWild
+            | <number>                  → patLit
+            | <string>                  → patStr
+            | "()"                      → patUnit
+            | "True"                    → patTrue
+            | "False"                   → patFalse
+            | <ident> pattern*          → patCtor
+            | "(" patternList ")"       → patTuple
+            | "[" patternList "]"       → patList
+            | "[]"                      → patNil
+            | pattern ":" pattern       → patCons
+            | pattern "@" pattern       → patAs
+            | "(" pattern ")"           → patParen
+            | <ident> "{" fieldPat+ "}" → patRecord
+            ;
+  patternList ::= pattern ("," pattern)* → patternList ;
+  fieldPat ::= <ident> "=" pattern      → fieldPat ;
+  caseAlt ::= pattern "->" expr         → caseAlt
+            | pattern guards            → caseAltGuards
+            ;
+
+-----------------------------------------------------
+-- Field Bindings (Records)
+-----------------------------------------------------
+piece Records
+  fieldBind ::= <ident> "=" expr        → fieldBind ;
+
+-----------------------------------------------------
+-- Declarations
+-- Top-level declarations
+-----------------------------------------------------
+piece Declarations
+  decl ::= 
+    -- Data types
+    "data" <ident> tyVarList? "=" dataCon ("|" dataCon)* derivingClause?
+      → dataDecl
+    | "data" <ident> tyVarList? "where" gadtCon* derivingClause?
+      → gadtDecl
+    -- Newtype
+    | "newtype" <ident> tyVarList? "=" <ident> type derivingClause?
+      → newtypeDecl
+    -- Type synonym
+    | "type" <ident> tyVarList? "=" type
+      → typeSynDecl
+    -- Function definition
+    | <ident> "::" type
+      → typeSigDecl
+    | <ident> pattern* "=" expr whereClause?
+      → funDecl
+    | <ident> pattern* guards whereClause?
+      → funDeclGuards
+    -- Class/Instance
+    | "class" context? <ident> tyVarList "where" classMethod*
+      → classDecl
+    | "instance" context? <ident> type+ "where" instMethod*
+      → instanceDecl
+    -- Module
+    | "module" modulePath exports? "where"
+      → moduleDecl
+    | "import" qualified? modulePath importSpec?
+      → importDecl
+    -- Infix
+    | "infixl" <number> <ident>
+      → infixlDecl
+    | "infixr" <number> <ident>
+      → infixrDecl
+    | "infix" <number> <ident>
+      → infixDecl
+    ;
+
+  dataCon ::= <ident> type*             → dataCon
+            | <ident> "{" fieldDecl+ "}" → dataConRecord
+            ;
+  gadtCon ::= <ident> "::" type         → gadtCon ;
+  fieldDecl ::= <ident> "::" type       → fieldDecl ;
+  tyVarList ::= <ident>+                → tyVarList ;
+  derivingClause ::= "deriving" "(" <ident> ("," <ident>)* ")" → derivingClause
+                   | "deriving" <ident> → derivingClauseSimple
+                   ;
+  context ::= "(" constraint ("," constraint)* ")" "=>" → context
+            | constraint "=>"           → contextSimple
+            ;
+  constraint ::= <ident> type+          → constraint ;
+  classMethod ::= <ident> "::" type     → classMethod ;
+  instMethod ::= <ident> pattern* "=" expr → instMethod ;
+  whereClause ::= "where" letBind+      → whereClause ;
+  modulePath ::= <ident> ("." <ident>)* → modulePath ;
+  exports ::= "(" exportItem ("," exportItem)* ")" → exports ;
+  exportItem ::= <ident>                → exportItem
+               | <ident> "(..)"         → exportAll
+               | "module" <ident>       → exportModule
+               ;
+  qualified ::= "qualified"             → qualified ;
+  importSpec ::= "(" importItem ("," importItem)* ")" → importSpec
+               | "hiding" "(" importItem ("," importItem)* ")" → importHiding
+               | "as" <ident>           → importAs
+               ;
+  importItem ::= <ident>                → importItem
+               | <ident> "(..)"         → importItemAll
+               ;
+
+-----------------------------------------------------
+-- Module
+-- Top-level structure
+-----------------------------------------------------
+piece Module
+  module ::= decl*                      → module ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+test "lam": (lam (patVar x) (add (var x) (intLit 1))) ;
+test "data": (dataDecl Maybe (tyVarList a) (dataCon Nothing) (dataCon Just (tyVar a))) ;
+test "fun": (funDecl id (patVar x) (var x)) ;
+test "case": (caseExpr (var mx) (caseAlt (patCtor Nothing) (intLit 0)) (caseAlt (patCtor Just (patVar x)) (var x))) ;
+test "gadt": (gadtDecl Expr (tyVarList a) (gadtCon Lit (tyFun (tyVar Int) (tyApp Expr (tyVar Int))))) ;
+

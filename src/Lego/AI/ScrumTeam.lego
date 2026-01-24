@@ -901,6 +901,1337 @@ piece ContextPersistence
         (deserialize $data)) ;
 
 -----------------------------------------------------
+-- HELPER FUNCTIONS: Sprint Operations
+-----------------------------------------------------
+piece SprintHelpers
+  -- Get top N priority items from backlog
+  rule getTopPriority: (getTopPriority pbEmpty $n) ~> pbEmpty ;
+  rule getTopPriorityTake: (getTopPriority (pbItem $story $pri $rest) 0) ~> pbEmpty ;
+  rule getTopPriorityCons: (getTopPriority (pbItem $story $pri $rest) (succ $n))
+    ~> (pbItem $story $pri (getTopPriority $rest $n)) ;
+  
+  -- Next sprint ID
+  rule nextSprintId: (nextSprintId) ~> (sprintId (incrementCounter "sprint")) ;
+  
+  -- New story ID
+  rule newStoryId: (newStoryId) ~> (storyId (concat "STORY-" (incrementCounter "story"))) ;
+  
+  -- New debt ID
+  rule newDebtId: (newDebtId) ~> (debtId (concat "DEBT-" (incrementCounter "debt"))) ;
+  
+  -- New commit ID
+  rule newCommitId: (newCommitId) ~> (commitId (generateUUID)) ;
+  
+  -- New PR ID
+  rule newPRId: (newPRId) ~> (prId (incrementCounter "pr")) ;
+  
+  -- Next ADR number
+  rule nextADRNumber: (nextADRNumber) ~> (incrementCounter "adr") ;
+  
+  -- Estimate stories with team
+  rule estimateStoriesEmpty: (estimateStories $team pbEmpty) ~> pbEmpty ;
+  rule estimateStoriesCons: (estimateStories $team (pbItem $story $pri $rest))
+    ~> (let $estimated (teamEstimate $team $story)
+        (pbItem $estimated $pri (estimateStories $team $rest))) ;
+  
+  -- Team estimation (planning poker simulation)
+  rule teamEstimate: (teamEstimate $team $story)
+    ~> (let $devs (getDevs $team)
+        (let $votes (collectVotes $devs $story)
+        (let $consensus (findConsensus $votes)
+        (setStoryPoints $story $consensus)))) ;
+  
+  -- Collect votes from developers
+  rule collectVotesEmpty: (collectVotes membersEmpty $story) ~> votesEmpty ;
+  rule collectVotesCons: (collectVotes (membersCons $member $rest) $story)
+    ~> (let $vote (agentEstimate (getMemberAgent $member) $story)
+        (votesCons $vote (collectVotes $rest $story))) ;
+  
+  votes ::= "votesEmpty" → votesEmpty
+          | "votesCons" storyPoints votes → votesCons ;
+  
+  -- Find consensus from votes
+  rule findConsensus: (findConsensus $votes)
+    ~> (let $median (medianVote $votes)
+        $median) ;
+  
+  rule medianVote: (medianVote $votes)
+    ~> (let $sorted (sortVotes $votes)
+        (middleElement $sorted)) ;
+  
+  -- Set story points
+  rule setStoryPoints: (setStoryPoints (mkStory $id $title $desc $oldPts $acc) $newPts)
+    ~> (mkStory $id $title $desc $newPts $acc) ;
+  
+  -- Commit to sprint (create sprint backlog from backlog items)
+  rule commitToSprintEmpty: (commitToSprint $team pbEmpty) ~> sbEmpty ;
+  rule commitToSprintCons: (commitToSprint $team (pbItem $story $pri $rest))
+    ~> (sbItem (mkSprintItem $story tasksEmpty unassigned isNotStarted)
+        (commitToSprint $team $rest)) ;
+  
+  -- Get developers from team
+  rule getDevs: (getDevs (mkScrumTeam $po $members)) ~> (filterDevs $members) ;
+  
+  rule filterDevsEmpty: (filterDevs membersEmpty) ~> membersEmpty ;
+  rule filterDevsDev: (filterDevs (membersCons (mkMember $name (roleDev $spec) $agent) $rest))
+    ~> (membersCons (mkMember $name (roleDev $spec) $agent) (filterDevs $rest)) ;
+  rule filterDevsOther: (filterDevs (membersCons (mkMember $name $role $agent) $rest))
+    ~> (filterDevs $rest) ;
+  
+  -- Get member agent
+  rule getMemberAgent: (getMemberAgent (mkMember $name $role $agent)) ~> $agent ;
+  
+  -- Get specialty
+  rule getSpecialty: (getSpecialty (mkMember $name (roleDev $spec) $agent)) ~> $spec ;
+  rule getSpecialtyOther: (getSpecialty (mkMember $name $role $agent)) ~> specFullstack ;
+
+-----------------------------------------------------
+-- HELPER FUNCTIONS: Standup Operations
+-----------------------------------------------------
+piece StandupHelpers
+  -- Collect standups from all team members
+  rule collectStandups: (collectStandups $team $sprint)
+    ~> (let $members (getAllMembers $team)
+        (mapStandups $members $sprint)) ;
+  
+  rule mapStandupsEmpty: (mapStandups membersEmpty $sprint) ~> standupsEmpty ;
+  rule mapStandupsCons: (mapStandups (membersCons $member $rest) $sprint)
+    ~> (let $report (generateStandup $member $sprint)
+        (standupsCons $report (mapStandups $rest $sprint))) ;
+  
+  standups ::= "standupsEmpty" → standupsEmpty
+             | "standupsCons" standupReport standups → standupsCons ;
+  
+  -- Generate standup report for a member
+  rule generateStandup: (generateStandup $member $sprint)
+    ~> (let $agent (getMemberAgent $member)
+        (let $tasks (getMemberTasks $member $sprint)
+        (let $yesterday (summarizeYesterday $agent $tasks)
+        (let $today (planToday $agent $tasks)
+        (let $blockers (identifyBlockers $agent $tasks)
+        (mkStandup (getMemberName $member) $yesterday $today $blockers)))))) ;
+  
+  rule getMemberName: (getMemberName (mkMember $name $role $agent)) ~> $name ;
+  
+  -- Get all members
+  rule getAllMembers: (getAllMembers (mkScrumTeam $po $members))
+    ~> (membersCons $po $members) ;
+  
+  -- Get member tasks
+  rule getMemberTasks: (getMemberTasks $member $sprint)
+    ~> (filterTasksByAssignee (getSprintItems $sprint) (getMemberName $member)) ;
+  
+  rule getSprintItems: (getSprintItems (mkSprint $id $goal $backlog $status)) ~> $backlog ;
+  
+  rule filterTasksByAssigneeEmpty: (filterTasksByAssignee sbEmpty $name) ~> sbEmpty ;
+  rule filterTasksByAssigneeCons: (filterTasksByAssignee (sbItem $item $rest) $name)
+    ~> (if (isAssignedTo $item $name)
+           (sbItem $item (filterTasksByAssignee $rest $name))
+           (filterTasksByAssignee $rest $name)) ;
+  
+  rule isAssignedTo: (isAssignedTo (mkSprintItem $story $tasks (assigned $assignee) $status) $name)
+    ~> (eq $assignee $name) ;
+  rule isAssignedToUnassigned: (isAssignedTo (mkSprintItem $story $tasks unassigned $status) $name)
+    ~> false ;
+  
+  -- Extract blockers from standups
+  rule extractBlockersEmpty: (extractBlockers standupsEmpty) ~> blockersEmpty ;
+  rule extractBlockersCons: (extractBlockers (standupsCons (mkStandup $name $y $t $blockers) $rest))
+    ~> (concatBlockers $blockers (extractBlockers $rest)) ;
+  
+  blockersEmpty ::= "blockersEmpty" → blockersEmpty ;
+  
+  rule concatBlockersEmpty: (concatBlockers noBlockers $rest) ~> $rest ;
+  rule concatBlockersCons: (concatBlockers (hasBlockers $b $more) $rest)
+    ~> (hasBlockers $b (concatBlockers $more $rest)) ;
+  
+  -- SM resolve blockers
+  rule smResolveBlockers: (smResolveBlockers blockersEmpty) ~> (ok) ;
+  rule smResolveBlockersCons: (smResolveBlockers (hasBlockers $blocker $rest))
+    ~> (let $resolved (smAction removeBlocker $blocker)
+        (smResolveBlockers $rest)) ;
+  
+  -- Update sprint status with reports
+  rule updateSprintStatus: (updateSprintStatus $sprint $reports)
+    ~> (let $progress (calcProgress $reports)
+        (updateProgress $sprint $progress)) ;
+
+-----------------------------------------------------
+-- HELPER FUNCTIONS: Sprint Review Operations
+-----------------------------------------------------
+piece ReviewHelpers
+  -- Get completed items from sprint
+  rule getCompletedItems: (getCompletedItems (mkSprint $id $goal $backlog $status))
+    ~> (filterCompleted $backlog) ;
+  
+  rule filterCompletedEmpty: (filterCompleted sbEmpty) ~> sbEmpty ;
+  rule filterCompletedDone: (filterCompleted (sbItem (mkSprintItem $story $tasks $assignee isDone) $rest))
+    ~> (sbItem (mkSprintItem $story $tasks $assignee isDone) (filterCompleted $rest)) ;
+  rule filterCompletedOther: (filterCompleted (sbItem $item $rest))
+    ~> (filterCompleted $rest) ;
+  
+  -- Prepare demos for completed items
+  rule prepareDemosEmpty: (prepareDemos sbEmpty) ~> demosEmpty ;
+  rule prepareDemosCons: (prepareDemos (sbItem $item $rest))
+    ~> (demosCons (createDemo $item) (prepareDemos $rest)) ;
+  
+  demos ::= "demosEmpty" → demosEmpty
+          | "demosCons" demo demos → demosCons ;
+  
+  demo ::= "mkDemo" <string> <string> artifacts → mkDemo ;
+  
+  rule createDemo: (createDemo (mkSprintItem $story $tasks $assignee $status))
+    ~> (mkDemo (getStoryTitle $story) (generateDemoScript $story) (collectArtifacts $tasks)) ;
+  
+  rule getStoryTitle: (getStoryTitle (mkStory $id $title $desc $pts $acc)) ~> $title ;
+  
+  -- Filter accepted items based on PO feedback
+  rule filterAccepted: (filterAccepted $items $feedback)
+    ~> (applyFeedback $items $feedback) ;
+  
+  rule applyFeedbackEmpty: (applyFeedback sbEmpty $feedback) ~> sbEmpty ;
+  rule applyFeedbackCons: (applyFeedback (sbItem $item $rest) $feedback)
+    ~> (if (isAccepted $item $feedback)
+           (sbItem $item (applyFeedback $rest $feedback))
+           (applyFeedback $rest $feedback)) ;
+  
+  -- Gather artifacts from completed items
+  rule gatherArtifacts: (gatherArtifacts sbEmpty) ~> artEmpty ;
+  rule gatherArtifactsCons: (gatherArtifacts (sbItem $item $rest))
+    ~> (mergeArtifacts (getItemArtifacts $item) (gatherArtifacts $rest)) ;
+  
+  rule getItemArtifacts: (getItemArtifacts (mkSprintItem $story $tasks $assignee $status))
+    ~> (collectArtifacts $tasks) ;
+  
+  rule collectArtifactsEmpty: (collectArtifacts tasksEmpty) ~> artEmpty ;
+  rule collectArtifactsCons: (collectArtifacts (tasksCons $task $rest))
+    ~> (mergeArtifacts (getTaskArtifacts $task) (collectArtifacts $rest)) ;
+  
+  rule mergeArtifactsEmpty: (mergeArtifacts artEmpty $rest) ~> $rest ;
+  rule mergeArtifactsCons: (mergeArtifacts (artCode $code $more) $rest)
+    ~> (artCode $code (mergeArtifacts $more $rest)) ;
+  rule mergeArtifactsDoc: (mergeArtifacts (artDoc $doc $more) $rest)
+    ~> (artDoc $doc (mergeArtifacts $more $rest)) ;
+  rule mergeArtifactsTest: (mergeArtifacts (artTest $test $more) $rest)
+    ~> (artTest $test (mergeArtifacts $more $rest)) ;
+
+-----------------------------------------------------
+-- HELPER FUNCTIONS: Retrospective
+-----------------------------------------------------
+piece RetroHelpers
+  retroFeedback ::= "rfEmpty" → rfEmpty
+                  | "rfCons" retroItem retroFeedback → rfCons ;
+  
+  -- Collect retro feedback from team
+  rule collectRetroFeedback: (collectRetroFeedback $team)
+    ~> (let $members (getAllMembers $team)
+        (gatherRetroFromMembers $members)) ;
+  
+  rule gatherRetroFromMembersEmpty: (gatherRetroFromMembers membersEmpty) ~> rfEmpty ;
+  rule gatherRetroFromMembersCons: (gatherRetroFromMembers (membersCons $member $rest))
+    ~> (let $feedback (askForRetroFeedback $member)
+        (concatRetro $feedback (gatherRetroFromMembers $rest))) ;
+  
+  rule concatRetroEmpty: (concatRetro rfEmpty $rest) ~> $rest ;
+  rule concatRetroCons: (concatRetro (rfCons $item $more) $rest)
+    ~> (rfCons $item (concatRetro $more $rest)) ;
+  
+  -- Group feedback by type
+  rule groupFeedback: (groupFeedback $feedback)
+    ~> (mkGroupedFeedback
+         (filterGood $feedback)
+         (filterBad $feedback)
+         (filterActions $feedback)) ;
+  
+  groupedFeedback ::= "mkGroupedFeedback" retroFeedback retroFeedback retroFeedback → mkGroupedFeedback ;
+  
+  rule filterGoodEmpty: (filterGood rfEmpty) ~> rfEmpty ;
+  rule filterGoodMatch: (filterGood (rfCons (retroGood $msg) $rest))
+    ~> (rfCons (retroGood $msg) (filterGood $rest)) ;
+  rule filterGoodSkip: (filterGood (rfCons $item $rest)) ~> (filterGood $rest) ;
+  
+  rule filterBadEmpty: (filterBad rfEmpty) ~> rfEmpty ;
+  rule filterBadMatch: (filterBad (rfCons (retroBad $msg) $rest))
+    ~> (rfCons (retroBad $msg) (filterBad $rest)) ;
+  rule filterBadSkip: (filterBad (rfCons $item $rest)) ~> (filterBad $rest) ;
+  
+  rule filterActionsEmpty: (filterActions rfEmpty) ~> rfEmpty ;
+  rule filterActionsMatch: (filterActions (rfCons (retroAction $msg $assignee) $rest))
+    ~> (rfCons (retroAction $msg $assignee) (filterActions $rest)) ;
+  rule filterActionsSkip: (filterActions (rfCons $item $rest)) ~> (filterActions $rest) ;
+  
+  -- Vote on actions
+  rule voteOnActions: (voteOnActions $team $grouped)
+    ~> (let $actions (getActions $grouped)
+        (let $votes (teamVote $team $actions)
+        (selectTopActions $votes 3))) ;
+  
+  rule getActions: (getActions (mkGroupedFeedback $good $bad $actions)) ~> $actions ;
+  
+  -- Record retro actions
+  rule recordRetroActions: (recordRetroActions $actions)
+    ~> (map $actions addToActionBacklog) ;
+
+-----------------------------------------------------
+-- HELPER FUNCTIONS: Backlog Operations
+-----------------------------------------------------
+piece BacklogHelpers
+  -- Add story to backlog
+  rule addToBacklog: (addToBacklog $story)
+    ~> (addToBacklogWithPri $story priMedium) ;
+  
+  rule addToBacklogWithPri: (addToBacklogWithPri $story $priority)
+    ~> (updateGlobalBacklog (pbItem $story $priority getGlobalBacklog)) ;
+  
+  -- Get unrefined stories
+  rule getUnrefinedStories: (getUnrefinedStories pbEmpty) ~> pbEmpty ;
+  rule getUnrefinedStoriesUnest: (getUnrefinedStories (pbItem (mkStory $id $t $d spUnestimated $a) $pri $rest))
+    ~> (pbItem (mkStory $id $t $d spUnestimated $a) $pri (getUnrefinedStories $rest)) ;
+  rule getUnrefinedStoriesEst: (getUnrefinedStories (pbItem $story $pri $rest))
+    ~> (getUnrefinedStories $rest) ;
+  
+  -- Ask PO for clarification
+  rule askPOForClarification: (askPOForClarification pbEmpty) ~> pbEmpty ;
+  rule askPOForClarificationCons: (askPOForClarification (pbItem $story $pri $rest))
+    ~> (let $clarified (humanCheck (cpInput (formatClarificationRequest $story)) $story)
+        (pbItem $clarified $pri (askPOForClarification $rest))) ;
+  
+  rule formatClarificationRequest: (formatClarificationRequest (mkStory $id $title $desc $pts $acc))
+    ~> (concat "Please clarify story: " (concat $title (concat "\n" $desc))) ;
+  
+  -- Update backlog with estimated stories
+  rule updateBacklog: (updateBacklog $backlog $estimated)
+    ~> (mergeBacklogs $backlog $estimated) ;
+  
+  rule mergeBacklogsEmpty: (mergeBacklogs $backlog pbEmpty) ~> $backlog ;
+  rule mergeBacklogsCons: (mergeBacklogs $backlog (pbItem $story $pri $rest))
+    ~> (mergeBacklogs (replaceStory $backlog $story) $rest) ;
+  
+  -- Replace story in backlog
+  rule replaceStoryEmpty: (replaceStory pbEmpty $story) ~> (pbItem $story priMedium pbEmpty) ;
+  rule replaceStoryMatch: (replaceStory (pbItem (mkStory $id $t $d $p $a) $pri $rest) (mkStory $id $t2 $d2 $p2 $a2))
+    ~> (pbItem (mkStory $id $t2 $d2 $p2 $a2) $pri $rest) ;
+  rule replaceStoryNoMatch: (replaceStory (pbItem $other $pri $rest) $story)
+    ~> (pbItem $other $pri (replaceStory $rest $story)) ;
+  
+  -- Add acceptance criteria
+  rule addAcceptance: (addAcceptance (mkStory $id $t $d $p accEmpty) $newAcc)
+    ~> (mkStory $id $t $d $p $newAcc) ;
+  rule addAcceptanceExisting: (addAcceptance (mkStory $id $t $d $p $existing) $newAcc)
+    ~> (mkStory $id $t $d $p (concatAcceptance $existing $newAcc)) ;
+  
+  rule concatAcceptanceEmpty: (concatAcceptance accEmpty $new) ~> $new ;
+  rule concatAcceptanceCons: (concatAcceptance (accCriteria $c $rest) $new)
+    ~> (accCriteria $c (concatAcceptance $rest $new)) ;
+  
+  -- Format backlog for review
+  rule formatBacklogForReview: (formatBacklogForReview pbEmpty) ~> "" ;
+  rule formatBacklogForReviewCons: (formatBacklogForReview (pbItem $story $pri $rest))
+    ~> (concat (formatStoryLine $story $pri) (concat "\n" (formatBacklogForReview $rest))) ;
+  
+  rule formatStoryLine: (formatStoryLine (mkStory $id $title $desc $pts $acc) $pri)
+    ~> (concat "[" (concat (priorityToStr $pri) (concat "] " (concat $title (concat " (" (concat (pointsToStr $pts) ")")))))) ;
+  
+  rule priorityToStr: (priorityToStr priCritical) ~> "CRITICAL" ;
+  rule priorityToStrHigh: (priorityToStr priHigh) ~> "HIGH" ;
+  rule priorityToStrMed: (priorityToStr priMedium) ~> "MEDIUM" ;
+  rule priorityToStrLow: (priorityToStr priLow) ~> "LOW" ;
+  
+  rule pointsToStr: (pointsToStr sp1) ~> "1" ;
+  rule pointsToStr2: (pointsToStr sp2) ~> "2" ;
+  rule pointsToStr3: (pointsToStr sp3) ~> "3" ;
+  rule pointsToStr5: (pointsToStr sp5) ~> "5" ;
+  rule pointsToStr8: (pointsToStr sp8) ~> "8" ;
+  rule pointsToStr13: (pointsToStr sp13) ~> "13" ;
+  rule pointsToStrUn: (pointsToStr spUnestimated) ~> "?" ;
+  
+  -- Reorder backlog based on PO input
+  rule reorderBacklog: (reorderBacklog $backlog $newOrder)
+    ~> (applyOrder $backlog $newOrder) ;
+
+-----------------------------------------------------
+-- HELPER FUNCTIONS: Task Operations
+-----------------------------------------------------
+piece TaskHelpers
+  -- Get available tasks
+  rule getAvailableTasks: (getAvailableTasks (mkSprint $id $goal $backlog $status))
+    ~> (filterAvailable $backlog) ;
+  
+  rule filterAvailableEmpty: (filterAvailable sbEmpty) ~> tasksEmpty ;
+  rule filterAvailableCons: (filterAvailable (sbItem (mkSprintItem $story $tasks unassigned isNotStarted) $rest))
+    ~> (tasksCons (storyToTask $story) (filterAvailable $rest)) ;
+  rule filterAvailableSkip: (filterAvailable (sbItem $item $rest))
+    ~> (filterAvailable $rest) ;
+  
+  rule storyToTask: (storyToTask (mkStory $id $title $desc $pts $acc))
+    ~> (mkTask $title $desc tsTodo) ;
+  
+  -- Filter by specialty
+  rule filterBySpecialtyEmpty: (filterBySpecialty $spec tasksEmpty) ~> tasksEmpty ;
+  rule filterBySpecialtyCons: (filterBySpecialty $spec (tasksCons $task $rest))
+    ~> (if (matchesSpecialty $spec $task)
+           (tasksCons $task (filterBySpecialty $spec $rest))
+           (filterBySpecialty $spec $rest)) ;
+  
+  rule matchesSpecialty: (matchesSpecialty $spec $task)
+    ~> (let $taskType (inferTaskType $task)
+        (compatibleWith $spec $taskType)) ;
+  
+  rule compatibleWith: (compatibleWith specFrontend "ui") ~> true ;
+  rule compatibleWithBE: (compatibleWith specBackend "api") ~> true ;
+  rule compatibleWithQA: (compatibleWith specQA "test") ~> true ;
+  rule compatibleWithDevOps: (compatibleWith specDevOps "infra") ~> true ;
+  rule compatibleWithFull: (compatibleWith specFullstack $any) ~> true ;
+  rule compatibleWithDefault: (compatibleWith $spec $type) ~> false ;
+  
+  -- Select highest priority
+  rule selectHighestPriority: (selectHighestPriority tasksEmpty) ~> (none) ;
+  rule selectHighestPriorityCons: (selectHighestPriority (tasksCons $task $rest))
+    ~> (some $task) ;
+  
+  -- Assign task
+  rule assignTask: (assignTask (some $task) $dev)
+    ~> (updateTaskAssignment $task (getMemberName $dev)) ;
+  rule assignTaskNone: (assignTask (none) $dev) ~> (noTaskAvailable) ;
+  
+  -- Get current task for dev
+  rule getCurrentTask: (getCurrentTask $dev $sprint)
+    ~> (findAssignedTask (getSprintItems $sprint) (getMemberName $dev)) ;
+  
+  rule findAssignedTaskEmpty: (findAssignedTask sbEmpty $name) ~> (none) ;
+  rule findAssignedTaskMatch: (findAssignedTask (sbItem (mkSprintItem $story $tasks (assigned $name) isInProgress) $rest) $name)
+    ~> (some (getFirstTask $tasks)) ;
+  rule findAssignedTaskSkip: (findAssignedTask (sbItem $item $rest) $name)
+    ~> (findAssignedTask $rest $name) ;
+  
+  rule getFirstTask: (getFirstTask (tasksCons $task $rest)) ~> $task ;
+  rule getFirstTaskEmpty: (getFirstTask tasksEmpty) ~> (mkTask "No task" "" tsTodo) ;
+
+-----------------------------------------------------
+-- LLM INTEGRATION
+-----------------------------------------------------
+piece LLMIntegration
+  -- LLM request/response types
+  llmRequest ::= "mkLLMRequest" <string> <string> llmParams → mkLLMRequest ;
+  
+  llmParams ::= "llmParamsDefault" → llmParamsDefault
+              | "llmParamsCustom" <number> <number> → llmParamsCustom ;
+  
+  llmResponse ::= "mkLLMResponse" <string> → mkLLMResponse
+                | "llmError" <string> → llmError ;
+  
+  -- Generate code using LLM
+  rule llmGenerateCode: (llmGenerateCode $design $context)
+    ~> (let $prompt (buildCodeGenPrompt $design $context)
+        (let $response (callLLM "code-generation" $prompt llmParamsDefault)
+        (parseCodeResponse $response))) ;
+  
+  rule buildCodeGenPrompt: (buildCodeGenPrompt $design $context)
+    ~> (concat "Generate code for the following design:\n\n"
+        (concat $design
+        (concat "\n\nContext:\n" $context))) ;
+  
+  -- Generate documentation using LLM
+  rule llmGenerateDocs: (llmGenerateDocs $analysis $docType)
+    ~> (let $prompt (buildDocsPrompt $analysis $docType)
+        (let $response (callLLM "documentation" $prompt llmParamsDefault)
+        (parseDocsResponse $response))) ;
+  
+  rule buildDocsPrompt: (buildDocsPrompt $analysis $docType)
+    ~> (concat "Generate " (concat (docTypeToStr $docType)
+        (concat " documentation for:\n\n" $analysis))) ;
+  
+  rule docTypeToStr: (docTypeToStr dtAPI) ~> "API" ;
+  rule docTypeToStrGuide: (docTypeToStr dtGuide) ~> "guide" ;
+  rule docTypeToStrReadme: (docTypeToStr dtReadme) ~> "README" ;
+  
+  -- Answer questions using LLM
+  rule llmAnswer: (llmAnswer $question $context)
+    ~> (let $prompt (buildQAPrompt $question $context)
+        (let $response (callLLM "qa" $prompt llmParamsDefault)
+        (extractAnswer $response))) ;
+  
+  rule buildQAPrompt: (buildQAPrompt $question $context)
+    ~> (concat "Based on the following context:\n\n"
+        (concat $context
+        (concat "\n\nAnswer this question: " $question))) ;
+  
+  -- Core LLM call (external binding)
+  rule callLLM: (callLLM $model $prompt llmParamsDefault)
+    ~> (externalCall "llm" (jsonObj3 "model" $model "prompt" $prompt "temperature" 0.7)) ;
+  rule callLLMCustom: (callLLM $model $prompt (llmParamsCustom $temp $maxTokens))
+    ~> (externalCall "llm" (jsonObj4 "model" $model "prompt" $prompt "temperature" $temp "max_tokens" $maxTokens)) ;
+  
+  -- Parse LLM responses
+  rule parseCodeResponse: (parseCodeResponse (mkLLMResponse $content))
+    ~> (caFile (mkPath "generated.code") langTS (mkContent $content)) ;
+  rule parseCodeResponseErr: (parseCodeResponse (llmError $err))
+    ~> (caFile (mkPath "error.txt") langTS (mkContent $err)) ;
+  
+  rule parseDocsResponse: (parseDocsResponse (mkLLMResponse $content)) ~> $content ;
+  rule parseDocsResponseErr: (parseDocsResponse (llmError $err)) ~> $err ;
+  
+  rule extractAnswer: (extractAnswer (mkLLMResponse $content)) ~> $content ;
+  rule extractAnswerErr: (extractAnswer (llmError $err)) ~> $err ;
+
+-----------------------------------------------------
+-- AGENT PROMPTS
+-----------------------------------------------------
+piece AgentPrompts
+  -- Scrum Master prompt
+  rule mkSMPrompt: (mkSMPrompt)
+    ~> (mkPrompt
+         "You are an experienced Scrum Master AI agent."
+         (concat 
+           "Your responsibilities:\n"
+           (concat
+             "1. Facilitate all Scrum ceremonies (planning, standup, review, retro)\n"
+             (concat
+               "2. Remove blockers and impediments for the team\n"
+               (concat
+                 "3. Protect the team from interruptions\n"
+                 (concat
+                   "4. Coach the team on Scrum practices\n"
+                   (concat
+                     "5. Track sprint progress and metrics\n"
+                     "6. Escalate critical issues to the Product Owner")))))))
+         smBehaviors) ;
+  
+  smBehaviors ::= "smBehaviors" → smBehaviors ;
+  
+  -- Developer prompt generator
+  rule mkDevPrompt: (mkDevPrompt specFrontend)
+    ~> (mkPrompt
+         "You are a Frontend Developer AI agent specializing in UI/UX."
+         (concat
+           "Your skills:\n"
+           (concat
+             "- React, Vue, Angular, and modern frontend frameworks\n"
+             (concat
+               "- CSS, Tailwind, styled-components\n"
+               (concat
+                 "- Accessibility (a11y) best practices\n"
+                 (concat
+                   "- Responsive design and mobile-first development\n"
+                   "- Performance optimization and Core Web Vitals")))))
+         devBehaviors) ;
+  
+  rule mkDevPromptBE: (mkDevPrompt specBackend)
+    ~> (mkPrompt
+         "You are a Backend Developer AI agent specializing in APIs and services."
+         (concat
+           "Your skills:\n"
+           (concat
+             "- REST and GraphQL API design\n"
+             (concat
+               "- Database design and optimization\n"
+               (concat
+                 "- Microservices architecture\n"
+                 (concat
+                   "- Authentication and authorization\n"
+                   "- Performance and scalability")))))
+         devBehaviors) ;
+  
+  rule mkDevPromptQA: (mkDevPrompt specQA)
+    ~> (mkPrompt
+         "You are a QA Engineer AI agent specializing in testing."
+         (concat
+           "Your skills:\n"
+           (concat
+             "- Test planning and strategy\n"
+             (concat
+               "- Unit, integration, and E2E testing\n"
+               (concat
+                 "- Test automation frameworks\n"
+                 (concat
+                   "- Bug reporting and tracking\n"
+                   "- Performance and security testing")))))
+         qaBehaviors) ;
+  
+  rule mkDevPromptDevOps: (mkDevPrompt specDevOps)
+    ~> (mkPrompt
+         "You are a DevOps Engineer AI agent specializing in CI/CD and infrastructure."
+         (concat
+           "Your skills:\n"
+           (concat
+             "- CI/CD pipeline design and maintenance\n"
+             (concat
+               "- Cloud infrastructure (AWS, GCP, Azure)\n"
+               (concat
+                 "- Container orchestration (Docker, Kubernetes)\n"
+                 (concat
+                   "- Monitoring and observability\n"
+                   "- Infrastructure as Code (Terraform, Pulumi)")))))
+         devopsBehaviors) ;
+  
+  rule mkDevPromptArch: (mkDevPrompt specArchitect)
+    ~> (mkPrompt
+         "You are a Software Architect AI agent."
+         (concat
+           "Your skills:\n"
+           (concat
+             "- System design and architecture\n"
+             (concat
+               "- Technology selection and evaluation\n"
+               (concat
+                 "- Design patterns and best practices\n"
+                 (concat
+                   "- Technical debt management\n"
+                   "- Documentation and ADRs")))))
+         archBehaviors) ;
+  
+  rule mkDevPromptUX: (mkDevPrompt specUX)
+    ~> (mkPrompt
+         "You are a UX Designer AI agent."
+         (concat
+           "Your skills:\n"
+           (concat
+             "- User research and personas\n"
+             (concat
+               "- Wireframing and prototyping\n"
+               (concat
+                 "- Usability testing\n"
+                 (concat
+                   "- Design systems\n"
+                   "- Accessibility compliance")))))
+         uxBehaviors) ;
+  
+  rule mkDevPromptData: (mkDevPrompt specData)
+    ~> (mkPrompt
+         "You are a Data Engineer AI agent."
+         (concat
+           "Your skills:\n"
+           (concat
+             "- Data pipeline design\n"
+             (concat
+               "- ETL and data transformation\n"
+               (concat
+                 "- Data modeling and warehousing\n"
+                 (concat
+                   "- Analytics and reporting\n"
+                   "- Data quality and governance")))))
+         dataBehaviors) ;
+  
+  rule mkDevPromptDefault: (mkDevPrompt specFullstack)
+    ~> (mkPrompt
+         "You are a Fullstack Developer AI agent."
+         (concat
+           "Your skills:\n"
+           (concat
+             "- Frontend and backend development\n"
+             (concat
+               "- Database design\n"
+               (concat
+                 "- API development\n"
+                 (concat
+                   "- DevOps basics\n"
+                   "- Testing at all levels")))))
+         devBehaviors) ;
+  
+  devBehaviors ::= "devBehaviors" → devBehaviors ;
+  qaBehaviors ::= "qaBehaviors" → qaBehaviors ;
+  devopsBehaviors ::= "devopsBehaviors" → devopsBehaviors ;
+  archBehaviors ::= "archBehaviors" → archBehaviors ;
+  uxBehaviors ::= "uxBehaviors" → uxBehaviors ;
+  dataBehaviors ::= "dataBehaviors" → dataBehaviors ;
+  
+  -- Agent prompt type
+  agentPrompt ::= "mkPrompt" <string> <string> behaviors → mkPrompt ;
+  behaviors ::= "smBehaviors" → smBehaviors | "devBehaviors" → devBehaviors 
+              | "qaBehaviors" → qaBehaviors | "devopsBehaviors" → devopsBehaviors
+              | "archBehaviors" → archBehaviors | "uxBehaviors" → uxBehaviors
+              | "dataBehaviors" → dataBehaviors ;
+
+-----------------------------------------------------
+-- EXTERNAL API BINDINGS
+-----------------------------------------------------
+piece APIBindings
+  -- JSON object builders
+  rule jsonObj: (jsonObj $key $val)
+    ~> (jsonPair $key $val jsonEnd) ;
+  
+  rule jsonObj2: (jsonObj2 $k1 $v1 $k2 $v2)
+    ~> (jsonPair $k1 $v1 (jsonPair $k2 $v2 jsonEnd)) ;
+  
+  rule jsonObj3: (jsonObj3 $k1 $v1 $k2 $v2 $k3 $v3)
+    ~> (jsonPair $k1 $v1 (jsonPair $k2 $v2 (jsonPair $k3 $v3 jsonEnd))) ;
+  
+  rule jsonObj4: (jsonObj4 $k1 $v1 $k2 $v2 $k3 $v3 $k4 $v4)
+    ~> (jsonPair $k1 $v1 (jsonPair $k2 $v2 (jsonPair $k3 $v3 (jsonPair $k4 $v4 jsonEnd)))) ;
+  
+  jsonValue ::= "jsonPair" <string> jsonVal jsonValue → jsonPair
+              | "jsonEnd" → jsonEnd ;
+  
+  jsonVal ::= "jvString" <string> → jvString
+            | "jvNumber" <number> → jvNumber
+            | "jvBool" <bool> → jvBool
+            | "jvNull" → jvNull
+            | "jvArray" jsonArray → jvArray
+            | "jvObject" jsonValue → jvObject ;
+  
+  jsonArray ::= "jaEmpty" → jaEmpty
+              | "jaCons" jsonVal jsonArray → jaCons ;
+  
+  -- API call dispatcher
+  rule apiCall: (apiCall "github" $method $params)
+    ~> (githubAPI $method $params) ;
+  rule apiCallJira: (apiCall "jira" $method $params)
+    ~> (jiraAPI $method $params) ;
+  rule apiCallSlack: (apiCall "slack" $method $params)
+    ~> (slackAPI $method $params) ;
+  rule apiCallLLM: (apiCall "llm" $method $params)
+    ~> (llmAPI $method $params) ;
+  
+  -- GitHub API implementation
+  rule githubAPI: (githubAPI "createBranch" $params)
+    ~> (externalCall "github.createBranch" $params) ;
+  rule githubAPICreatePR: (githubAPI "createPR" $params)
+    ~> (externalCall "github.createPullRequest" $params) ;
+  rule githubAPIMergePR: (githubAPI "mergePR" $params)
+    ~> (externalCall "github.mergePullRequest" $params) ;
+  rule githubAPICreateIssue: (githubAPI "createIssue" $params)
+    ~> (externalCall "github.createIssue" $params) ;
+  rule githubAPIComment: (githubAPI "addComment" $params)
+    ~> (externalCall "github.addComment" $params) ;
+  rule githubAPIRequestReview: (githubAPI "requestReview" $params)
+    ~> (externalCall "github.requestReviewers" $params) ;
+  
+  -- Jira API implementation
+  rule jiraAPI: (jiraAPI "createIssue" $params)
+    ~> (externalCall "jira.createIssue" $params) ;
+  rule jiraAPIUpdate: (jiraAPI "updateIssue" $params)
+    ~> (externalCall "jira.updateIssue" $params) ;
+  rule jiraAPITransition: (jiraAPI "transition" $params)
+    ~> (externalCall "jira.transitionIssue" $params) ;
+  rule jiraAPIComment: (jiraAPI "addComment" $params)
+    ~> (externalCall "jira.addComment" $params) ;
+  
+  -- Slack API implementation
+  rule slackAPI: (slackAPI "postMessage" $params)
+    ~> (externalCall "slack.postMessage" $params) ;
+  rule slackAPIThread: (slackAPI "postThread" $params)
+    ~> (externalCall "slack.postMessage" (addThreadTs $params)) ;
+  rule slackAPIReact: (slackAPI "addReaction" $params)
+    ~> (externalCall "slack.addReaction" $params) ;
+  
+  -- Get DM channel for user
+  rule dmChannel: (dmChannel $user)
+    ~> (externalCall "slack.openDM" (jsonObj "user" $user)) ;
+  
+  -- External call (platform binding point)
+  rule externalCall: (externalCall $endpoint $params)
+    ~> (platformCall $endpoint (serializeJson $params)) ;
+  
+  -- Serialize JSON
+  rule serializeJson: (serializeJson jsonEnd) ~> "{}" ;
+  rule serializeJsonPair: (serializeJson (jsonPair $key $val $rest))
+    ~> (concat "{" (concat "\"" (concat $key (concat "\": " 
+        (concat (serializeVal $val) (serializeRest $rest)))))) ;
+  
+  rule serializeRest: (serializeRest jsonEnd) ~> "}" ;
+  rule serializeRestMore: (serializeRest (jsonPair $key $val $rest))
+    ~> (concat ", \"" (concat $key (concat "\": " 
+        (concat (serializeVal $val) (serializeRest $rest))))) ;
+  
+  rule serializeVal: (serializeVal (jvString $s)) ~> (concat "\"" (concat $s "\"")) ;
+  rule serializeValNum: (serializeVal (jvNumber $n)) ~> (numToStr $n) ;
+  rule serializeValBool: (serializeVal (jvBool true)) ~> "true" ;
+  rule serializeValBoolF: (serializeVal (jvBool false)) ~> "false" ;
+  rule serializeValNull: (serializeVal jvNull) ~> "null" ;
+
+-----------------------------------------------------
+-- STORAGE LAYER
+-----------------------------------------------------
+piece StorageLayer
+  -- Storage types
+  storageKey ::= "skProject" <string> → skProject
+               | "skSprint" <string> <number> → skSprint
+               | "skBacklog" <string> → skBacklog
+               | "skTeam" <string> → skTeam
+               | "skMemory" <string> → skMemory ;
+  
+  -- State container
+  projectState ::= "mkState" scrumTeam productBacklog sprint projectMemory → mkState ;
+  
+  -- Write to storage
+  rule writeToStorage: (writeToStorage $state)
+    ~> (let $projectId (getProjectId $state)
+        (let $serialized (serializeState $state)
+        (platformCall "storage.write" 
+          (jsonObj2 "key" (projectKeyStr $projectId) "value" $serialized)))) ;
+  
+  rule getProjectId: (getProjectId (mkState $team $backlog $sprint $memory))
+    ~> (extractProjectId $team) ;
+  
+  rule extractProjectId: (extractProjectId (mkScrumTeam (mkMember $name $role $agent) $members))
+    ~> (concat "project-" $name) ;
+  
+  rule projectKeyStr: (projectKeyStr $id) ~> (concat "scrum:" $id) ;
+  
+  -- Read from storage
+  rule readFromStorage: (readFromStorage $projectId)
+    ~> (platformCall "storage.read" (jsonObj "key" (projectKeyStr $projectId))) ;
+  
+  -- Serialize state
+  rule serializeState: (serializeState (mkState $team $backlog $sprint $memory))
+    ~> (jsonObj4 
+         "team" (serializeTeam $team)
+         "backlog" (serializeBacklog $backlog)
+         "sprint" (serializeSprint $sprint)
+         "memory" (serializeMemory $memory)) ;
+  
+  rule serializeTeam: (serializeTeam (mkScrumTeam $po $members))
+    ~> (jsonObj2 "po" (serializeMember $po) "members" (serializeMembers $members)) ;
+  
+  rule serializeMember: (serializeMember (mkMember $name $role $agent))
+    ~> (jsonObj3 "name" $name "role" (serializeRole $role) "agent" (serializeAgent $agent)) ;
+  
+  rule serializeMembersEmpty: (serializeMembers membersEmpty) ~> (jvArray jaEmpty) ;
+  rule serializeMembersCons: (serializeMembers (membersCons $m $rest))
+    ~> (jvArray (jaCons (jvObject (serializeMember $m)) (getMembersArray $rest))) ;
+  
+  rule getMembersArrayEmpty: (getMembersArray membersEmpty) ~> jaEmpty ;
+  rule getMembersArrayCons: (getMembersArray (membersCons $m $rest))
+    ~> (jaCons (jvObject (serializeMember $m)) (getMembersArray $rest)) ;
+  
+  rule serializeRole: (serializeRole rolePO) ~> "PO" ;
+  rule serializeRoleSM: (serializeRole roleSM) ~> "SM" ;
+  rule serializeRoleDev: (serializeRole (roleDev $spec)) ~> (concat "DEV:" (specToStr $spec)) ;
+  
+  rule specToStr: (specToStr specFrontend) ~> "frontend" ;
+  rule specToStrBE: (specToStr specBackend) ~> "backend" ;
+  rule specToStrFS: (specToStr specFullstack) ~> "fullstack" ;
+  rule specToStrQA: (specToStr specQA) ~> "qa" ;
+  rule specToStrDevOps: (specToStr specDevOps) ~> "devops" ;
+  rule specToStrArch: (specToStr specArchitect) ~> "architect" ;
+  rule specToStrUX: (specToStr specUX) ~> "ux" ;
+  rule specToStrData: (specToStr specData) ~> "data" ;
+  
+  -- Deserialize state
+  rule deserialize: (deserialize $data)
+    ~> (let $parsed (parseJson $data)
+        (reconstructState $parsed)) ;
+  
+  rule reconstructState: (reconstructState $json)
+    ~> (mkState 
+         (reconstructTeam (getField $json "team"))
+         (reconstructBacklog (getField $json "backlog"))
+         (reconstructSprint (getField $json "sprint"))
+         (reconstructMemory (getField $json "memory"))) ;
+
+-----------------------------------------------------
+-- EMBEDDING & RAG
+-----------------------------------------------------
+piece EmbeddingRAG
+  -- Embedding dimensions (1536 for OpenAI ada-002)
+  embeddingDim ::= "dim1536" → dim1536 ;
+  
+  -- Embed text
+  rule embed: (embed $text)
+    ~> (platformCall "embedding.create" (jsonObj "text" $text)) ;
+  
+  -- Retrieve top K similar items
+  rule retrieveTop: (retrieveTop (mkCodeIndex $embeddings $fileMap) $queryEmbed $k)
+    ~> (let $similarities (computeSimilarities $embeddings $queryEmbed)
+        (let $sorted (sortBySimilarity $similarities)
+        (takeTop $sorted $k $fileMap))) ;
+  
+  -- Compute cosine similarities
+  rule computeSimilaritiesEmpty: (computeSimilarities embedsEmpty $query) ~> simsEmpty ;
+  rule computeSimilaritiesCons: (computeSimilarities (embedsCons $id $embed $rest) $query)
+    ~> (simsCons $id (cosineSimilarity $embed $query) (computeSimilarities $rest $query)) ;
+  
+  similarities ::= "simsEmpty" → simsEmpty
+                 | "simsCons" <string> <number> similarities → simsCons ;
+  
+  -- Cosine similarity
+  rule cosineSimilarity: (cosineSimilarity (mkEmbedding $a) (mkEmbedding $b))
+    ~> (dotProduct $a $b) ;
+  
+  rule dotProductEmpty: (dotProduct floatsEmpty floatsEmpty) ~> 0 ;
+  rule dotProductCons: (dotProduct (floatsCons $a $restA) (floatsCons $b $restB))
+    ~> (add (mul $a $b) (dotProduct $restA $restB)) ;
+  
+  -- Sort by similarity (descending)
+  rule sortBySimilarity: (sortBySimilarity $sims)
+    ~> (quicksortSims $sims) ;
+  
+  rule quicksortSimsEmpty: (quicksortSims simsEmpty) ~> simsEmpty ;
+  rule quicksortSimsSingle: (quicksortSims (simsCons $id $sim simsEmpty))
+    ~> (simsCons $id $sim simsEmpty) ;
+  rule quicksortSimsCons: (quicksortSims (simsCons $id $sim $rest))
+    ~> (let $higher (filterHigher $rest $sim)
+        (let $lower (filterLower $rest $sim)
+        (concatSims (quicksortSims $higher) (simsCons $id $sim (quicksortSims $lower))))) ;
+  
+  rule filterHigherEmpty: (filterHigher simsEmpty $threshold) ~> simsEmpty ;
+  rule filterHigherYes: (filterHigher (simsCons $id $sim $rest) $threshold)
+    ~> (if (gt $sim $threshold)
+           (simsCons $id $sim (filterHigher $rest $threshold))
+           (filterHigher $rest $threshold)) ;
+  
+  rule filterLowerEmpty: (filterLower simsEmpty $threshold) ~> simsEmpty ;
+  rule filterLowerYes: (filterLower (simsCons $id $sim $rest) $threshold)
+    ~> (if (lte $sim $threshold)
+           (simsCons $id $sim (filterLower $rest $threshold))
+           (filterLower $rest $threshold)) ;
+  
+  rule concatSimsEmpty: (concatSims simsEmpty $rest) ~> $rest ;
+  rule concatSimsCons: (concatSims (simsCons $id $sim $more) $rest)
+    ~> (simsCons $id $sim (concatSims $more $rest)) ;
+  
+  -- Take top K
+  rule takeTopZero: (takeTop $sims 0 $fileMap) ~> "" ;
+  rule takeTopEmpty: (takeTop simsEmpty $k $fileMap) ~> "" ;
+  rule takeTopCons: (takeTop (simsCons $id $sim $rest) (succ $k) $fileMap)
+    ~> (concat (lookupFile $fileMap $id) (concat "\n---\n" (takeTop $rest $k $fileMap))) ;
+  
+  -- Lookup file content
+  rule lookupFileEmpty: (lookupFile fmEmpty $id) ~> "" ;
+  rule lookupFileMatch: (lookupFile (fmEntry $id $content $rest) $id) ~> $content ;
+  rule lookupFileSkip: (lookupFile (fmEntry $otherId $content $rest) $id)
+    ~> (lookupFile $rest $id) ;
+  
+  -- Build file map from file list
+  rule buildFileMapEmpty: (buildFileMap filesEmpty) ~> fmEmpty ;
+  rule buildFileMapCons: (buildFileMap (filesCons (caFile $path $lang $content) $rest))
+    ~> (fmEntry (pathToStr $path) (contentToStr $content) (buildFileMap $rest)) ;
+  
+  rule pathToStr: (pathToStr (mkPath $p)) ~> $p ;
+  rule contentToStr: (contentToStr (mkContent $c)) ~> $c ;
+  
+  -- Chunk files for embedding
+  rule chunkFilesEmpty: (chunkFiles filesEmpty) ~> chunksEmpty ;
+  rule chunkFilesCons: (chunkFiles (filesCons $file $rest))
+    ~> (concatChunks (chunkFile $file) (chunkFiles $rest)) ;
+  
+  chunks ::= "chunksEmpty" → chunksEmpty
+           | "chunksCons" <string> <string> chunks → chunksCons ;
+  
+  rule chunkFile: (chunkFile (caFile $path $lang $content))
+    ~> (splitIntoChunks (pathToStr $path) (contentToStr $content) 500) ;
+  
+  rule splitIntoChunks: (splitIntoChunks $path $content $chunkSize)
+    ~> (let $len (strLen $content)
+        (if (lte $len $chunkSize)
+            (chunksCons (concat $path ":0") $content chunksEmpty)
+            (let $chunk (substr $content 0 $chunkSize)
+            (let $rest (substr $content $chunkSize $len)
+            (chunksCons (concat $path ":0") $chunk 
+              (splitIntoChunksOffset $path $rest $chunkSize 1)))))) ;
+  
+  rule splitIntoChunksOffset: (splitIntoChunksOffset $path $content $chunkSize $offset)
+    ~> (let $len (strLen $content)
+        (if (lte $len $chunkSize)
+            (chunksCons (concat $path (concat ":" (numToStr $offset))) $content chunksEmpty)
+            (let $chunk (substr $content 0 $chunkSize)
+            (let $rest (substr $content $chunkSize $len)
+            (chunksCons (concat $path (concat ":" (numToStr $offset))) $chunk 
+              (splitIntoChunksOffset $path $rest $chunkSize (add $offset 1))))))) ;
+  
+  rule concatChunksEmpty: (concatChunks chunksEmpty $rest) ~> $rest ;
+  rule concatChunksCons: (concatChunks (chunksCons $id $content $more) $rest)
+    ~> (chunksCons $id $content (concatChunks $more $rest)) ;
+  
+  -- Format context from retrieved chunks
+  rule formatContext: (formatContext $text) ~> $text ;
+
+-----------------------------------------------------
+-- CONCURRENCY HELPERS
+-----------------------------------------------------
+piece ConcurrencyHelpers
+  -- Map in parallel (fork-join semantics)
+  rule mapParallel: (mapParallel membersEmpty $fn) ~> resultsEmpty ;
+  rule mapParallelCons: (mapParallel (membersCons $item $rest) $fn)
+    ~> (let $task1 (fork ($fn $item))
+        (let $restTasks (mapParallel $rest $fn)
+        (join $task1 $restTasks))) ;
+  
+  results ::= "resultsEmpty" → resultsEmpty
+            | "resultsCons" result results → resultsCons ;
+  
+  result ::= "resultOk" <string> → resultOk
+           | "resultErr" <string> → resultErr ;
+  
+  -- Fork a task
+  rule fork: (fork $expr)
+    ~> (platformCall "async.spawn" (thunk $expr)) ;
+  
+  -- Join tasks
+  rule join: (join $task $rest)
+    ~> (let $result (platformCall "async.await" $task)
+        (resultsCons $result $rest)) ;
+  
+  -- Map over list (sequential)
+  rule mapEmpty: (map membersEmpty $fn) ~> membersEmpty ;
+  rule mapCons: (map (membersCons $item $rest) $fn)
+    ~> (membersCons ($fn $item) (map $rest $fn)) ;
+  
+  -- Map over backlog
+  rule mapBacklogEmpty: (map pbEmpty $fn) ~> pbEmpty ;
+  rule mapBacklogCons: (map (pbItem $story $pri $rest) $fn)
+    ~> (pbItem ($fn $story) $pri (map $rest $fn)) ;
+  
+  -- Filter
+  rule filterEmpty: (filter membersEmpty $pred) ~> membersEmpty ;
+  rule filterCons: (filter (membersCons $item $rest) $pred)
+    ~> (if ($pred $item)
+           (membersCons $item (filter $rest $pred))
+           (filter $rest $pred)) ;
+  
+  -- Concat lists
+  rule concatEmpty: (concat membersEmpty $rest) ~> $rest ;
+  rule concatCons: (concat (membersCons $item $more) $rest)
+    ~> (membersCons $item (concat $more $rest)) ;
+  
+  -- ZipWith
+  rule zipWithEmpty: (zipWith $fn membersEmpty membersEmpty) ~> membersEmpty ;
+  rule zipWithCons: (zipWith $fn (membersCons $a $restA) (membersCons $b $restB))
+    ~> (membersCons ($fn $a $b) (zipWith $fn $restA $restB)) ;
+  
+  -- Average
+  rule average: (average $nums)
+    ~> (let $sum (sumList $nums)
+        (let $count (countList $nums)
+        (divide $sum $count))) ;
+  
+  rule sumListEmpty: (sumList membersEmpty) ~> 0 ;
+  rule sumListCons: (sumList (membersCons $n $rest))
+    ~> (add $n (sumList $rest)) ;
+  
+  rule countListEmpty: (countList membersEmpty) ~> 0 ;
+  rule countListCons: (countList (membersCons $item $rest))
+    ~> (add 1 (countList $rest)) ;
+  
+  -- isEmpty check
+  rule isEmpty: (isEmpty membersEmpty) ~> true ;
+  rule isEmptyNot: (isEmpty (membersCons $item $rest)) ~> false ;
+
+-----------------------------------------------------
+-- TIME-BOXING
+-----------------------------------------------------
+piece TimeBoxing
+  -- Timebox durations (in minutes)
+  timeboxDuration ::= "tbPlanning" → tbPlanning      -- 2 hours = 120 min
+                    | "tbStandup" → tbStandup        -- 15 min
+                    | "tbReview" → tbReview          -- 1 hour = 60 min
+                    | "tbRetro" → tbRetro            -- 1.5 hours = 90 min
+                    | "tbRefinement" → tbRefinement  -- 1 hour = 60 min
+                    | "tbCustom" <number> → tbCustom ;
+  
+  rule getDuration: (getDuration tbPlanning) ~> 120 ;
+  rule getDurationStandup: (getDuration tbStandup) ~> 15 ;
+  rule getDurationReview: (getDuration tbReview) ~> 60 ;
+  rule getDurationRetro: (getDuration tbRetro) ~> 90 ;
+  rule getDurationRefinement: (getDuration tbRefinement) ~> 60 ;
+  rule getDurationCustom: (getDuration (tbCustom $mins)) ~> $mins ;
+  
+  -- Prepare agenda based on event type
+  rule prepareAgenda: (prepareAgenda evSprintPlanning)
+    ~> (mkAgenda "Sprint Planning"
+         (agendaItemsCons (mkAgendaItem "Review sprint goal" 15)
+         (agendaItemsCons (mkAgendaItem "Present top backlog items" 30)
+         (agendaItemsCons (mkAgendaItem "Team estimation" 45)
+         (agendaItemsCons (mkAgendaItem "Commitment discussion" 20)
+         (agendaItemsCons (mkAgendaItem "Task breakdown" 10)
+         agendaItemsEmpty)))))) ;
+  
+  rule prepareAgendaStandup: (prepareAgenda evDailyStandup)
+    ~> (mkAgenda "Daily Standup"
+         (agendaItemsCons (mkAgendaItem "Yesterday's progress" 5)
+         (agendaItemsCons (mkAgendaItem "Today's plan" 5)
+         (agendaItemsCons (mkAgendaItem "Blockers" 5)
+         agendaItemsEmpty)))) ;
+  
+  rule prepareAgendaReview: (prepareAgenda evSprintReview)
+    ~> (mkAgenda "Sprint Review"
+         (agendaItemsCons (mkAgendaItem "Sprint summary" 10)
+         (agendaItemsCons (mkAgendaItem "Demo completed work" 35)
+         (agendaItemsCons (mkAgendaItem "PO feedback" 10)
+         (agendaItemsCons (mkAgendaItem "Next sprint preview" 5)
+         agendaItemsEmpty))))) ;
+  
+  rule prepareAgendaRetro: (prepareAgenda evRetro)
+    ~> (mkAgenda "Sprint Retrospective"
+         (agendaItemsCons (mkAgendaItem "What went well" 20)
+         (agendaItemsCons (mkAgendaItem "What could improve" 25)
+         (agendaItemsCons (mkAgendaItem "Action items voting" 25)
+         (agendaItemsCons (mkAgendaItem "Assign owners" 10)
+         (agendaItemsCons (mkAgendaItem "Close retro" 10)
+         agendaItemsEmpty)))))) ;
+  
+  rule prepareAgendaRefinement: (prepareAgenda evBacklogRefinement)
+    ~> (mkAgenda "Backlog Refinement"
+         (agendaItemsCons (mkAgendaItem "Review upcoming stories" 20)
+         (agendaItemsCons (mkAgendaItem "Clarify requirements" 20)
+         (agendaItemsCons (mkAgendaItem "Initial estimation" 15)
+         (agendaItemsCons (mkAgendaItem "Identify dependencies" 5)
+         agendaItemsEmpty))))) ;
+  
+  agenda ::= "mkAgenda" <string> agendaItems → mkAgenda ;
+  
+  agendaItems ::= "agendaItemsEmpty" → agendaItemsEmpty
+                | "agendaItemsCons" agendaItem agendaItems → agendaItemsCons ;
+  
+  agendaItem ::= "mkAgendaItem" <string> <number> → mkAgendaItem ;
+  
+  -- Run timeboxed event
+  rule runTimeboxed: (runTimeboxed $event $agenda)
+    ~> (let $timebox (eventToTimebox $event)
+        (let $duration (getDuration $timebox)
+        (let $started (startTimer $duration)
+        (let $results (runAgendaItems $agenda $started)
+        (stopTimer $started $results))))) ;
+  
+  rule eventToTimebox: (eventToTimebox evSprintPlanning) ~> tbPlanning ;
+  rule eventToTimeboxStandup: (eventToTimebox evDailyStandup) ~> tbStandup ;
+  rule eventToTimeboxReview: (eventToTimebox evSprintReview) ~> tbReview ;
+  rule eventToTimeboxRetro: (eventToTimebox evRetro) ~> tbRetro ;
+  rule eventToTimeboxRefinement: (eventToTimebox evBacklogRefinement) ~> tbRefinement ;
+  
+  -- Timer operations
+  rule startTimer: (startTimer $duration)
+    ~> (platformCall "timer.start" (jsonObj "duration" $duration)) ;
+  
+  rule stopTimer: (stopTimer $timer $results)
+    ~> (platformCall "timer.stop" (jsonObj "timer" $timer)) ;
+  
+  -- Run agenda items
+  rule runAgendaItemsEmpty: (runAgendaItems (mkAgenda $title agendaItemsEmpty) $timer)
+    ~> (agendaResultsEmpty) ;
+  rule runAgendaItemsCons: (runAgendaItems (mkAgenda $title (agendaItemsCons $item $rest)) $timer)
+    ~> (let $result (runAgendaItem $item $timer)
+        (agendaResultsCons $result (runAgendaItems (mkAgenda $title $rest) $timer))) ;
+  
+  rule runAgendaItem: (runAgendaItem (mkAgendaItem $name $duration) $timer)
+    ~> (let $remaining (checkTimeRemaining $timer)
+        (if (gt $remaining 0)
+            (executeAgendaItem $name $duration)
+            (skipAgendaItem $name "Out of time"))) ;
+  
+  agendaResults ::= "agendaResultsEmpty" → agendaResultsEmpty
+                  | "agendaResultsCons" agendaResult agendaResults → agendaResultsCons ;
+  
+  agendaResult ::= "arCompleted" <string> <string> → arCompleted
+                 | "arSkipped" <string> <string> → arSkipped ;
+  
+  -- Summarize event results
+  rule summarize: (summarize $results)
+    ~> (formatAgendaResults $results) ;
+  
+  rule formatAgendaResultsEmpty: (formatAgendaResults agendaResultsEmpty) ~> "" ;
+  rule formatAgendaResultsCons: (formatAgendaResults (agendaResultsCons (arCompleted $name $outcome) $rest))
+    ~> (concat "✓ " (concat $name (concat ": " (concat $outcome (concat "\n" (formatAgendaResults $rest)))))) ;
+  rule formatAgendaResultsSkipped: (formatAgendaResults (agendaResultsCons (arSkipped $name $reason) $rest))
+    ~> (concat "⏭ " (concat $name (concat " (skipped: " (concat $reason (concat ")\n" (formatAgendaResults $rest)))))) ;
+
+-----------------------------------------------------
+-- HUMAN AGENT & UI INTEGRATION
+-----------------------------------------------------
+piece HumanIntegration
+  -- Human agent type (represents PO in the system)
+  rule humanAgent: (humanAgent) ~> (mkAgent "human" (mkPrompt "Human Product Owner" "" humanBehaviors) humanCapabilities) ;
+  
+  humanBehaviors ::= "humanBehaviors" → humanBehaviors ;
+  
+  humanCapabilities ::= "humanCapabilities" → humanCapabilities ;
+  
+  -- Human check implementation (UI interaction point)
+  rule humanCheck: (humanCheck (cpApproval $prompt) $data)
+    ~> (platformCall "ui.confirm" 
+         (jsonObj3 "type" "approval" "prompt" $prompt "data" (formatForUI $data))) ;
+  
+  rule humanCheckReview: (humanCheck (cpReview $prompt) $data)
+    ~> (platformCall "ui.review"
+         (jsonObj3 "type" "review" "prompt" $prompt "data" (formatForUI $data))) ;
+  
+  rule humanCheckInput: (humanCheck (cpInput $prompt) $data)
+    ~> (platformCall "ui.input"
+         (jsonObj3 "type" "input" "prompt" $prompt "context" (formatForUI $data))) ;
+  
+  rule humanCheckEscalation: (humanCheck (cpEscalation $prompt $severity) $data)
+    ~> (platformCall "ui.escalation"
+         (jsonObj4 "type" "escalation" "prompt" $prompt "severity" (severityToStr $severity) "data" (formatForUI $data))) ;
+  
+  rule severityToStr: (severityToStr sevMinor) ~> "minor" ;
+  rule severityToStrMajor: (severityToStr sevMajor) ~> "major" ;
+  rule severityToStrCritical: (severityToStr sevCritical) ~> "critical" ;
+  
+  -- Format data for UI display
+  rule formatForUI: (formatForUI $data)
+    ~> (serializeForDisplay $data) ;
+  
+  rule serializeForDisplay: (serializeForDisplay pbEmpty) ~> "[]" ;
+  rule serializeForDisplayBacklog: (serializeForDisplay (pbItem $story $pri $rest))
+    ~> (concat "[" (concat (serializeStory $story) (serializeBacklogRest $rest))) ;
+  
+  rule serializeBacklogRestEmpty: (serializeBacklogRest pbEmpty) ~> "]" ;
+  rule serializeBacklogRestCons: (serializeBacklogRest (pbItem $story $pri $rest))
+    ~> (concat ", " (concat (serializeStory $story) (serializeBacklogRest $rest))) ;
+  
+  rule serializeStory: (serializeStory (mkStory (storyId $id) $title $desc $pts $acc))
+    ~> (concat "{\"id\":\"" (concat $id (concat "\",\"title\":\"" 
+        (concat $title (concat "\",\"points\":\"" (concat (pointsToStr $pts) "\"}")))))) ;
+
+-----------------------------------------------------
+-- GLOBAL STATE & COUNTERS
+-----------------------------------------------------
+piece GlobalState
+  -- Counter management
+  rule incrementCounter: (incrementCounter $name)
+    ~> (let $current (getCounter $name)
+        (let $next (add $current 1)
+        (setCounter $name $next)
+        $next)) ;
+  
+  rule getCounter: (getCounter $name)
+    ~> (platformCall "state.get" (jsonObj "key" (concat "counter:" $name))) ;
+  
+  rule setCounter: (setCounter $name $value)
+    ~> (platformCall "state.set" (jsonObj2 "key" (concat "counter:" $name) "value" $value)) ;
+  
+  -- UUID generation
+  rule generateUUID: (generateUUID)
+    ~> (platformCall "util.uuid" jsonEnd) ;
+  
+  -- Global backlog (for single-project scenarios)
+  rule getGlobalBacklog: (getGlobalBacklog)
+    ~> (platformCall "state.get" (jsonObj "key" "global:backlog")) ;
+  
+  rule updateGlobalBacklog: (updateGlobalBacklog $backlog)
+    ~> (platformCall "state.set" (jsonObj2 "key" "global:backlog" "value" (serializeBacklog $backlog))) ;
+  
+  rule serializeBacklog: (serializeBacklog pbEmpty) ~> "[]" ;
+  rule serializeBacklogCons: (serializeBacklog (pbItem $story $pri $rest))
+    ~> (concat "[" (concat (serializeStoryFull $story $pri) (serializeBacklogMore $rest))) ;
+  
+  rule serializeBacklogMore: (serializeBacklogMore pbEmpty) ~> "]" ;
+  rule serializeBacklogMoreCons: (serializeBacklogMore (pbItem $story $pri $rest))
+    ~> (concat "," (concat (serializeStoryFull $story $pri) (serializeBacklogMore $rest))) ;
+  
+  rule serializeStoryFull: (serializeStoryFull (mkStory (storyId $id) $title $desc $pts $acc) $pri)
+    ~> (concat "{\"id\":\"" (concat $id 
+        (concat "\",\"title\":\"" (concat $title
+        (concat "\",\"description\":\"" (concat $desc
+        (concat "\",\"points\":\"" (concat (pointsToStr $pts)
+        (concat "\",\"priority\":\"" (concat (priorityToStr $pri) "\"}"))))))))) ;
+
+-----------------------------------------------------
+-- ADDITIONAL HELPER FUNCTIONS
+-----------------------------------------------------
+piece AdditionalHelpers
+  -- Option type
+  option ::= "none" → none | "some" value → some ;
+  value ::= "val" <string> → val ;
+  
+  -- Boolean operations
+  rule eq: (eq $a $a) ~> true ;
+  rule eqFalse: (eq $a $b) ~> false ;
+  
+  rule gt: (gt $a $b) ~> (numGt $a $b) ;
+  rule lte: (lte $a $b) ~> (not (gt $a $b)) ;
+  
+  rule not: (not true) ~> false ;
+  rule notFalse: (not false) ~> true ;
+  
+  rule and: (and true true) ~> true ;
+  rule andFalse: (and $a $b) ~> false ;
+  
+  rule or: (or false false) ~> false ;
+  rule orTrue: (or $a $b) ~> true ;
+  
+  -- Arithmetic
+  rule add: (add $a $b) ~> (numAdd $a $b) ;
+  rule mul: (mul $a $b) ~> (numMul $a $b) ;
+  rule divide: (divide $a $b) ~> (numDiv $a $b) ;
+  
+  -- String operations
+  rule strLen: (strLen $s) ~> (platformCall "string.length" (jsonObj "s" $s)) ;
+  rule substr: (substr $s $start $end) ~> (platformCall "string.substr" (jsonObj3 "s" $s "start" $start "end" $end)) ;
+  rule numToStr: (numToStr $n) ~> (platformCall "string.fromNumber" (jsonObj "n" $n)) ;
+  
+  -- Result type
+  rule ok: (ok) ~> (resultOk "success") ;
+  
+  -- Analysis helpers
+  rule analyzeTask: (analyzeTask (mkTask $title $desc $status))
+    ~> (concat "Task: " (concat $title (concat "\nDescription: " $desc))) ;
+  
+  rule planApproach: (planApproach $understanding)
+    ~> (llmAnswer "How should I approach this task?" $understanding) ;
+  
+  rule implement: (implement $approach)
+    ~> (llmGenerateCode $approach "") ;
+  
+  rule reviewOwnWork: (reviewOwnWork $implementation)
+    ~> (let $analysis (analyzeCodeQuality $implementation)
+        $analysis) ;
+  
+  rule submitForReview: (submitForReview $task $review)
+    ~> (createPR $task $review "feature") ;
+  
+  -- Code analysis
+  rule analyzeCodeQuality: (analyzeCodeQuality $code)
+    ~> (llmAnswer "Analyze this code for quality issues" (codeToStr $code)) ;
+  
+  rule codeToStr: (codeToStr (caFile $path $lang (mkContent $content))) ~> $content ;
+  
+  -- Agent operations
+  rule createAgent: (createAgent $name $prompt)
+    ~> (mkAgent $name $prompt defaultCapabilities) ;
+  
+  defaultCapabilities ::= "defaultCapabilities" → defaultCapabilities ;
+  
+  rule agentEstimate: (agentEstimate $agent $story)
+    ~> (let $analysis (llmAnswer "Estimate this story in story points (1,2,3,5,8,13)" (storyToStr $story))
+        (parseStoryPoints $analysis)) ;
+  
+  rule storyToStr: (storyToStr (mkStory $id $title $desc $pts $acc))
+    ~> (concat "Title: " (concat $title (concat "\nDescription: " (concat $desc (concat "\nAcceptance: " (accToStr $acc)))))) ;
+  
+  rule accToStr: (accToStr accEmpty) ~> "" ;
+  rule accToStrCons: (accToStr (accCriteria $c $rest))
+    ~> (concat "- " (concat $c (concat "\n" (accToStr $rest)))) ;
+  
+  rule parseStoryPoints: (parseStoryPoints "1") ~> sp1 ;
+  rule parseStoryPoints2: (parseStoryPoints "2") ~> sp2 ;
+  rule parseStoryPoints3: (parseStoryPoints "3") ~> sp3 ;
+  rule parseStoryPoints5: (parseStoryPoints "5") ~> sp5 ;
+  rule parseStoryPoints8: (parseStoryPoints "8") ~> sp8 ;
+  rule parseStoryPoints13: (parseStoryPoints "13") ~> sp13 ;
+  rule parseStoryPointsDefault: (parseStoryPoints $other) ~> sp5 ;
+  
+  -- Metrics helpers
+  rule sumStoryPoints: (sumStoryPoints pbEmpty) ~> 0 ;
+  rule sumStoryPointsCons: (sumStoryPoints (pbItem (mkStory $id $t $d $pts $a) $pri $rest))
+    ~> (add (pointsToNum $pts) (sumStoryPoints $rest)) ;
+  
+  rule pointsToNum: (pointsToNum sp1) ~> 1 ;
+  rule pointsToNum2: (pointsToNum sp2) ~> 2 ;
+  rule pointsToNum3: (pointsToNum sp3) ~> 3 ;
+  rule pointsToNum5: (pointsToNum sp5) ~> 5 ;
+  rule pointsToNum8: (pointsToNum sp8) ~> 8 ;
+  rule pointsToNum13: (pointsToNum sp13) ~> 13 ;
+  rule pointsToNumUn: (pointsToNum spUnestimated) ~> 0 ;
+  
+  rule sumRemainingPoints: (sumRemainingPoints (mkSprint $id $goal $backlog $status))
+    ~> (sumSprintBacklogPoints $backlog) ;
+  
+  rule sumSprintBacklogPointsEmpty: (sumSprintBacklogPoints sbEmpty) ~> 0 ;
+  rule sumSprintBacklogPointsCons: (sumSprintBacklogPoints (sbItem (mkSprintItem (mkStory $id $t $d $pts $a) $tasks $assignee $status) $rest))
+    ~> (if (eq $status isDone)
+           (sumSprintBacklogPoints $rest)
+           (add (pointsToNum $pts) (sumSprintBacklogPoints $rest))) ;
+  
+  rule currentSprintDay: (currentSprintDay $sprint)
+    ~> (platformCall "date.sprintDay" jsonEnd) ;
+  
+  rule recordSprintMetrics: (recordSprintMetrics $sprint $increment)
+    ~> (let $velocity (calcVelocity $sprint)
+        (let $summary (sprintSummary $sprint $increment)
+        (platformCall "metrics.record" (jsonObj2 "velocity" $velocity "summary" $summary)))) ;
+
+-----------------------------------------------------
 -- DERIVES
 -----------------------------------------------------
 
@@ -916,12 +2247,209 @@ derive cata for testSuite ;
 -- TESTS
 -----------------------------------------------------
 
+-- Basic Tests
 test "empty-sprint": (getCompletedItems (mkSprint (sprintId 1) "Test" sbEmpty ssActive))
   ~~> sbEmpty ;
 
 test "debt-detection": (detectDebt (caFile (mkPath "test.ts") langTS (mkContent "TODO: fix")))
   ~~> (drItem (mkDebt (debtId "1") "TODO comment" dtCodeSmell dsLow debtNew (mkLocation (mkPath "test.ts") 1 1)) drEmpty) ;
 
+-----------------------------------------------------
+-- COMPREHENSIVE TESTS
+-----------------------------------------------------
+
+-- Role Tests
+test "get-devs-empty": (getDevs (mkScrumTeam (mkMember "PO" rolePO humanAgent) membersEmpty))
+  ~~> membersEmpty ;
+
+test "get-devs-filters": (getDevs (mkScrumTeam 
+    (mkMember "PO" rolePO humanAgent)
+    (membersCons (mkMember "SM" roleSM (mkAgent "sm" (mkSMPrompt) defaultCapabilities))
+    (membersCons (mkMember "FE" (roleDev specFrontend) (mkAgent "fe" (mkDevPrompt specFrontend) defaultCapabilities))
+    membersEmpty))))
+  ~~> (membersCons (mkMember "FE" (roleDev specFrontend) (mkAgent "fe" (mkDevPrompt specFrontend) defaultCapabilities)) membersEmpty) ;
+
+-- Backlog Tests
+test "top-priority-empty": (getTopPriority pbEmpty 5)
+  ~~> pbEmpty ;
+
+test "top-priority-take": (getTopPriority 
+    (pbItem (mkStory (storyId "S1") "Story 1" "Desc" sp5 accEmpty) priHigh
+    (pbItem (mkStory (storyId "S2") "Story 2" "Desc" sp3 accEmpty) priMedium
+    pbEmpty)) 1)
+  ~~> (pbItem (mkStory (storyId "S1") "Story 1" "Desc" sp5 accEmpty) priHigh pbEmpty) ;
+
+test "unrefined-stories": (getUnrefinedStories
+    (pbItem (mkStory (storyId "S1") "Story 1" "Desc" sp5 accEmpty) priHigh
+    (pbItem (mkStory (storyId "S2") "Story 2" "Desc" spUnestimated accEmpty) priMedium
+    pbEmpty)))
+  ~~> (pbItem (mkStory (storyId "S2") "Story 2" "Desc" spUnestimated accEmpty) priMedium pbEmpty) ;
+
+-- Sprint Backlog Tests
+test "commit-to-sprint": (commitToSprint (mkScrumTeam (mkMember "PO" rolePO humanAgent) membersEmpty)
+    (pbItem (mkStory (storyId "S1") "Story 1" "Desc" sp5 accEmpty) priHigh pbEmpty))
+  ~~> (sbItem (mkSprintItem (mkStory (storyId "S1") "Story 1" "Desc" sp5 accEmpty) tasksEmpty unassigned isNotStarted) sbEmpty) ;
+
+test "filter-completed-empty": (filterCompleted sbEmpty)
+  ~~> sbEmpty ;
+
+test "filter-completed-done": (filterCompleted 
+    (sbItem (mkSprintItem (mkStory (storyId "S1") "Done" "D" sp3 accEmpty) tasksEmpty (assigned "Dev") isDone)
+    (sbItem (mkSprintItem (mkStory (storyId "S2") "InProg" "D" sp5 accEmpty) tasksEmpty (assigned "Dev") isInProgress)
+    sbEmpty)))
+  ~~> (sbItem (mkSprintItem (mkStory (storyId "S1") "Done" "D" sp3 accEmpty) tasksEmpty (assigned "Dev") isDone) sbEmpty) ;
+
+-- Story Points Tests
+test "story-points-str-1": (pointsToStr sp1) ~~> "1" ;
+test "story-points-str-5": (pointsToStr sp5) ~~> "5" ;
+test "story-points-str-13": (pointsToStr sp13) ~~> "13" ;
+test "story-points-str-unest": (pointsToStr spUnestimated) ~~> "?" ;
+
+test "story-points-num-1": (pointsToNum sp1) ~~> 1 ;
+test "story-points-num-8": (pointsToNum sp8) ~~> 8 ;
+
+test "sum-story-points-empty": (sumStoryPoints pbEmpty) ~~> 0 ;
+test "sum-story-points": (sumStoryPoints
+    (pbItem (mkStory (storyId "S1") "T1" "D" sp5 accEmpty) priHigh
+    (pbItem (mkStory (storyId "S2") "T2" "D" sp3 accEmpty) priMedium
+    pbEmpty)))
+  ~~> 8 ;
+
+-- Priority Tests
+test "priority-str-critical": (priorityToStr priCritical) ~~> "CRITICAL" ;
+test "priority-str-high": (priorityToStr priHigh) ~~> "HIGH" ;
+test "priority-str-medium": (priorityToStr priMedium) ~~> "MEDIUM" ;
+test "priority-str-low": (priorityToStr priLow) ~~> "LOW" ;
+
+-- Task Tests
+test "available-tasks-empty": (getAvailableTasks (mkSprint (sprintId 1) "Goal" sbEmpty ssActive))
+  ~~> tasksEmpty ;
+
+test "specialty-compat-frontend": (compatibleWith specFrontend "ui") ~~> true ;
+test "specialty-compat-backend": (compatibleWith specBackend "api") ~~> true ;
+test "specialty-compat-fullstack": (compatibleWith specFullstack "anything") ~~> true ;
+test "specialty-compat-mismatch": (compatibleWith specQA "ui") ~~> false ;
+
+-- Acceptance Criteria Tests
+test "add-acceptance-empty": (addAcceptance 
+    (mkStory (storyId "S1") "Title" "Desc" sp5 accEmpty)
+    (accCriteria "Given X when Y then Z" accEmpty))
+  ~~> (mkStory (storyId "S1") "Title" "Desc" sp5 (accCriteria "Given X when Y then Z" accEmpty)) ;
+
+test "concat-acceptance": (concatAcceptance 
+    (accCriteria "First" accEmpty)
+    (accCriteria "Second" accEmpty))
+  ~~> (accCriteria "First" (accCriteria "Second" accEmpty)) ;
+
+-- Timebox Tests
+test "timebox-planning": (getDuration tbPlanning) ~~> 120 ;
+test "timebox-standup": (getDuration tbStandup) ~~> 15 ;
+test "timebox-review": (getDuration tbReview) ~~> 60 ;
+test "timebox-retro": (getDuration tbRetro) ~~> 90 ;
+test "timebox-custom": (getDuration (tbCustom 45)) ~~> 45 ;
+
+-- Blocker Tests
+test "concat-blockers-empty": (concatBlockers noBlockers blockersEmpty) ~~> blockersEmpty ;
+test "concat-blockers": (concatBlockers 
+    (hasBlockers "Blocker 1" noBlockers)
+    blockersEmpty)
+  ~~> (hasBlockers "Blocker 1" blockersEmpty) ;
+
+-- Retro Feedback Tests
+test "filter-good-empty": (filterGood rfEmpty) ~~> rfEmpty ;
+test "filter-good": (filterGood 
+    (rfCons (retroGood "Team collaboration") 
+    (rfCons (retroBad "Too many meetings")
+    rfEmpty)))
+  ~~> (rfCons (retroGood "Team collaboration") rfEmpty) ;
+
+test "filter-bad": (filterBad 
+    (rfCons (retroGood "Team collaboration") 
+    (rfCons (retroBad "Too many meetings")
+    rfEmpty)))
+  ~~> (rfCons (retroBad "Too many meetings") rfEmpty) ;
+
+-- Boolean Tests
+test "eq-true": (eq "a" "a") ~~> true ;
+test "eq-false": (eq "a" "b") ~~> false ;
+test "not-true": (not true) ~~> false ;
+test "not-false": (not false) ~~> true ;
+test "and-tt": (and true true) ~~> true ;
+test "and-tf": (and true false) ~~> false ;
+test "or-ff": (or false false) ~~> false ;
+test "or-tf": (or true false) ~~> true ;
+
+-- List Tests
+test "isEmpty-true": (isEmpty membersEmpty) ~~> true ;
+test "isEmpty-false": (isEmpty (membersCons (mkMember "M" rolePO humanAgent) membersEmpty)) ~~> false ;
+
+-- Code Artifact Tests
+test "path-to-str": (pathToStr (mkPath "/src/main.ts")) ~~> "/src/main.ts" ;
+test "content-to-str": (contentToStr (mkContent "console.log('hello')")) ~~> "console.log('hello')" ;
+
+-- JSON Tests
+test "json-obj": (jsonObj "key" "value")
+  ~~> (jsonPair "key" "value" jsonEnd) ;
+
+test "json-obj2": (jsonObj2 "k1" "v1" "k2" "v2")
+  ~~> (jsonPair "k1" "v1" (jsonPair "k2" "v2" jsonEnd)) ;
+
+-- Spec to String Tests
+test "spec-frontend": (specToStr specFrontend) ~~> "frontend" ;
+test "spec-backend": (specToStr specBackend) ~~> "backend" ;
+test "spec-qa": (specToStr specQA) ~~> "qa" ;
+test "spec-devops": (specToStr specDevOps) ~~> "devops" ;
+
+-- Role Serialization Tests
+test "serialize-role-po": (serializeRole rolePO) ~~> "PO" ;
+test "serialize-role-sm": (serializeRole roleSM) ~~> "SM" ;
+test "serialize-role-dev": (serializeRole (roleDev specFrontend)) ~~> "DEV:frontend" ;
+
+-- Severity Tests
+test "severity-minor": (severityToStr sevMinor) ~~> "minor" ;
+test "severity-major": (severityToStr sevMajor) ~~> "major" ;
+test "severity-critical": (severityToStr sevCritical) ~~> "critical" ;
+
+-- Doc Type Tests
+test "doctype-api": (docTypeToStr dtAPI) ~~> "API" ;
+test "doctype-guide": (docTypeToStr dtGuide) ~~> "guide" ;
+test "doctype-readme": (docTypeToStr dtReadme) ~~> "README" ;
+
+-- Similarity Tests
+test "concat-sims-empty": (concatSims simsEmpty (simsCons "id1" 0.9 simsEmpty))
+  ~~> (simsCons "id1" 0.9 simsEmpty) ;
+
+-- Agenda Results Tests
+test "format-completed": (formatAgendaResults (agendaResultsCons (arCompleted "Task" "Done") agendaResultsEmpty))
+  ~~> "✓ Task: Done\n" ;
+
+test "format-skipped": (formatAgendaResults (agendaResultsCons (arSkipped "Task" "No time") agendaResultsEmpty))
+  ~~> "⏭ Task (skipped: No time)\n" ;
+
+-- Integration Tests
+test "init-sprint-flow": 
+  (let $team (mkScrumTeam 
+                (mkMember "Patrick" rolePO humanAgent)
+                (membersCons (mkMember "SM" roleSM (createAgent "SM" (mkSMPrompt)))
+                membersEmpty))
+   (let $backlog (pbItem (mkStory (storyId "S1") "Login" "User login" spUnestimated accEmpty) priHigh pbEmpty)
+   (let $topItems (getTopPriority $backlog 10)
+   (commitToSprint $team $topItems))))
+  ~~> (sbItem (mkSprintItem (mkStory (storyId "S1") "Login" "User login" spUnestimated accEmpty) tasksEmpty unassigned isNotStarted) sbEmpty) ;
+
+test "member-name": (getMemberName (mkMember "Alice" (roleDev specFrontend) (createAgent "FE" (mkDevPrompt specFrontend))))
+  ~~> "Alice" ;
+
+test "member-agent": (getMemberAgent (mkMember "Bob" roleSM (mkAgent "SM" (mkSMPrompt) defaultCapabilities)))
+  ~~> (mkAgent "SM" (mkSMPrompt) defaultCapabilities) ;
+
+-- Story to task
+test "story-to-task": (storyToTask (mkStory (storyId "S1") "Implement Login" "Full login flow" sp5 accEmpty))
+  ~~> (mkTask "Implement Login" "Full login flow" tsTodo) ;
+
+-- Project key
+test "project-key": (projectKeyStr "my-project")
+  ~~> "scrum:my-project" ;
 
 -----------------------------------------------------
 -- Usage Example:

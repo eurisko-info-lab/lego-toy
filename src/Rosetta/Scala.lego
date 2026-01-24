@@ -1,0 +1,237 @@
+-----------------------------------------------------
+-- Scala.lego: Scala 3 AST Definition for Rosetta
+--
+-- This defines the Scala 3 abstract syntax tree as a Lego specification.
+-- It serves as the TARGET representation for rosetta2scala transformation.
+--
+-- Scala 3 features:
+-- - enum for ADTs (replaces sealed trait + case class)
+-- - given/using for implicits
+-- - extension methods
+-- - match types
+-- - union/intersection types
+-----------------------------------------------------
+lang Scala :=
+
+-----------------------------------------------------
+-- Core Terms
+-- Basic Scala expressions
+-----------------------------------------------------
+piece CoreTerms
+  term ::= 
+    -- Literals
+    <ident>                             → var
+    | <number>                          → intLit
+    | <string>                          → strLit
+    | "true"                            → trueLit
+    | "false"                           → falseLit
+    | "()"                              → unitLit
+    -- Application
+    | term "(" termList ")"             → app
+    | term "[" typeList "]"             → typeApp
+    -- Lambda
+    | "(" paramList ")" "=>" term       → lam
+    | <ident> "=>" term                 → lamSimple
+    | "{" paramList "=>" term "}"       → lamBlock
+    -- If-else
+    | "if" term "then" term "else" term → ifExpr
+    | "if" "(" term ")" term "else" term → ifExprParen
+    -- Match
+    | term "match" "{" caseClause* "}"  → matchExpr
+    -- Tuples
+    | "(" termList ")"                  → tuple
+    | term "._1"                        → fst
+    | term "._2"                        → snd
+    | term "." "_" <number>             → projN
+    -- Let (val)
+    | "val" <ident> typeAnn? "=" term term? → valExpr
+    -- Blocks
+    | "{" stmt* term "}"                → block
+    -- Option
+    | "None"                            → noneLit
+    | "Some" "(" term ")"               → someLit
+    -- List
+    | "List" "(" termList ")"           → listLit
+    | "Nil"                             → nilLit
+    | term "::" term                    → cons
+    | term "++" term                    → concat
+    -- Operators (arithmetic)
+    | term "+" term                     → add
+    | term "-" term                     → sub
+    | term "*" term                     → mul
+    | term "/" term                     → div
+    | term "%" term                     → mod
+    | "-" term                          → neg
+    -- Operators (comparison)
+    | term "==" term                    → eq
+    | term "!=" term                    → neq
+    | term "<" term                     → lt
+    | term ">" term                     → gt
+    | term "<=" term                    → le
+    | term ">=" term                    → ge
+    -- Operators (logical)
+    | term "&&" term                    → and
+    | term "||" term                    → or
+    | "!" term                          → not
+    -- For comprehension
+    | "for" "{" forGen* "}" "yield" term → forYield
+    | "for" "{" forGen* "}" term        → forDo
+    -- New/constructor
+    | "new" <ident> "(" termList ")"    → newExpr
+    | <ident> "(" termList ")"          → ctorApp
+    -- Throw/try
+    | "throw" term                      → throwExpr
+    | "try" term "catch" "{" caseClause* "}" finallyClause? → tryExpr
+    -- Parentheses
+    | "(" term ")"                      → paren
+    -- Underscore (wildcard/placeholder)
+    | "_"                               → hole
+    -- Method chain
+    | term "." <ident>                  → select
+    | term "." <ident> "(" termList ")" → methodCall
+    ;
+
+  termList ::= term ("," term)*         → termList ;
+  stmt ::= term ";"?                    → stmtExpr
+         | "val" <ident> typeAnn? "=" term → stmtVal
+         | "var" <ident> typeAnn? "=" term → stmtVar
+         ;
+
+-----------------------------------------------------
+-- Types
+-- Scala type expressions
+-----------------------------------------------------
+piece Types
+  type ::= <ident>                      → tyVar
+         | <ident> "[" typeList "]"     → tyApp
+         | type "=>" type               → tyFun
+         | "(" typeList ")"             → tyTuple
+         | type "|" type                → tyUnion
+         | type "&" type                → tyIntersect
+         | "Any"                        → tyAny
+         | "Nothing"                    → tyNothing
+         | "Unit"                       → tyUnit
+         ;
+  typeList ::= type ("," type)*         → typeList ;
+  typeAnn ::= ":" type                  → typeAnn ;
+
+-----------------------------------------------------
+-- Parameters
+-- Function/method parameters
+-----------------------------------------------------
+piece Parameters
+  param ::= <ident> ":" type            → param
+          | <ident>                     → paramUntyped
+          ;
+  paramList ::= param ("," param)*      → paramList ;
+  typeParam ::= <ident>                 → typeParam
+              | <ident> "<:" type       → typeParamUpper
+              | <ident> ">:" type       → typeParamLower
+              ;
+  typeParamList ::= "[" typeParam ("," typeParam)* "]" → typeParamList ;
+
+-----------------------------------------------------
+-- Patterns
+-- Match patterns
+-----------------------------------------------------
+piece Patterns
+  pattern ::= <ident>                   → patVar
+            | "_"                       → patWild
+            | <number>                  → patLit
+            | <string>                  → patStr
+            | <ident> "(" patternList ")" → patCtor
+            | "(" patternList ")"       → patTuple
+            | pattern "::" pattern      → patCons
+            | pattern "@" pattern       → patAs
+            | pattern ":" type          → patTyped
+            ;
+  patternList ::= pattern ("," pattern)* → patternList ;
+  caseClause ::= "case" pattern guard? "=>" term → caseClause ;
+  guard ::= "if" term                   → guard ;
+
+-----------------------------------------------------
+-- For Comprehension
+-----------------------------------------------------
+piece ForComprehension
+  forGen ::= <ident> "<-" term          → forBind
+           | "if" term                  → forFilter
+           | <ident> "=" term           → forVal
+           ;
+
+-----------------------------------------------------
+-- Declarations
+-- Top-level declarations
+-----------------------------------------------------
+piece Declarations
+  decl ::= 
+    -- Enum (Scala 3 ADT)
+    "enum" <ident> typeParamList? extendsClause? "{" enumCase* "}"
+      → enumDecl
+    -- Sealed trait + case class (Scala 2 style)
+    | "sealed" "trait" <ident> typeParamList?
+      → sealedTraitDecl
+    | "case" "class" <ident> typeParamList? "(" paramList ")" extendsClause?
+      → caseClassDecl
+    | "case" "object" <ident> extendsClause?
+      → caseObjectDecl
+    -- Regular class/object
+    | "class" <ident> typeParamList? "(" paramList ")" extendsClause? "{" member* "}"
+      → classDecl
+    | "object" <ident> extendsClause? "{" member* "}"
+      → objectDecl
+    | "trait" <ident> typeParamList? extendsClause? "{" member* "}"
+      → traitDecl
+    -- Definition
+    | "def" <ident> typeParamList? "(" paramList ")" ":" type "=" term
+      → defDecl
+    | "val" <ident> ":" type "=" term
+      → valDecl
+    | "var" <ident> ":" type "=" term
+      → varDecl
+    | "lazy" "val" <ident> ":" type "=" term
+      → lazyValDecl
+    -- Type alias
+    | "type" <ident> typeParamList? "=" type
+      → typeAliasDecl
+    -- Given/using (Scala 3 implicits)
+    | "given" <ident>? ":" type "=" term
+      → givenDecl
+    | "given" <ident>? ":" type "with" "{" member* "}"
+      → givenWithDecl
+    -- Extension
+    | "extension" "(" <ident> ":" type ")" defDecl*
+      → extensionDecl
+    -- Package/import
+    | "package" modulePath
+      → packageDecl
+    | "import" modulePath importSel?
+      → importDecl
+    ;
+
+  enumCase ::= "case" <ident> "(" paramList ")"  → enumCaseParams
+             | "case" <ident>                    → enumCaseSimple
+             ;
+  member ::= defDecl | valDecl | typeAliasDecl ;
+  extendsClause ::= "extends" type ("with" type)* → extendsClause ;
+  modulePath ::= <ident> ("." <ident>)*          → modulePath ;
+  importSel ::= "." "{" <ident> ("," <ident>)* "}" → importSel
+              | "." "_"                          → importAll
+              | "." <ident>                      → importOne
+              ;
+  finallyClause ::= "finally" term              → finallyClause ;
+
+-----------------------------------------------------
+-- Module
+-- Top-level structure
+-----------------------------------------------------
+piece Module
+  module ::= decl*                      → module ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+test "lam": (lam (paramList (param x Int)) (add (var x) (intLit 1))) ;
+test "enum": (enumDecl Term (enumCaseSimple Var) (enumCaseParams App (paramList (param f Term) (param a Term)))) ;
+test "def": (defDecl id (typeParamList A) (paramList (param x (tyVar A))) (tyVar A) (var x)) ;
+test "match": (matchExpr (var x) (caseClause (patCtor Some (patVar v)) (var v)) (caseClause (patVar None) (intLit 0))) ;
+

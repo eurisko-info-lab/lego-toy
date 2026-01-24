@@ -1,0 +1,303 @@
+-----------------------------------------------------
+-- Rust.lego: Rust AST Definition for Rosetta
+--
+-- This defines the Rust abstract syntax tree as a Lego specification.
+-- It serves as the TARGET representation for rosetta2rust transformation.
+--
+-- Rust features:
+-- - enum for ADTs
+-- - impl blocks for methods
+-- - trait for interfaces
+-- - match expressions
+-- - ownership and borrowing
+-- - Result/Option for error handling
+-----------------------------------------------------
+lang Rust :=
+
+-----------------------------------------------------
+-- Core Expressions
+-- Basic Rust expressions
+-----------------------------------------------------
+piece CoreExprs
+  expr ::= 
+    -- Variables and literals
+    <ident>                             → var
+    | <number>                          → intLit
+    | <string>                          → strLit
+    | "true"                            → trueLit
+    | "false"                           → falseLit
+    | "()"                              → unitLit
+    -- Application/call
+    | expr "(" exprList ")"             → call
+    | expr "::" "<" typeList ">" "(" exprList ")" → turbofish
+    -- Method call
+    | expr "." <ident> "(" exprList ")" → methodCall
+    | expr "." <ident>                  → fieldAccess
+    | expr "." <number>                 → tupleAccess
+    -- Closure
+    | "|" paramList "|" expr            → closure
+    | "|" paramList "|" "{" stmtList "}" → closureBlock
+    | "move" "|" paramList "|" expr     → moveClosure
+    -- If-else
+    | "if" expr block elseClause?       → ifExpr
+    | "if" "let" pattern "=" expr block elseClause? → ifLetExpr
+    -- Match
+    | "match" expr "{" matchArm* "}"    → matchExpr
+    -- Loops
+    | "loop" block                      → loopExpr
+    | "while" expr block                → whileExpr
+    | "while" "let" pattern "=" expr block → whileLetExpr
+    | "for" pattern "in" expr block     → forExpr
+    -- Block
+    | block                             → blockExpr
+    -- Let
+    | "let" pattern typeAnn? "=" expr   → letExpr
+    | "let" "mut" pattern typeAnn? "=" expr → letMutExpr
+    -- Tuples
+    | "(" exprList ")"                  → tuple
+    -- Arrays/Vectors
+    | "[" exprList "]"                  → arrayLit
+    | "vec!" "[" exprList "]"           → vecLit
+    -- Option
+    | "None"                            → noneLit
+    | "Some" "(" expr ")"               → someLit
+    -- Result
+    | "Ok" "(" expr ")"                 → okLit
+    | "Err" "(" expr ")"                → errLit
+    -- Operators (arithmetic)
+    | expr "+" expr                     → add
+    | expr "-" expr                     → sub
+    | expr "*" expr                     → mul
+    | expr "/" expr                     → div
+    | expr "%" expr                     → mod
+    | "-" expr                          → neg
+    -- Operators (comparison)
+    | expr "==" expr                    → eq
+    | expr "!=" expr                    → neq
+    | expr "<" expr                     → lt
+    | expr ">" expr                     → gt
+    | expr "<=" expr                    → le
+    | expr ">=" expr                    → ge
+    -- Operators (logical)
+    | expr "&&" expr                    → and
+    | expr "||" expr                    → or
+    | "!" expr                          → not
+    -- References
+    | "&" expr                          → ref
+    | "&" "mut" expr                    → refMut
+    | "*" expr                          → deref
+    -- Box
+    | "Box" "::" "new" "(" expr ")"     → boxNew
+    -- Return/break/continue
+    | "return" expr?                    → returnExpr
+    | "break" expr?                     → breakExpr
+    | "continue"                        → continueExpr
+    -- Panic/unreachable
+    | "panic!" "(" <string> ")"         → panicExpr
+    | "unreachable!" "(" ")"            → unreachableExpr
+    | "todo!" "(" ")"                   → todoExpr
+    -- Question mark (error propagation)
+    | expr "?"                          → tryExpr
+    -- Parentheses
+    | "(" expr ")"                      → paren
+    -- Range
+    | expr ".." expr                    → range
+    | expr "..=" expr                   → rangeInclusive
+    -- Struct literal
+    | <ident> "{" fieldInit* "}"        → structLit
+    | <ident> "{" fieldInit* ".." expr "}" → structUpdate
+    -- Macro invocation
+    | <ident> "!" "(" exprList ")"      → macroCall
+    | <ident> "!" "[" exprList "]"      → macroCallBracket
+    ;
+
+  exprList ::= expr ("," expr)*         → exprList ;
+  block ::= "{" stmtList "}"            → block ;
+  stmtList ::= stmt* expr?              → stmtList ;
+  stmt ::= expr ";"                     → stmtExpr
+         | "let" pattern typeAnn? "=" expr ";" → stmtLet
+         | "let" "mut" pattern typeAnn? "=" expr ";" → stmtLetMut
+         | item                         → stmtItem
+         ;
+  elseClause ::= "else" block           → elseBlock
+               | "else" ifExpr          → elseIf
+               ;
+
+-----------------------------------------------------
+-- Types
+-- Rust type expressions
+-----------------------------------------------------
+piece Types
+  type ::= <ident>                      → tyPath
+         | <ident> "<" typeList ">"     → tyGeneric
+         | "&" lifetime? "mut"? type    → tyRef
+         | "*" "const" type             → tyRawConst
+         | "*" "mut" type               → tyRawMut
+         | "(" typeList ")"             → tyTuple
+         | "[" type "]"                 → tySlice
+         | "[" type ";" <number> "]"    → tyArray
+         | "fn" "(" typeList ")" "->" type → tyFn
+         | "impl" <ident>               → tyImpl
+         | "dyn" <ident>                → tyDyn
+         | "Box" "<" type ">"           → tyBox
+         | "Option" "<" type ">"        → tyOption
+         | "Result" "<" type "," type ">" → tyResult
+         | "Vec" "<" type ">"           → tyVec
+         | "()"                         → tyUnit
+         | "!"                          → tyNever
+         | "_"                          → tyInfer
+         ;
+  typeList ::= type ("," type)*         → typeList ;
+  typeAnn ::= ":" type                  → typeAnn ;
+  lifetime ::= "'" <ident>              → lifetime ;
+
+-----------------------------------------------------
+-- Patterns
+-- Match patterns
+-----------------------------------------------------
+piece Patterns
+  pattern ::= <ident>                   → patIdent
+            | "_"                       → patWild
+            | <number>                  → patLit
+            | <string>                  → patStr
+            | "true"                    → patTrue
+            | "false"                   → patFalse
+            | "()"                      → patUnit
+            | <ident> "{" fieldPat* "}" → patStruct
+            | <ident> "(" patternList ")" → patTupleStruct
+            | "(" patternList ")"       → patTuple
+            | "[" patternList "]"       → patSlice
+            | pattern "|" pattern       → patOr
+            | pattern "@" pattern       → patAt
+            | "ref" pattern             → patRef
+            | "ref" "mut" pattern       → patRefMut
+            | "mut" pattern             → patMut
+            | "&" pattern               → patDeref
+            | pattern ".." pattern      → patRange
+            | ".."                      → patRest
+            ;
+  patternList ::= pattern ("," pattern)* → patternList ;
+  fieldPat ::= <ident> ":" pattern      → fieldPat
+             | <ident>                  → fieldPatShort
+             ;
+  matchArm ::= pattern guard? "=>" expr "," → matchArm ;
+  guard ::= "if" expr                   → guard ;
+
+-----------------------------------------------------
+-- Parameters
+-----------------------------------------------------
+piece Parameters
+  param ::= <ident> ":" type            → param
+          | "mut" <ident> ":" type      → paramMut
+          | "&" "self"                  → selfRef
+          | "&" "mut" "self"            → selfRefMut
+          | "self"                      → selfOwned
+          ;
+  paramList ::= param ("," param)*      → paramList ;
+  typeParam ::= <ident>                 → typeParam
+              | <ident> ":" typeBound   → typeParamBound
+              ;
+  typeParamList ::= "<" typeParam ("," typeParam)* ">" → typeParamList ;
+  typeBound ::= <ident> ("+" <ident>)*  → typeBound ;
+  whereClause ::= "where" wherePred ("," wherePred)* → whereClause ;
+  wherePred ::= type ":" typeBound      → wherePred ;
+
+-----------------------------------------------------
+-- Field Initializers
+-----------------------------------------------------
+piece Fields
+  fieldInit ::= <ident> ":" expr        → fieldInit
+              | <ident>                 → fieldInitShort
+              ;
+
+-----------------------------------------------------
+-- Items (Declarations)
+-----------------------------------------------------
+piece Items
+  item ::= 
+    -- Enum (ADT)
+    visibility? "enum" <ident> typeParamList? whereClause? "{" enumVariant* "}"
+      → enumItem
+    -- Struct
+    | visibility? "struct" <ident> typeParamList? whereClause? "{" structField* "}"
+      → structItem
+    | visibility? "struct" <ident> typeParamList? "(" tupleField* ")" ";"
+      → tupleStructItem
+    | visibility? "struct" <ident> ";"
+      → unitStructItem
+    -- Trait
+    | visibility? "trait" <ident> typeParamList? superTraits? whereClause? "{" traitItem* "}"
+      → traitItem
+    -- Impl
+    | "impl" typeParamList? type whereClause? "{" implItem* "}"
+      → implBlock
+    | "impl" typeParamList? <ident> "for" type whereClause? "{" implItem* "}"
+      → implTraitBlock
+    -- Function
+    | visibility? "fn" <ident> typeParamList? "(" paramList ")" returnType? whereClause? block
+      → fnItem
+    | visibility? "const" "fn" <ident> typeParamList? "(" paramList ")" returnType? block
+      → constFnItem
+    | visibility? "async" "fn" <ident> typeParamList? "(" paramList ")" returnType? block
+      → asyncFnItem
+    -- Const/static
+    | visibility? "const" <ident> ":" type "=" expr ";"
+      → constItem
+    | visibility? "static" "mut"? <ident> ":" type "=" expr ";"
+      → staticItem
+    -- Type alias
+    | visibility? "type" <ident> typeParamList? "=" type ";"
+      → typeAliasItem
+    -- Use/mod
+    | visibility? "use" usePath ";"
+      → useItem
+    | visibility? "mod" <ident> ";"
+      → modDeclItem
+    | visibility? "mod" <ident> "{" item* "}"
+      → modDefItem
+    ;
+
+  visibility ::= "pub"                  → pubVis
+               | "pub" "(" "crate" ")"  → pubCrateVis
+               | "pub" "(" "super" ")"  → pubSuperVis
+               ;
+  enumVariant ::= <ident>               → enumVariantUnit
+                | <ident> "(" tupleField* ")" → enumVariantTuple
+                | <ident> "{" structField* "}" → enumVariantStruct
+                ;
+  structField ::= visibility? <ident> ":" type → structField ;
+  tupleField ::= visibility? type       → tupleField ;
+  returnType ::= "->" type              → returnType ;
+  superTraits ::= ":" typeBound         → superTraits ;
+  traitItem ::= "fn" <ident> "(" paramList ")" returnType? ";" → traitFnSig
+              | "fn" <ident> "(" paramList ")" returnType? block → traitFnDefault
+              | "type" <ident> typeBounds? ";" → traitTypeAssoc
+              ;
+  typeBounds ::= ":" typeBound          → typeBounds ;
+  implItem ::= visibility? "fn" <ident> "(" paramList ")" returnType? block → implFn
+             | "type" <ident> "=" type ";" → implType
+             ;
+  usePath ::= <ident> ("::" <ident>)*   → usePath
+            | <ident> "::" "*"          → useGlob
+            | <ident> "::" "{" useTree ("," useTree)* "}" → useGroup
+            ;
+  useTree ::= <ident>                   → useTreeIdent
+            | <ident> "as" <ident>      → useTreeRename
+            ;
+
+-----------------------------------------------------
+-- Module
+-- Top-level structure
+-----------------------------------------------------
+piece Module
+  module ::= item*                      → module ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+test "closure": (closure (paramList (param x (tyPath i32))) (add (var x) (intLit 1))) ;
+test "enum": (enumItem (pubVis) Term (enumVariantUnit Var) (enumVariantTuple App (tupleField (tyPath Term)) (tupleField (tyPath Term)))) ;
+test "fn": (fnItem (pubVis) id (typeParamList (typeParam T)) (paramList (param x (tyPath T))) (returnType (tyPath T)) (block (stmtList (var x)))) ;
+test "match": (matchExpr (var opt) (matchArm (patTupleStruct Some (patternList (patIdent x))) (var x)) (matchArm (patIdent None) (intLit 0))) ;
+test "impl": (implBlock (tyPath MyStruct) (implFn (pubVis) new (paramList) (returnType (tyPath Self)) (block (stmtList (structLit MyStruct))))) ;
+

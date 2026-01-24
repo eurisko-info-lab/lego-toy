@@ -8,3 +8,8 @@ lake-packages/
 *.c.o.export*
 tmp/
 src/Lego/Cubical/gen/
+.bsp/scala-cli.json
+.gitignore
+.scala-build/
+.vscode/
+.idea/

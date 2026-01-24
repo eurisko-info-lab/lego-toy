@@ -1,5 +1,48 @@
 # Rosetta Redesign: From Ad-Hoc to Algebraic
 
+## Clean Code Generation Architecture
+
+Rosetta now follows a clean, uniform design for multi-target code generation:
+
+```
+Lego source → lego2rosetta → Rosetta IR → rosetta2<L> → <L> code
+```
+
+### Target Language Files
+
+Each target language L has exactly two files:
+
+| Language | AST Definition | Transformation |
+|----------|---------------|----------------|
+| **Lego** | `Lego.lego`   | `rosetta2lego.lego` |
+| Lean 4   | `Lean.lego`   | `rosetta2lean.lego` |
+| Scala 3  | `Scala.lego`  | `rosetta2scala.lego` |
+| Haskell  | `Haskell.lego`| `rosetta2haskell.lego` |
+| Rust     | `Rust.lego`   | `rosetta2rust.lego` |
+
+**Note**: Lego is itself a target! This enables meta-circular bootstrapping:
+```
+Lego source → lego2rosetta → Rosetta IR → rosetta2lego → Lego source
+```
+
+### Design Principles
+
+1. **`<L>.lego`** - Defines the AST/syntax of language L
+   - Grammar rules (`term ::=`, `decl ::=`, etc.)
+   - No transformation rules
+   - Pure "what the language looks like"
+
+2. **`rosetta2<L>.lego`** - Transforms Rosetta IR to L
+   - Imports both `Rosetta` and `<L>`
+   - Rules map Rosetta constructs to L constructs
+   - Examples: `Lam` → lambda, `adtDef` → enum/inductive/data
+
+3. **No bypasses** - All transformations go through Rosetta IR
+   - `lego2rosetta.lego` handles Lego → Rosetta
+   - Each target transformer only knows Rosetta IR
+
+---
+
 ## The Problem with Old Rosetta
 
 The original Rosetta was a grab-bag of useful constructs:

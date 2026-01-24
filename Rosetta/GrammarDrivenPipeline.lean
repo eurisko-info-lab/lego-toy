@@ -844,7 +844,16 @@ partial def normalizeRosettaTerm (t : Term) : Term :=
   | .var n => .var n
   | .lit s => .lit s
 
-/-! ## Rewrite Rule Code Generation -/
+/-! ## Rewrite Rule Code Generation
+
+NOTE: The language-specific functions below (termToLeanPatternWithState, emitLeanRewriteRule,
+termToScalaPatternWithState, emitScalaRewriteRule, etc.) are DEPRECATED.
+
+The rewriteRule case in prettyPrint now uses UnifiedCodeGen.emitRewriteRule which handles
+all 4 target languages via a unified CodeGen.Frag AST.
+
+These functions are kept for reference but can be removed in a future cleanup.
+-/
 
 /-- Collect pattern variables from a Term (variables starting with $) -/
 partial def collectPatternVars (t : Term) : List String :=

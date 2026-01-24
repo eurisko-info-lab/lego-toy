@@ -285,6 +285,14 @@ partial def astToGrammarExpr (nameMap : HashMap String String := HashMap.emptyWi
       | g :: gs => some (GrammarExpr.node conName (gs.foldl GrammarExpr.seq g))
     | none => none  -- malformed annotated
 
+  -- Layout annotations: @nl, @indent, @dedent, @sp, @nsp
+  -- These are purely for pretty-printing - ignore during parsing (treat as empty)
+  | .con "layoutNl" _ => some GrammarExpr.empty
+  | .con "layoutIndent" _ => some GrammarExpr.empty
+  | .con "layoutDedent" _ => some GrammarExpr.empty
+  | .con "layoutSpace" _ => some GrammarExpr.empty
+  | .con "layoutNoSpace" _ => some GrammarExpr.empty
+
   -- Fallback for unrecognized patterns
   | _ => none
 
@@ -693,34 +701,6 @@ structure LoadedGrammar where
   validation : ValidationResult := ValidationResult.empty
   deriving Repr
 
-/-- Load a grammar from a .lego file.
-
-    ⚠️  DEPRECATED: This function uses Bootstrap.parseLegoFile which is only
-    appropriate for parsing Bootstrap.lego itself.
-
-    For loading grammars from any other .lego file, use:
-      let rt ← Lego.Runtime.init
-      let ast ← Lego.Runtime.parseLegoFileE rt content
-      let grammar := loadGrammarFromAST ast startProd
-
-    This function is preserved for backward compatibility but may not
-    correctly parse files that use features added to Bootstrap.lego after
-    the hardcoded grammar was generated. -/
-def loadGrammarFromFile (path : String) (startProd : String) : IO (Option LoadedGrammar) := do
-  try
-    let content ← IO.FS.readFile path
-    match Bootstrap.parseLegoFile content with
-    | some ast =>
-      let prods := extractAllProductions ast
-      let tokenProds := extractTokenProductions ast
-      let symbols := extractAllSymbols prods
-      let validationResult := validateProductions prods
-      pure (some { productions := prods, tokenProductions := tokenProds, symbols := symbols, startProd := startProd, validation := validationResult })
-    | none =>
-      pure none
-  catch _ =>
-    pure none
-
 /-- Load a grammar from parsed AST -/
 def loadGrammarFromAST (ast : Term) (startProd : String) : LoadedGrammar :=
   let prods := extractAllProductions ast
@@ -882,14 +862,6 @@ def isSubsetOfProductions (p1 p2 : Productions) : Bool × List String :=
   let names2 := p2.map (·.1) |>.eraseDups
   let missing := names1.filter (fun n => !names2.contains n)
   (missing.isEmpty, missing)
-
-/-! ## Convenience: Load and Parse -/
-
-/-- Load grammar and parse a file in one step -/
-def loadAndParse (grammarPath : String) (startProd : String) (inputPath : String) : IO (Option Term) := do
-  match ← loadGrammarFromFile grammarPath startProd with
-  | some grammar => parseFileWithGrammar grammar inputPath
-  | none => pure none
 
 /-! ## Rule Extraction -/
 

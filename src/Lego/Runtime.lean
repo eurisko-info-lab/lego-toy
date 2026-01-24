@@ -138,25 +138,26 @@ where
       return Except.error s!"Circular language inheritance detected: {path}"
 
     let content ← IO.FS.readFile path
-    match parseLegoFileE rt content with
-    | .error e => return Except.error s!"Failed to parse {path}: {e}"
-    | .ok ast =>
-      -- Extract parent names from AST
-      let parentNames := Loader.extractParentNames ast
 
-      -- Load parent grammars recursively
-      let mut inheritedTokenProds : Productions := []
-      let mut inheritedProds : Productions := []
+    -- First, do a quick parse with bootstrap to extract parent names
+    -- This works because 'lang X (Parent) :=' syntax is in Bootstrap
+    let parentNames := match Loader.parseWithGrammarE rt.grammar content with
+      | .error _ => []  -- If bootstrap can't parse it, assume no parents
+      | .ok ast => Loader.extractParentNames ast
 
-      for parentName in parentNames do
+    -- Load parent grammars recursively
+    let mut inheritedTokenProds : Productions := []
+    let mut inheritedProds : Productions := []
+
+    for parentName in parentNames do
+      -- Bootstrap is special - its grammar is already in the runtime, don't load again
+      if parentName == "Bootstrap" then
+        inheritedTokenProds := rt.grammar.tokenProductions ++ inheritedTokenProds
+        inheritedProds := rt.grammar.productions ++ inheritedProds
+      else
         match ← resolveParentPath parentName path with
         | none =>
-          -- Bootstrap is special - its tokens are built into the runtime
-          if parentName == "Bootstrap" then
-            inheritedTokenProds := rt.grammar.tokenProductions ++ inheritedTokenProds
-            inheritedProds := rt.grammar.productions ++ inheritedProds
-          else
-            return Except.error s!"Cannot find parent language: {parentName}"
+          return Except.error s!"Cannot find parent language: {parentName}"
         | some parentPath =>
           match ← loadLanguageWithParents rt parentPath (visited.push path) with
           | .error e => return Except.error s!"Failed to load parent {parentName}: {e}"
@@ -164,29 +165,37 @@ where
             inheritedTokenProds := parentGrammar.tokenProductions ++ inheritedTokenProds
             inheritedProds := parentGrammar.productions ++ inheritedProds
 
-      -- Extract child's own productions
-      let childProds := Loader.extractAllProductions ast
-      let childTokenProds := Loader.extractTokenProductions ast
+    -- Now parse with the merged grammar (parents + bootstrap)
+    let parsingGrammar : Loader.LoadedGrammar := {
+      productions := inheritedProds ++ rt.grammar.productions
+      tokenProductions := inheritedTokenProds ++ rt.grammar.tokenProductions
+      symbols := Loader.extractAllSymbols (inheritedProds ++ rt.grammar.productions)
+      startProd := "File.legoFile"
+    }
 
-      -- Merge: child overrides parent for same-named productions
-      let mergedProds := inheritedProds ++ childProds
-      let mergedTokenProds := inheritedTokenProds ++ childTokenProds
+    let ast ← match Loader.parseWithGrammarE parsingGrammar content with
+      | .error e => return Except.error s!"Failed to parse {path}: {e}"
+      | .ok ast => pure ast
 
-      let symbols := Loader.extractAllSymbols mergedProds
-      let validation := Loader.validateProductions mergedProds
+    -- Extract child's own productions
+    let childProds := Loader.extractAllProductions ast
+    let childTokenProds := Loader.extractTokenProductions ast
 
-      -- Find the start production
-      let startProd := match childProds.head? with
-        | some (name, _) => name
-        | none => "File.legoFile"
+    -- Merge: bootstrap + inherited parents + child (child overrides)
+    let mergedProds := rt.grammar.productions ++ inheritedProds ++ childProds
+    let mergedTokenProds := rt.grammar.tokenProductions ++ inheritedTokenProds ++ childTokenProds
 
-      return Except.ok {
-        productions := mergedProds
-        tokenProductions := mergedTokenProds
-        symbols := symbols
-        startProd := startProd
-        validation := validation
-      }
+    let symbols := Loader.extractAllSymbols mergedProds
+    let validation := Loader.validateProductions mergedProds
+
+    -- Keep File.legoFile as start so merged grammar can parse .lego files
+    return Except.ok {
+      productions := mergedProds
+      tokenProductions := mergedTokenProds
+      symbols := symbols
+      startProd := "File.legoFile"
+      validation := validation
+    }
 
 /-! ## Normalization with Runtime Rules -/
 

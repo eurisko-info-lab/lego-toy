@@ -21,7 +21,7 @@
 import Rosetta
 import Lean
 
-lang RosettaToLean (Rosetta Lean) :=
+lang RosettaToLean :=
 
 -----------------------------------------------------
 -- CoreTransform
@@ -82,22 +82,55 @@ piece ProductTransform
     (prodTy (toLean $A) (toLean $B)) ;
 
 -----------------------------------------------------
+-- FileTransform
+-- Entry point: handle file-level (seq) wrapper
+-----------------------------------------------------
+piece FileTransform
+  -- File is a sequence of declarations - transform each
+  @file rule fileToLean: (toLean (seq $decls)) ~~>
+    (leanModule (toLeanDecls $decls)) ;
+  
+  -- Transform declaration list
+  rule declsToLean: (toLeanDecls ($decl $rest)) ~~>
+    ((toLeanDecl $decl) (toLeanDecls $rest)) ;
+  rule declsToLeanSingle: (toLeanDecls $decl) ~~>
+    (toLeanDecl $decl) ;
+  
+  -- Route declarations to appropriate transformers  
+  @decl rule declAdtToLean: (toLeanDecl (adtDef $kw $name $lb $constrs $rb)) ~~>
+    (toLean (adtDef $kw $name $lb $constrs $rb)) ;
+
+-----------------------------------------------------
 -- ADTTransform
 -- Transform Rosetta ADT definitions to Lean inductives
+-- Structure: (adtDef "adt" Name "{" constr1 (seq "," constr2) ... "}")
 -----------------------------------------------------
 piece ADTTransform
-  -- adtDef → inductive
-  rule adtToLean: (toLean (adtDef $name { $constrs })) ~~>
+  -- adtDef → inductive (handle literal syntax tokens)
+  @decl rule adtToLean: (toLean (adtDef $kw $name $lb $constrs $rb)) ~~>
     (inductiveDecl $name (whereCtors (toLeanCtors $constrs))) ;
   
-  -- Transform constructor list
-  rule ctorsToLean: (toLeanCtors ($c $rest)) ~~>
-    ((toLeanCtor $c) (toLeanCtors $rest)) ;
+  -- Transform constructor sequence - handle (seq "," next)
+  rule ctorsToLeanSeqComma: (toLeanCtors (seq "," $next)) ~~>
+    (toLeanCtors $next) ;
+  -- Handle multiple constructors: first constr followed by rest
+  rule ctorsToLeanFirst: (toLeanCtors ((constr $name ":" $ty) $rest)) ~~>
+    ((ctor $name (toLeanType $ty)) (toLeanCtors $rest)) ;
+  -- Single constructor
+  rule ctorsToLeanSingle: (toLeanCtors (constr $name ":" $ty)) ~~>
+    (ctor $name (toLeanType $ty)) ;
   rule ctorsToLeanNil: (toLeanCtors ()) ~~> () ;
   
-  -- Transform single constructor: Name : Type → | Name : Type
-  rule ctorToLean: (toLeanCtor ($name : $ty)) ~~>
-    (ctor $name (toLean $ty)) ;
+  -- Transform types (from Rosetta type syntax)
+  rule typeExprArrow: (toLeanType (typeExpr $left -> $right)) ~~>
+    (arrowTy (toLeanType $left) (toLeanType $right)) ;
+  rule typeExprBase: (toLeanType (typeExpr $t)) ~~>
+    (toLeanType $t) ;
+  rule typeAppMulti: (toLeanType (typeApp $t $args)) ~~>
+    (app (toLeanType $t) (toLeanType $args)) ;
+  rule typeAppSingle: (toLeanType (typeApp $t)) ~~>
+    (var $t) ;
+  rule typeIdent: (toLeanType $t) ~~> (var $t) ;
 
 -----------------------------------------------------
 -- RewriteTransform
@@ -255,7 +288,7 @@ test "lamToLean": (toLean (Lam x . (Var x))) ~~>
 test "appToLean": (toLean (App (Var f) (Var x))) ~~>
   (app (var f) (var x)) ;
 
-test "adtToLean": (toLean (adtDef Term { (Var : Ident → Term) })) ~~>
+test "adtToLean": (toLean (adtDef Term { (Var : (arrowTy Ident Term)) })) ~~>
   (inductiveDecl Term (whereCtors (ctor Var (arrowTy (var Ident) (var Term))))) ;
 
 test "rewriteToLean": (toLean (rewriteRule beta: (App (Lam $x . $b) $a) ~~> (Subst $x $a $b))) ~~>

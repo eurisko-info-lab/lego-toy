@@ -1,0 +1,412 @@
+-----------------------------------------------------
+-- Lego.AttrEval: Attribute Evaluation Runtime
+--
+-- Phase 8: Actual attribute evaluation for type checking
+-- Phase 9: Error reporting with source locations
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- Core Types (needed for evaluation)
+-----------------------------------------------------
+
+adt Term {
+  Var : String -> Term,
+  Lit : String -> Term,
+  Con : String -> List Term -> Term
+}
+
+adt AttrPath {
+  Empty   : AttrPath,
+  PathCon : String -> AttrPath -> AttrPath
+}
+
+adt AttrEnv {
+  EmptyAttrEnv : AttrEnv,
+  AttrEnvCons  : AttrPath -> String -> Term -> AttrEnv -> AttrEnv
+}
+
+-----------------------------------------------------
+-- Source Locations for Error Reporting
+-----------------------------------------------------
+
+adt SourceLoc {
+  MkSourceLoc : String -> Int -> Int -> Int -> SourceLoc,
+  UnknownLoc  : SourceLoc
+}
+
+-- Format source location
+rewrite sourceLocToString:
+  (sourceLocToString (MkSourceLoc $file $line $col $span)) ~>
+    (concat (concat (concat (concat $file ":") (toString $line)) ":") (toString $col)) ;
+
+rewrite sourceLocToStringUnknown:
+  (sourceLocToString UnknownLoc) ~> "<unknown>:0:0" ;
+
+-----------------------------------------------------
+-- Error Severity
+-----------------------------------------------------
+
+adt Severity {
+  SevError   : Severity,
+  SevWarning : Severity,
+  SevInfo    : Severity
+}
+
+-----------------------------------------------------
+-- Typing Context (Bindings) - moved up for dependency
+-----------------------------------------------------
+
+adt Binding {
+  MkBinding : String -> Term -> Option Term -> SourceLoc -> Binding
+}
+
+-----------------------------------------------------
+-- Type Errors (depends on Binding)
+-----------------------------------------------------
+
+adt TypeError {
+  MkTypeError : String -> SourceLoc -> Severity -> Option Term -> Option Term -> List Binding -> TypeError
+}
+
+-- Error constructors
+rewrite typeErrorSimple:
+  (typeErrorSimple $msg $loc) ~>
+    (MkTypeError $msg $loc SevError None None Nil) ;
+
+rewrite typeErrorMismatch:
+  (typeErrorMismatch $expected $actual $loc) ~>
+    (MkTypeError "type mismatch" $loc SevError (Some $expected) (Some $actual) Nil) ;
+
+rewrite typeErrorUndefined:
+  (typeErrorUndefined $name $loc) ~>
+    (MkTypeError (concat "undefined: " $name) $loc SevError None None Nil) ;
+
+-- Format type error
+rewrite typeErrorToString:
+  (typeErrorToString (MkTypeError $msg $loc $sev $exp $act $ctx)) ~>
+    (let $sevStr (match $sev
+                   SevError "error"
+                   SevWarning "warning"
+                   SevInfo "info")
+     (let $locStr (sourceLocToString $loc)
+      (let $base (concat (concat (concat $locStr ": ") $sevStr) (concat ": " $msg))
+       (match $exp
+         (Some $e) (match $act
+                     (Some $a) (concat (concat (concat $base "\n  expected: ") (termToString $e))
+                                       (concat "\n  actual: " (termToString $a)))
+                     None $base)
+         None $base)))) ;
+
+-----------------------------------------------------
+-- Evaluation Result
+-----------------------------------------------------
+
+adt EvalResult {
+  EvalOk     : Term -> List TypeError -> EvalResult,
+  EvalFailed : List TypeError -> EvalResult
+}
+
+-- Pure result
+rewrite evalResultPure:
+  (evalResultPure $a) ~> (EvalOk $a Nil) ;
+
+-- Map over result
+rewrite evalResultMapOk:
+  (evalResultMap $f (EvalOk $a $errs)) ~> (EvalOk ($f $a) $errs) ;
+
+rewrite evalResultMapFailed:
+  (evalResultMap $f (EvalFailed $errs)) ~> (EvalFailed $errs) ;
+
+-- Bind (monadic)
+rewrite evalResultBindOk:
+  (evalResultBind (EvalOk $a $errs) $f) ~>
+    (match ($f $a)
+      (EvalOk $b $errs2) (EvalOk $b (append $errs $errs2))
+      (EvalFailed $errs2) (EvalFailed (append $errs $errs2))) ;
+
+rewrite evalResultBindFailed:
+  (evalResultBind (EvalFailed $errs) $f) ~> (EvalFailed $errs) ;
+
+-- Add error to result
+rewrite evalResultAddError:
+  (evalResultAddError $e (EvalOk $a $errs)) ~> (EvalOk $a (Cons $e $errs)) ;
+
+rewrite evalResultAddErrorFailed:
+  (evalResultAddError $e (EvalFailed $errs)) ~> (EvalFailed (Cons $e $errs)) ;
+
+-- Check if ok
+rewrite evalResultIsOk:
+  (evalResultIsOk (EvalOk $a $errs)) ~> True ;
+
+rewrite evalResultIsOkFailed:
+  (evalResultIsOk (EvalFailed $errs)) ~> False ;
+
+-- Get errors
+rewrite evalResultGetErrors:
+  (evalResultGetErrors (EvalOk $a $errs)) ~> $errs ;
+
+rewrite evalResultGetErrorsFailed:
+  (evalResultGetErrors (EvalFailed $errs)) ~> $errs ;
+
+-----------------------------------------------------
+-- Typing Context
+-----------------------------------------------------
+
+adt Context {
+  EmptyContext : Context,
+  ContextCons  : Binding -> Context -> Context
+}
+
+-- Extend context
+rewrite contextExtend:
+  (contextExtend $ctx $name $ty $loc) ~>
+    (ContextCons (MkBinding $name $ty None $loc) $ctx) ;
+
+-- Extend with let binding
+rewrite contextExtendLet:
+  (contextExtendLet $ctx $name $ty $val $loc) ~>
+    (ContextCons (MkBinding $name $ty (Some $val) $loc) $ctx) ;
+
+-- Lookup in context
+rewrite contextLookupEmpty:
+  (contextLookup EmptyContext $name) ~> None ;
+
+rewrite contextLookupFound:
+  (contextLookup (ContextCons (MkBinding $name $ty $val $loc) $rest) $name) ~>
+    (Some (MkBinding $name $ty $val $loc)) ;
+
+rewrite contextLookupMiss:
+  (contextLookup (ContextCons (MkBinding $n1 $ty $val $loc) $rest) $n2) ~>
+    (contextLookup $rest $n2)
+  when (not (eq $n1 $n2)) ;
+
+-- Lookup type
+rewrite contextLookupType:
+  (contextLookupType $ctx $name) ~>
+    (match (contextLookup $ctx $name)
+      (Some (MkBinding $n $ty $v $l)) (Some $ty)
+      None None) ;
+
+-- Get all names
+rewrite contextNames:
+  (contextNames EmptyContext) ~> Nil ;
+
+rewrite contextNamesCons:
+  (contextNames (ContextCons (MkBinding $name $ty $val $loc) $rest)) ~>
+    (Cons $name (contextNames $rest)) ;
+
+-----------------------------------------------------
+-- Variable Context (Generic for scoped variables)
+-----------------------------------------------------
+
+adt VarContext {
+  EmptyVarContext : VarContext,
+  VarContextCons  : String -> VarContext -> VarContext
+}
+
+-- Extend variable context
+rewrite varContextExtend:
+  (varContextExtend $ctx $name) ~> (VarContextCons $name $ctx) ;
+
+-- Check containment
+rewrite varContextContainsEmpty:
+  (varContextContains EmptyVarContext $name) ~> False ;
+
+rewrite varContextContainsFound:
+  (varContextContains (VarContextCons $name $rest) $name) ~> True ;
+
+rewrite varContextContainsMiss:
+  (varContextContains (VarContextCons $n1 $rest) $n2) ~>
+    (varContextContains $rest $n2)
+  when (not (eq $n1 $n2)) ;
+
+-----------------------------------------------------
+-- Evaluation Environment
+-----------------------------------------------------
+
+adt EvalEnv {
+  MkEvalEnv : AttrEnv -> Context -> VarContext -> List TypeError -> SourceLoc -> EvalEnv
+}
+
+-- Empty environment
+rewrite evalEnvEmpty:
+  evalEnvEmpty ~>
+    (MkEvalEnv EmptyAttrEnv EmptyContext EmptyVarContext Nil UnknownLoc) ;
+
+-- With context
+rewrite evalEnvWithCtx:
+  (evalEnvWithCtx (MkEvalEnv $attrs $oldCtx $vars $errs $loc) $ctx) ~>
+    (MkEvalEnv $attrs $ctx $vars $errs $loc) ;
+
+-- With location
+rewrite evalEnvWithLoc:
+  (evalEnvWithLoc (MkEvalEnv $attrs $ctx $vars $errs $oldLoc) $loc) ~>
+    (MkEvalEnv $attrs $ctx $vars $errs $loc) ;
+
+-- Add binding
+rewrite evalEnvAddBinding:
+  (evalEnvAddBinding (MkEvalEnv $attrs $ctx $vars $errs $loc) $name $ty) ~>
+    (MkEvalEnv $attrs (contextExtend $ctx $name $ty $loc) $vars $errs $loc) ;
+
+-- Add variable
+rewrite evalEnvAddVar:
+  (evalEnvAddVar (MkEvalEnv $attrs $ctx $vars $errs $loc) $name) ~>
+    (MkEvalEnv $attrs $ctx (varContextExtend $vars $name) $errs $loc) ;
+
+-- Add error
+rewrite evalEnvAddError:
+  (evalEnvAddError (MkEvalEnv $attrs $ctx $vars $errs $loc) $e) ~>
+    (MkEvalEnv $attrs $ctx $vars (Cons $e $errs) $loc) ;
+
+-- Add type error message
+rewrite evalEnvAddTypeError:
+  (evalEnvAddTypeError (MkEvalEnv $attrs $ctx $vars $errs $loc) $msg) ~>
+    (MkEvalEnv $attrs $ctx $vars (Cons (typeErrorSimple $msg $loc) $errs) $loc) ;
+
+-- Add mismatch error
+rewrite evalEnvAddMismatch:
+  (evalEnvAddMismatch (MkEvalEnv $attrs $ctx $vars $errs $loc) $expected $actual) ~>
+    (MkEvalEnv $attrs $ctx $vars (Cons (typeErrorMismatch $expected $actual $loc) $errs) $loc) ;
+
+-- Set attribute
+rewrite evalEnvSetAttr:
+  (evalEnvSetAttr (MkEvalEnv $attrs $ctx $vars $errs $loc) $path $name $val) ~>
+    (MkEvalEnv (attrEnvInsert $attrs $path $name $val) $ctx $vars $errs $loc) ;
+
+-- Get attribute
+rewrite evalEnvGetAttr:
+  (evalEnvGetAttr (MkEvalEnv $attrs $ctx $vars $errs $loc) $path $name) ~>
+    (attrEnvLookup $attrs $path $name) ;
+
+-- Has errors?
+rewrite evalEnvHasErrors:
+  (evalEnvHasErrors (MkEvalEnv $attrs $ctx $vars $errs $loc)) ~>
+    (not (null $errs)) ;
+
+-----------------------------------------------------
+-- Bidirectional Mode
+-----------------------------------------------------
+
+adt Mode {
+  Infer : Mode,
+  Check : Mode
+}
+
+-----------------------------------------------------
+-- Substitution
+-----------------------------------------------------
+
+-- Substitute variable with term
+rewrite substVar:
+  (subst $name $repl (Var $n)) ~>
+    (if (eq $n $name) $repl (Var $n)) ;
+
+rewrite substLit:
+  (subst $name $repl (Lit $s)) ~> (Lit $s) ;
+
+rewrite substCon:
+  (subst $name $repl (Con $c $args)) ~>
+    (Con $c (map (a . (subst $name $repl $a)) $args)) ;
+
+-----------------------------------------------------
+-- Free Variables
+-----------------------------------------------------
+
+rewrite freeVarsVar:
+  (freeVars (Var $n)) ~> (Cons $n Nil) ;
+
+rewrite freeVarsLit:
+  (freeVars (Lit $s)) ~> Nil ;
+
+rewrite freeVarsLam:
+  (freeVars (Con "lam" (Cons (Var $x) (Cons $ty (Cons $body Nil))))) ~>
+    (append (freeVars $ty) (filter (v . (not (eq $v $x))) (freeVars $body))) ;
+
+rewrite freeVarsPi:
+  (freeVars (Con "Pi" (Cons (Var $x) (Cons $dom (Cons $cod Nil))))) ~>
+    (append (freeVars $dom) (filter (v . (not (eq $v $x))) (freeVars $cod))) ;
+
+rewrite freeVarsCon:
+  (freeVars (Con $c $args)) ~> (flatMap freeVars $args) ;
+
+-----------------------------------------------------
+-- Fresh Name Generation
+-----------------------------------------------------
+
+rewrite freshName:
+  (freshName $base $avoid) ~> (freshNameHelper $base $avoid 0) ;
+
+rewrite freshNameHelper:
+  (freshNameHelper $base $avoid $i) ~>
+    (let $candidate (if (eq $i 0) $base (concat $base (toString $i)))
+     (if (contains $avoid $candidate)
+         (freshNameHelper $base $avoid (add $i 1))
+         $candidate)) ;
+
+-----------------------------------------------------
+-- Capture-Avoiding Substitution
+-----------------------------------------------------
+
+rewrite substAvoidVar:
+  (substAvoid $name $repl $fv (Var $n)) ~>
+    (if (eq $n $name) $repl (Var $n)) ;
+
+rewrite substAvoidLit:
+  (substAvoid $name $repl $fv (Lit $s)) ~> (Lit $s) ;
+
+rewrite substAvoidLam:
+  (substAvoid $name $repl $fv (Con "lam" (Cons (Var $x) (Cons $ty (Cons $body Nil))))) ~>
+    (if (eq $x $name)
+        -- Shadowed, don't substitute in body
+        (Con "lam" (Cons (Var $x) (Cons (substAvoid $name $repl $fv $ty) (Cons $body Nil))))
+        (if (contains $fv $x)
+            -- Need to rename x
+            (let $x2 (freshName $x $fv)
+             (let $body2 (subst $x (Var $x2) $body)
+              (Con "lam" (Cons (Var $x2) 
+                         (Cons (substAvoid $name $repl $fv $ty)
+                         (Cons (substAvoid $name $repl (Cons $x2 $fv) $body2) Nil))))))
+            -- No capture, proceed
+            (Con "lam" (Cons (Var $x) 
+                       (Cons (substAvoid $name $repl $fv $ty)
+                       (Cons (substAvoid $name $repl $fv $body) Nil)))))) ;
+
+rewrite substAvoidPi:
+  (substAvoid $name $repl $fv (Con "Pi" (Cons (Var $x) (Cons $dom (Cons $cod Nil))))) ~>
+    (if (eq $x $name)
+        (Con "Pi" (Cons (Var $x) (Cons (substAvoid $name $repl $fv $dom) (Cons $cod Nil))))
+        (if (contains $fv $x)
+            (let $x2 (freshName $x $fv)
+             (let $cod2 (subst $x (Var $x2) $cod)
+              (Con "Pi" (Cons (Var $x2)
+                        (Cons (substAvoid $name $repl $fv $dom)
+                        (Cons (substAvoid $name $repl (Cons $x2 $fv) $cod2) Nil))))))
+            (Con "Pi" (Cons (Var $x)
+                      (Cons (substAvoid $name $repl $fv $dom)
+                      (Cons (substAvoid $name $repl $fv $cod) Nil)))))) ;
+
+rewrite substAvoidCon:
+  (substAvoid $name $repl $fv (Con $c $args)) ~>
+    (Con $c (map (a . (substAvoid $name $repl $fv $a)) $args)) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "source loc string" :
+  (sourceLocToString (MkSourceLoc "test.lean" 10 5 0)) ~~> "test.lean:10:5" ;
+
+test "empty context lookup" :
+  (contextLookup EmptyContext "x") ~~> None ;
+
+test "context extend and lookup" :
+  (contextLookup (contextExtend EmptyContext "x" (Con "Int" Nil) UnknownLoc) "x")
+  ~~> (Some (MkBinding "x" (Con "Int" Nil) None UnknownLoc)) ;
+
+test "substitution" :
+  (subst "x" (Lit "42") (Con "Add" (Cons (Var "x") (Cons (Var "y") Nil))))
+  ~~> (Con "Add" (Cons (Lit "42") (Cons (Var "y") Nil))) ;
+
+test "free vars lambda" :
+  (freeVars (Con "lam" (Cons (Var "x") (Cons (Con "Int" Nil) (Cons (Var "y") Nil)))))
+  ~~> (Cons "y" Nil) ;

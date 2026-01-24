@@ -216,56 +216,56 @@ piece Fields
 piece Items
   item ::= 
     -- Enum (ADT)
-    visibility? "enum" <ident> typeParamList? whereClause? "{" enumVariant* "}"
+    visibility? "enum" <ident> typeParamList? whereClause? "{" @nl @indent enumVariant* @dedent "}" @nl @nl
       → enumItem
     -- Struct
-    | visibility? "struct" <ident> typeParamList? whereClause? "{" structField* "}"
+    | visibility? "struct" <ident> typeParamList? whereClause? "{" @nl @indent structField* @dedent "}" @nl
       → structItem
-    | visibility? "struct" <ident> typeParamList? "(" tupleField* ")" ";"
+    | visibility? "struct" <ident> typeParamList? @nsp "(" tupleField* ")" ";" @nl
       → tupleStructItem
-    | visibility? "struct" <ident> ";"
+    | visibility? "struct" <ident> ";" @nl
       → unitStructItem
     -- Trait
-    | visibility? "trait" <ident> typeParamList? superTraits? whereClause? "{" traitItem* "}"
+    | visibility? "trait" <ident> typeParamList? superTraits? whereClause? "{" @nl @indent traitItem* @dedent "}" @nl
       → traitItem
     -- Impl
-    | "impl" typeParamList? type whereClause? "{" implItem* "}"
+    | "impl" typeParamList? type whereClause? "{" @nl @indent implItem* @dedent "}" @nl
       → implBlock
-    | "impl" typeParamList? <ident> "for" type whereClause? "{" implItem* "}"
+    | "impl" typeParamList? <ident> "for" type whereClause? "{" @nl @indent implItem* @dedent "}" @nl
       → implTraitBlock
     -- Function
-    | visibility? "fn" <ident> typeParamList? "(" paramList ")" returnType? whereClause? block
+    | visibility? "fn" <ident> typeParamList? @nsp "(" paramList ")" returnType? whereClause? block @nl
       → fnItem
-    | visibility? "const" "fn" <ident> typeParamList? "(" paramList ")" returnType? block
+    | visibility? "const" "fn" <ident> typeParamList? @nsp "(" paramList ")" returnType? block @nl
       → constFnItem
-    | visibility? "async" "fn" <ident> typeParamList? "(" paramList ")" returnType? block
+    | visibility? "async" "fn" <ident> typeParamList? @nsp "(" paramList ")" returnType? block @nl
       → asyncFnItem
     -- Const/static
-    | visibility? "const" <ident> ":" type "=" expr ";"
+    | visibility? "const" <ident> ":" type "=" expr ";" @nl
       → constItem
-    | visibility? "static" "mut"? <ident> ":" type "=" expr ";"
+    | visibility? "static" "mut"? <ident> ":" type "=" expr ";" @nl
       → staticItem
     -- Type alias
-    | visibility? "type" <ident> typeParamList? "=" type ";"
+    | visibility? "type" <ident> typeParamList? "=" type ";" @nl
       → typeAliasItem
     -- Use/mod
-    | visibility? "use" usePath ";"
+    | visibility? "use" usePath ";" @nl
       → useItem
-    | visibility? "mod" <ident> ";"
+    | visibility? "mod" <ident> ";" @nl
       → modDeclItem
-    | visibility? "mod" <ident> "{" item* "}"
+    | visibility? "mod" <ident> "{" @nl @indent item* @dedent "}" @nl
       → modDefItem
     ;
 
   visibility ::= "pub"                  → pubVis
-               | "pub" "(" "crate" ")"  → pubCrateVis
-               | "pub" "(" "super" ")"  → pubSuperVis
+               | "pub" @nsp "(" "crate" ")"  → pubCrateVis
+               | "pub" @nsp "(" "super" ")"  → pubSuperVis
                ;
-  enumVariant ::= <ident>               → enumVariantUnit
-                | <ident> "(" tupleField* ")" → enumVariantTuple
-                | <ident> "{" structField* "}" → enumVariantStruct
+  enumVariant ::= <ident> "," @nl       → enumVariantUnit
+                | <ident> @nsp "(" tupleField* ")" "," @nl → enumVariantTuple
+                | <ident> "{" @nl @indent structField* @dedent "}" "," @nl → enumVariantStruct
                 ;
-  structField ::= visibility? <ident> ":" type → structField ;
+  structField ::= visibility? <ident> ":" type "," @nl → structField ;
   tupleField ::= visibility? type       → tupleField ;
   returnType ::= "->" type              → returnType ;
   superTraits ::= ":" typeBound         → superTraits ;

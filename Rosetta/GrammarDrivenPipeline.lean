@@ -2,15 +2,35 @@
   GrammarDrivenPipeline.lean
   Code generation driven by grammar rules, not hardcoded generators.
 
-  Architecture:
-    1. source.lego → parse → Rosetta IR (AST)
+  IDEAL ARCHITECTURE:
+    1. source.rosetta → parse → Rosetta IR (AST)
     2. Load <L>.lego grammar → extract layout rules
     3. Load rosetta2<L>.lego → extract transformation rules
     4. Rosetta IR + transform rules → <L> AST
     5. <L> AST + grammar layout → pretty-print → code string
 
-  This replaces hardcoded generators like genScalaFunction with
-  grammar-driven pretty-printing using @nl, @indent, @dedent annotations.
+  CURRENT STATE:
+    The transform rules in rosetta2<L>.lego define the mapping from Rosetta
+    nodes (adtDef, constr, rewriteRule) to target nodes (inductiveDecl,
+    sealedTrait, dataDecl, enumItem).
+
+    However, the current Lego parser doesn't support layout annotations
+    (@nl, @indent, @dedent) in grammar productions. Until the parser is
+    extended, the target-specific pretty-printing logic lives here as
+    Lean code (goConstrs, goScalaConstrs, goHaskellConstrs, goRustConstrs).
+
+  TO MAKE FULLY DECLARATIVE:
+    1. Extend Lego parser to recognize @nl, @indent, @dedent, @sp, @nsp
+       as grammar tokens (not just comments)
+    2. Update <L>.lego files with layout annotations:
+       ctor ::= "|" <ident> ":" term @nl → ctor ;
+    3. Implement grammar-driven pretty-printer that applies layout
+       commands extracted from grammar productions
+    4. Remove hardcoded handlers from this file
+
+  FILE STRUCTURE FOR TARGET LANGUAGES:
+    - src/Rosetta/<L>.lego        - Target grammar (AST definition)
+    - src/Rosetta/rosetta2<L>.lego - Transform rules (Rosetta → Target)
 -/
 
 import Lego.Runtime
@@ -108,6 +128,21 @@ inductive LayoutCmd
   | seq : List LayoutCmd → LayoutCmd
   deriving Repr, Inhabited
 
+partial def LayoutCmd.toString : LayoutCmd → String
+  | .text s => s!"\"{s}\""
+  | .ref s => s!"<{s}>"
+  | .nl => "@nl"
+  | .indent => "@indent"
+  | .dedent => "@dedent"
+  | .space => "@sp"
+  | .noSpace => "@nsp"
+  | .star c => s!"({c.toString})*"
+  | .plus c => s!"({c.toString})+"
+  | .opt c => s!"({c.toString})?"
+  | .seq cs => cs.map LayoutCmd.toString |> " ".intercalate
+
+instance : ToString LayoutCmd := ⟨LayoutCmd.toString⟩
+
 /-- Grammar production with layout info -/
 structure PrettyProduction where
   name : String              -- Production name (e.g., "inductiveDecl")
@@ -151,7 +186,15 @@ partial def grammarExprToLayout (t : Term) : List LayoutCmd :=
     | .con "seq" args =>
       args.flatMap grammarExprToLayout
     | .con "lit" [.lit s] =>
-      [.text (s.replace "\"" "")]
+      -- Strip all quotes from the literal
+      let clean := s.replace "\"" "" |>.replace "'" ""
+      [.text clean]
+    | .con "lit" [.var s] =>
+      let clean := s.replace "\"" "" |>.replace "'" ""
+      [.text clean]
+    | .lit s =>
+      let clean := s.replace "\"" "" |>.replace "'" ""
+      if clean.isEmpty then [] else [.text clean]
     | .con "ref" [.con "ident" [.var name]] =>
       [.ref name]
     | .con "star" [inner] =>
@@ -160,7 +203,7 @@ partial def grammarExprToLayout (t : Term) : List LayoutCmd :=
       [.plus (.seq (grammarExprToLayout inner))]
     | .con "opt" [inner] =>
       [.opt (.seq (grammarExprToLayout inner))]
-    | .con "alt" [l, _, r] =>
+    | .con "alt" [l, _, _r] =>
       -- For alternatives, just take the first (simplification)
       grammarExprToLayout l
     | .con _ args =>
@@ -172,47 +215,269 @@ partial def grammarExprToLayout (t : Term) : List LayoutCmd :=
         | some cmd => [cmd]
         | none => [.ref name]
       else [.ref name]
-    | .lit s => [.text s]
 
-/-- Extract named productions from grammar -/
-partial def extractProductions (t : Term) : List PrettyProduction :=
+/-- Get constructor name for debug -/
+def Term.ctorDbg : Term → String
+  | .con n _ => n
+  | .var n => s!"var:{n}"
+  | .lit s => s!"lit:{s}"
+
+/-- Collect all DGrammar nodes from AST -/
+partial def collectDGrammars (t : Term) : List Term :=
+  match t with
+  | .con "DGrammar" _ => [t]
+  | .con _ args => args.flatMap collectDGrammars
+  | _ => []
+
+/-- Extract named productions from grammar (no debug version) -/
+partial def extractProductions (t : Term) (_debug : Bool := false) : List PrettyProduction :=
   match t with
   | .con "DGrammar" args =>
-    -- Grammar: name ::= body → prodName
     extractFromBody args
-  | .con "DPiece" args => args.flatMap extractProductions
-  | .con "DLang" args => args.flatMap extractProductions
-  | .con "seq" ts => ts.flatMap extractProductions
-  | .con _ args => args.flatMap extractProductions
+  | .con "DPiece" args =>
+    args.flatMap (extractProductions ·)
+  | .con "DLang" args =>
+    args.flatMap (extractProductions ·)
+  | .con "seq" ts =>
+    ts.flatMap (extractProductions ·)
+  | .con _ args =>
+    args.flatMap (extractProductions ·)
   | _ => []
 where
   extractFromBody (args : List Term) : List PrettyProduction :=
-    -- Parse: ident ::= expr → prodName
-    match args.filter (· != .lit "::=") |>.filter (· != .lit ";") with
-    | .con "ident" [.var grammarName] :: bodyParts =>
-      extractAlternatives grammarName bodyParts
+    let filtered := args.filter (· != .lit "::=") |>.filter (· != .lit ";")
+    match filtered with
+    | .con "ident" [.var _grammarName] :: bodyParts =>
+      extractAlternatives bodyParts
     | _ => []
 
-  extractAlternatives (grammarName : String) (body : List Term) : List PrettyProduction :=
-    body.flatMap fun b => extractAlt grammarName b
+  extractAlternatives (body : List Term) : List PrettyProduction :=
+    body.flatMap extractAlt
 
-  extractAlt (grammarName : String) (t : Term) : List PrettyProduction :=
+  extractAlt (t : Term) : List PrettyProduction :=
     match t with
-    | .con "annotated" [body, .con "ident" [.var prodName]] =>
-      let layout := grammarExprToLayout body
-      [{ name := prodName, layout := layout }]
+    -- Pattern: (annotated body... "→" (ident prodName))
+    | .con "annotated" args =>
+      -- Last arg should be (ident prodName), second-to-last is "→"
+      match args.reverse with
+      | .con "ident" [.var prodName] :: .lit "→" :: bodyParts =>
+        let layout := bodyParts.reverse.flatMap grammarExprToLayout
+        [{ name := prodName, layout := layout }]
+      | _ => []
     | .con "alt" [l, _, r] =>
-      extractAlt grammarName l ++ extractAlt grammarName r
+      extractAlt l ++ extractAlt r
     | _ => []
 
 /-! ## Extract Transformation Rules -/
 
-/-- Transformation rule: name, pattern, template -/
+/-- Rule annotation kind: entry point, file-level, expression, type, declaration -/
+inductive RuleAnnot
+  | entry  -- Entry point for whole file/module transformation
+  | file   -- Handles file-level constructs
+  | expr   -- Handles expressions
+  | type   -- Handles types
+  | decl   -- Handles declarations
+  | none   -- No annotation (regular rule)
+  deriving Repr, BEq
+
+/-- Transformation rule: name, pattern, template, annotation -/
 structure TransformRule where
   name : String
   pattern : Term
   template : Term
+  annot : RuleAnnot := .none
   deriving Repr
+
+/-- Convert parsed pattern/template AST to Term
+    The Bootstrap grammar parses (toLean Univ) as:
+      (con "(" (ident toLean) (con (ident Univ)) ")")
+    We need to convert it to:
+      (con "toLean" [(con "Univ" [])])
+
+    Pattern variables like $x are parsed as:
+      (var "$" (ident x))  or  (var "$" x)
+    We convert to:
+      .var "$x"
+-/
+partial def parsedToTerm (t : Term) : Term :=
+  match t with
+  -- Rosetta grammar: metavar ["$", "x"] → .var "$x"
+  | .con "metavar" [.lit "$", .lit name] => .var s!"${name}"
+  | .con "metavar" [.lit "$", .var name] => .var s!"${name}"
+  | .con "metavar" [.var "$", .con "ident" [.var name]] => .var s!"${name}"
+  | .con "metavar" [.lit "$", .con "ident" [.var name]] => .var s!"${name}"
+  | .con "metavar" args =>
+    match args with
+    | [_, nameT] =>
+      let name := match nameT with
+        | .var n => n
+        | .lit n => n
+        | .con "ident" [.var n] => n
+        | .con "ident" [.lit n] => n
+        | _ => "unknown"
+      .var s!"${name}"
+    | _ => t
+
+  -- Rosetta grammar: compound ["(", "Con", arg1, ..., ")"] → .con "Con" [arg1', ...]
+  | .con "compound" args =>
+    let filtered := args.filter (fun a => a != .lit "(" && a != .lit ")")
+    match filtered with
+    | [] => .con "unit" []
+    | [single] => parsedToTerm single
+    | first :: rest =>
+      let conName := match first with
+        | .var n => n
+        | .lit n => n
+        | .con "ident" [.var n] => n
+        | .con "ident" [.lit n] => n
+        | _ => "app"
+      .con conName (rest.map parsedToTerm)
+
+  -- Rosetta grammar: binder [name, ".", body]
+  -- Note: Do NOT add $ prefix to binder variables - these are lambda parameter names
+  | .con "binder" args =>
+    let filtered := args.filter (· != .lit ".")
+    match filtered with
+    | [nameT, body] =>
+      let varName := match nameT with
+        | .var n => n                            -- Keep as-is, no $ prefix
+        | .lit n => n                            -- Keep as-is, no $ prefix
+        | .con "ident" [.var n] => n             -- Keep as-is, no $ prefix
+        | .con "metavar" [_, .con "ident" [.var n]] => s!"${n}"  -- Actual metavar gets $
+        | .con "metavar" [_, .var n] => s!"${n}"                  -- Actual metavar gets $
+        | _ => "x"                               -- Fallback plain name
+      .con "binder" [.var varName, parsedToTerm body]
+    | [.con "ident" [.var n], .lit ".", body] =>
+      .con "binder" [.var n, parsedToTerm body]  -- No $ prefix for lambda params
+    | _ => .con "binder" (args.map parsedToTerm)
+
+  -- Pattern variable: $x → .var "$x"
+  -- Bootstrap parses "$x" as (var "$" (ident x)) or (var "$" x)
+  | .con "var" [.lit "$", .con "ident" [.var name]] => .var s!"${name}"
+  | .con "var" [.lit "$", .var name] => .var s!"${name}"
+  | .con "var" [.con "ident" [.var name]] => .var s!"${name}"
+  | .con "var" [.var name] => .var s!"${name}"
+
+  -- TypedVar: $x : ty → expand to [.var "$x", .lit ":", ty]
+  -- This is used to flatten typedVars in con arguments
+  | .con "typedVar" args =>
+    match args with
+    | [.lit "$", .con "ident" [.var name], .lit ":", ty] =>
+      -- Return a marker that the con handler can flatten
+      .con "_typedVar_" [.var s!"${name}", .lit ":", parsedToTerm ty]
+    | [.lit "$", .var name, .lit ":", ty] =>
+      .con "_typedVar_" [.var s!"${name}", .lit ":", parsedToTerm ty]
+    | _ => .con "typedVar" (args.map parsedToTerm)
+
+  -- Constructor: (name args...)
+  | .con "con" args =>
+    -- Filter out literal parens
+    let filtered := args.filter (· != .lit "(") |>.filter (· != .lit ")")
+    -- Check if it's a single operator like "->", ":", etc. - no children means just an operator
+    match filtered with
+    | [] => .con "unit" []  -- empty parens
+    | [.con "ident" [.var op]] =>
+      -- Single identifier - check if it's an operator
+      if op ∈ ["->", "→", ":", "~~>", "~>", "|", "×", "↦", "@@", "=I="] then
+        .lit op
+      else
+        .con op []
+    | [.var op] =>
+      if op ∈ ["->", "→", ":", "~~>", "~>", "|", "×", "↦", "@@", "=I="] then
+        .lit op
+      else
+        .con op []
+    -- Handle (con "->") pattern - parsed as [ident "con", lit "->"] or similar
+    | [.con "ident" [.var "con"], .lit op] =>
+      if op ∈ ["->", "→", ":", "~~>", "~>", "|", "×", "↦", "@@", "=I="] then
+        .lit op
+      else
+        .con "con" [.lit op]
+    | [.con "ident" [.lit "con"], .lit op] =>
+      if op ∈ ["->", "→", ":", "~~>", "~>", "|", "×", "↦", "@@", "=I="] then
+        .lit op
+      else
+        .con "con" [.lit op]
+    | [.var "con", .lit op] =>
+      if op ∈ ["->", "→", ":", "~~>", "~>", "|", "×", "↦", "@@", "=I="] then
+        .lit op
+      else
+        .con "con" [.lit op]
+    -- Handle single literal like "->"
+    | [.lit op] =>
+      if op ∈ ["->", "→", ":", "~~>", "~>", "|", "×", "↦", "@@", "=I="] then
+        .lit op
+      else
+        .con "con" [.lit op]
+    | _ =>
+      -- Flatten any typedVar constructs
+      let flattened := filtered.flatMap fun arg =>
+        let t := parsedToTerm arg
+        match t with
+        | .con "_typedVar_" children => children
+        | other => [other]
+      match flattened with
+      | [] => .con "unit" []
+      | (.con "ident" [.var name]) :: rest =>
+        .con name rest
+      | (.var name) :: rest =>
+        .con name rest
+      | (.con name []) :: rest =>
+        -- If the name is an operator, convert to literal
+        if name ∈ ["->", "→", ":", "~~>", "~>", "|", "×", "↦", "@@", "=I="] then
+          if rest.isEmpty then .lit name
+          else .con "_seq_" ([.lit name] ++ rest)
+        else
+          .con name rest
+      | _ => .con "con" flattened
+
+  -- Identifier alone becomes a constructor with no args
+  | .con "ident" [.var name] => .con name []
+  | .con "ident" [.lit name] => .con name []
+
+  -- Literals
+  | .lit s => .lit s
+  -- Bare identifiers (not metavars with $) become 0-argument constructors
+  -- e.g., `isoId` in pattern `isoId ~> ...` becomes `.con "isoId" []`
+  | .var n =>
+    if n.startsWith "$" then .var n  -- Keep metavars as-is
+    else .con n []  -- Bare idents become 0-arg constructors
+
+  -- Operators as constructors (no args) - convert to literals
+  | .con "->" [] => .lit "->"
+  | .con "→" [] => .lit "→"
+  | .con ":" [] => .lit ":"
+  | .con "~~>" [] => .lit "~~>"
+  | .con "~>" [] => .lit "~>"
+  | .con "|" [] => .lit "|"
+  | .con "×" [] => .lit "×"
+  | .con "↦" [] => .lit "↦"
+  | .con "@@" [] => .lit "@@"
+  | .con "=I=" [] => .lit "=I="
+
+  -- Recurse into other constructors
+  | .con name args =>
+    -- debug removed
+    .con name (args.map parsedToTerm)
+
+/-- Parse annotation from AST
+    Actual structure is (annot "@" (file "file")) which parses to:
+    .con "annot" [.lit "@", .con "file" [.lit "file"]] -/
+def parseAnnot (t : Term) : RuleAnnot :=
+  match t with
+  -- Handle actual parsed structure: (annot "@" (kind "kind"))
+  | .con "annot" [.lit "@", .con "entry" _] => .entry
+  | .con "annot" [.lit "@", .con "file" _] => .file
+  | .con "annot" [.lit "@", .con "expr" _] => .expr
+  | .con "annot" [.lit "@", .con "type" _] => .type
+  | .con "annot" [.lit "@", .con "decl" _] => .decl
+  -- Also handle simpler structure just in case
+  | .con "annot" [.con "entry" _] => .entry
+  | .con "annot" [.con "file" _] => .file
+  | .con "annot" [.con "expr" _] => .expr
+  | .con "annot" [.con "type" _] => .type
+  | .con "annot" [.con "decl" _] => .decl
+  | _ => .none
 
 /-- Extract transformation rules from rosetta2<L>.lego -/
 partial def extractTransformRules (t : Term) : List TransformRule :=
@@ -224,11 +489,20 @@ partial def extractTransformRules (t : Term) : List TransformRule :=
                        |>.filter (· != .lit "~~>")
                        |>.filter (· != .lit ";")
                        |>.filter (· != .con "unit" [])
-    match filtered with
-    | .con "ident" [.var name] :: rest =>
-      match rest with
-      | [pat, tmpl] => [{ name, pattern := pat, template := tmpl }]
-      | [pat] => [{ name, pattern := pat, template := pat }]
+    -- Check for annotation at start
+    let (annot, rest) := match filtered with
+      | (.con "annot" annotArgs) :: r => (parseAnnot (.con "annot" annotArgs), r)
+      | r => (RuleAnnot.none, r)
+    match rest with
+    | .con "ident" [.var name] :: patTmpl =>
+      match patTmpl with
+      | [pat, tmpl] =>
+        let pat' := parsedToTerm pat
+        let tmpl' := parsedToTerm tmpl
+        [{ name, pattern := pat', template := tmpl', annot }]
+      | [pat] =>
+        let p := parsedToTerm pat
+        [{ name, pattern := p, template := p, annot }]
       | _ => []
     | _ => []
   | .con "DPiece" args => args.flatMap extractTransformRules
@@ -254,8 +528,32 @@ partial def unifyPattern (pat : Term) (t : Term) (env : List (String × Term))
       | _ => none
   | .lit s1, .lit s2 => if s1 == s2 then some env else none
   | .con n1 args1, .con n2 args2 =>
-    if n1 == n2 && args1.length == args2.length then
-      args1.zip args2 |>.foldlM (fun e (p, t) => unifyPattern p t e) env
+    if n1 == n2 then
+      -- Special case: if pattern ends with a metavar, it can capture remaining args
+      if args1.length == args2.length then
+        args1.zip args2 |>.foldlM (fun e (p, t) => unifyPattern p t e) env
+      else if args1.length > 0 then
+        -- Check if the last pattern element is a metavar that should capture rest
+        match args1.getLast? with
+        | some (.var n) =>
+          if n.startsWith "$" then
+            -- Pattern has fewer args and ends with metavar - bind metavar to a seq of remaining args
+            let prefixLen := args1.length - 1
+            if args2.length >= prefixLen then
+              let patPrefix := args1.take prefixLen
+              let tPrefix := args2.take prefixLen
+              let tRest := args2.drop prefixLen
+              -- Match the prefix
+              match patPrefix.zip tPrefix |>.foldlM (fun e (p, t) => unifyPattern p t e) env with
+              | some e =>
+                -- Bind the trailing metavar to a seq of remaining args (or single if just 1)
+                let restTerm := if tRest.length == 1 then tRest[0]! else .con "seq" tRest
+                some ((n.drop 1, restTerm) :: e)
+              | none => none
+            else none
+          else none
+        | _ => none
+      else none
     else none
   | _, _ => none
 
@@ -271,59 +569,1411 @@ partial def substituteTemplate (tmpl : Term) (env : List (String × Term)) : Ter
   | .con name args => .con name (args.map (substituteTemplate · env))
   | _ => tmpl
 
-/-- Apply transformation rules to AST -/
-partial def applyTransforms (rules : List TransformRule) (t : Term) : Term :=
-  -- Try each rule
-  match rules.findSome? (fun r =>
-    match unifyPattern r.pattern t {} with
-    | some env => some (substituteTemplate r.template env)
-    | none => none
-  ) with
-  | some result => applyTransforms rules result
-  | none =>
-    -- No rule matched, recurse
+/-- Convert Lego AST (DLang, DPiece, DRule) to Rosetta IR format -/
+partial def legoToRosetta (t : Term) : Term :=
+  match t with
+  | .con "DLang" args =>
+    -- DLang lang_name imports? ":=" body
+    -- → seq of declarations from body
+    let bodyDecls := args.flatMap extractLegoDecls
+    .con "seq" bodyDecls
+  | .con "DPiece" args =>
+    -- DPiece "piece" name items*
+    -- → seq of declarations from items
+    let decls := args.flatMap extractLegoDecls
+    .con "seq" decls
+  | .con "DGrammar" args =>
+    -- Skip grammar definitions for now
+    .con "seq" []
+  | .con "DRule" args =>
+    -- DRule annot? "rule" name ":" pattern arrow template guard? ";"
+    convertRule args
+  | .con "DType" args =>
+    -- DType "type" name ":" term ":" type "when" premises
+    -- → type judgment (skip for now, generate comment)
+    .con "comment" [.lit "-- type judgment"]
+  | .con "seq" ts =>
+    let converted := ts.map legoToRosetta
+    let flattened := converted.flatMap (fun t =>
+      match t with
+      | .con "seq" inner => inner
+      | _ => [t])
+    .con "seq" flattened
+  | .con name args =>
+    .con name (args.map legoToRosetta)
+  | _ => t
+where
+  extractLegoDecls (t : Term) : List Term :=
     match t with
-    | .con name args => .con name (args.map (applyTransforms rules))
+    | .con "DPiece" args => args.flatMap extractLegoDecls
+    | .con "DLang" args => args.flatMap extractLegoDecls
+    | .con "DRule" args => [convertRule args]
+    | .con "DType" _ => []  -- Skip type judgments
+    | .con "DGrammar" _ => []  -- Skip grammar defs
+    | .con "seq" ts => ts.flatMap extractLegoDecls
+    -- Skip everything else - only emit rewrite rules
+    | _ => []
+
+  convertRule (args : List Term) : Term :=
+    -- Filter out literals like "rule", ":", "~~>", ";"
+    let filtered := args.filter (· != .lit "rule")
+                       |>.filter (· != .lit ":")
+                       |>.filter (· != .lit "~>")
+                       |>.filter (· != .lit "~~>")
+                       |>.filter (· != .lit ";")
+                       |>.filter (· != .con "unit" [])
+    -- Look for the name (ident node)
+    let (name, rest) := match filtered with
+      | (.con "ident" [.var n]) :: r => (n, r)
+      | (.con "annot" _) :: (.con "ident" [.var n]) :: r => (n, r)
+      | _ => ("unknown", filtered)
+    -- rest should be [pattern, template] or [pattern, template, guard]
+    match rest with
+    | [pat, tmpl] =>
+      -- Build a rewriteRule node in Rosetta IR format
+      .con "rewriteRule" [.lit "rewrite", .var name, .lit ":", pat, .lit "~>", tmpl, .con "unit" [], .lit ";"]
+    | [pat, tmpl, _guard] =>
+      .con "rewriteRule" [.lit "rewrite", .var name, .lit ":", pat, .lit "~>", tmpl, .con "unit" [], .lit ";"]
+    | _ => .con "comment" [.lit s!"-- rule {name} (malformed)"]
+
+/-- Apply transformation rules to AST
+    Entry-annotated rules are tried first at the top level.
+    Then all rules are applied recursively. -/
+partial def applyTransforms (rules : List TransformRule) (t : Term) (isTopLevel : Bool := true) : Term :=
+  -- At top level, prioritize entry/file rules
+  let prioritizedRules := if isTopLevel then
+    let entryRules := rules.filter (fun r => r.annot == .entry || r.annot == .file)
+    entryRules ++ rules.filter (fun r => r.annot != .entry && r.annot != .file)
+  else rules
+  -- Try each rule
+  let matched := prioritizedRules.findSome? (fun r =>
+    match unifyPattern r.pattern t {} with
+    | some env => some (r, env, substituteTemplate r.template env)
+    | none => none
+  )
+  match matched with
+  | some (_r, _env, result) =>
+    -- Only recurse if result is different (avoid infinite loop)
+    if result == t then t
+    else applyTransforms rules result false
+  | none =>
+    -- No rule matched, recurse into children
+    match t with
+    | .con name args => .con name (args.map (applyTransforms rules · false))
     | _ => t
 
 /-! ## Grammar-Driven Pretty-Printer -/
 
-/-- Pretty-print using grammar layout -/
-partial def prettyPrint (prods : List PrettyProduction) (t : Term) : String :=
-  (go t {}).output
-where
-  go (t : Term) (st : PPState) : PPState :=
+/-- Pretty-print state with argument tracking -/
+structure PPState' where
+  output : String := ""
+  indent : Nat := 0
+  needSpace : Bool := false
+  argIndex : Nat := 0  -- Current arg index for ref
+  deriving Repr
+
+namespace PPState'
+
+def emit (s : PPState') (t : String) : PPState' :=
+  let space := if s.needSpace && !s.output.isEmpty && !t.isEmpty then " " else ""
+  { s with output := s.output ++ space ++ t, needSpace := true }
+
+def space (s : PPState') : PPState' := { s with needSpace := true }
+def noSpace (s : PPState') : PPState' := { s with needSpace := false }
+def newline (s : PPState') : PPState' :=
+  let ind := String.mk (List.replicate (s.indent * 2) ' ')
+  { s with output := s.output ++ "\n" ++ ind, needSpace := false }
+def addIndent (s : PPState') : PPState' := { s with indent := s.indent + 1 }
+def dedent (s : PPState') : PPState' := { s with indent := if s.indent > 0 then s.indent - 1 else 0 }
+def nextArg (s : PPState') : PPState' := { s with argIndex := s.argIndex + 1 }
+def resetArgs (s : PPState') : PPState' := { s with argIndex := 0 }
+
+end PPState'
+
+/-- Extract module path string from DImport args -/
+def extractModulePath (args : List Term) : String :=
+  -- Args: ["import", (modulePath ...), ";"] or similar
+  let rec go (t : Term) : String :=
     match t with
-    | .var n => st.emit n |>.space
-    | .lit s => st.emit s |>.space
+    | .var n => n
+    | .lit s => if s == "import" || s == ";" || s == "." then "" else s
+    | .con "modulePath" inner =>
+      let parts := inner.filterMap (fun a => match a with
+        | .var n => some n
+        | .lit s => if s != "." then some s else none
+        | .con "ident" [.var n] => some n
+        | _ => none)
+      parts.foldl (fun acc p => if acc.isEmpty then p else acc ++ "." ++ p) ""
+    | .con "ident" [.var n] => n
+    | .con _ inner => inner.map go |>.filter (!·.isEmpty) |>.foldl (fun acc p => if acc.isEmpty then p else acc ++ "." ++ p) ""
+  args.map go |>.filter (!·.isEmpty) |>.head?.getD "Unknown"
+
+/-- Check if a string is a type variable (lowercase single letter or short lowercase name) -/
+def isTypeVar (s : String) : Bool :=
+  !s.isEmpty && (s.get! 0).isLower && s.length <= 2
+
+/-- Extract type variables from a type term -/
+partial def collectTypeVars (t : Term) : List String :=
+  match t with
+  | .var n => if isTypeVar n then [n] else []
+  | .lit _ => []
+  | .con _ args => args.flatMap collectTypeVars |>.eraseDups
+
+/-- Get the return type from a constructor type (the last type in arrow chain) -/
+partial def getReturnType (t : Term) : Term :=
+  match t with
+  | .con "typeExpr" args =>
+    match args with
+    | [_, .lit "->", right] => getReturnType right
+    | [single] => single
+    | _ => t
+  | _ => t
+
+/-- Extract type parameters from ADT constructors
+    Look at return types like "Iso a b" and extract [a, b] -/
+def extractTypeParams (tyName : String) (constrs : List Term) : List String :=
+  -- For each constructor, get its return type and extract type vars
+  let allVars := constrs.flatMap fun c =>
+    match c with
+    | .con "constr" [_, _, ty] =>
+      -- Get the return type (e.g., "Iso a b") and collect its type vars
+      let retTy := getReturnType ty
+      match retTy with
+      | .con "typeApp" args =>
+        -- Skip the type name itself, collect vars from arguments
+        args.drop 1 |>.flatMap collectTypeVars
+      | _ => collectTypeVars retTy
+    | .con "seq" inner => inner.flatMap fun c' =>
+      match c' with
+      | .con "constr" [_, _, ty'] =>
+        let retTy := getReturnType ty'
+        match retTy with
+        | .con "typeApp" args => args.drop 1 |>.flatMap collectTypeVars
+        | _ => collectTypeVars retTy
+      | _ => []
+    | _ => []
+  allVars.eraseDups
+
+/-- Known parameterized types and their arity (for adding _ placeholders when used without args) -/
+def knownPolyTypes : List (String × Nat) := [
+  ("Iso", 2), ("List", 1), ("Option", 1), ("AST", 1)
+]
+
+/-! ## Rosetta AST Normalization
+
+The Rosetta parser produces AST with structural nodes like:
+  - compound ["(", "Con", arg1, arg2, ")"]  → Con "Con" [arg1', arg2']
+  - metavar ["$", "x"]                       → Var "$x"
+  - binder ["x", ".", body]                  → Con "binder" [Var "$x", body']
+
+We need to normalize these before code generation.
+-/
+
+/-- Normalize Rosetta-parsed term to clean Term structure -/
+partial def normalizeRosettaTerm (t : Term) : Term :=
+  match t with
+  -- metavar: ($ x) → Var "$x"
+  | .con "metavar" [.lit "$", .lit name] => .var s!"${name}"
+  | .con "metavar" [.lit "$", .var name] => .var s!"${name}"
+  | .con "metavar" [.var "$", .con "ident" [.var name]] => .var s!"${name}"
+  | .con "metavar" [.lit "$", .con "ident" [.var name]] => .var s!"${name}"
+  | .con "metavar" args =>
+    -- Fallback: try to extract name
+    match args with
+    | [_, nameT] =>
+      let name := match nameT with
+        | .var n => n
+        | .lit n => n
+        | .con "ident" [.var n] => n
+        | .con "ident" [.lit n] => n
+        | _ => "unknown"
+      .var s!"${name}"
+    | _ => t
+
+  -- compound: (name args...) → Con name [normalized args]
+  | .con "compound" args =>
+    -- Filter out literal parens
+    let filtered := args.filter (fun a => a != .lit "(" && a != .lit ")")
+    match filtered with
+    | [] => .con "unit" []
+    | [single] => normalizeRosettaTerm single
+    | first :: rest =>
+      -- First element is constructor name, rest are args
+      let conName := match first with
+        | .var n => n
+        | .lit n => n
+        | .con "ident" [.var n] => n
+        | .con "ident" [.lit n] => n
+        | _ => "app"
+      let normArgs := rest.map normalizeRosettaTerm
+      .con conName normArgs
+
+  -- binder: x . body → Con "binder" [$x, body]
+  | .con "binder" args =>
+    let filtered := args.filter (· != .lit ".")
+    match filtered with
+    | [nameT, body] =>
+      let varName := match nameT with
+        | .var n => s!"${n}"
+        | .lit n => s!"${n}"
+        | .con "ident" [.var n] => s!"${n}"
+        | _ => "$x"
+      .con "binder" [.var varName, normalizeRosettaTerm body]
+    | [.con "ident" [.var n], .lit ".", body] =>
+      .con "binder" [.var s!"${n}", normalizeRosettaTerm body]
+    | _ => .con "binder" (args.map normalizeRosettaTerm)
+
+  -- ident: just the name
+  | .con "ident" [.var n] => .var n
+  | .con "ident" [.lit n] => .lit n
+
+  -- Regular constructor - recurse
+  | .con name args => .con name (args.map normalizeRosettaTerm)
+
+  -- Pass through vars and lits
+  | .var n => .var n
+  | .lit s => .lit s
+
+/-! ## Rewrite Rule Code Generation -/
+
+/-- Collect pattern variables from a Term (variables starting with $) -/
+partial def collectPatternVars (t : Term) : List String :=
+  match t with
+  | .var n => if n.startsWith "$" then [n.drop 1] else []
+  | .con _ args => args.flatMap collectPatternVars
+  | .lit _ => []
+
+/-- State for pattern generation: track seen variables and guards needed -/
+structure PatGenState where
+  seen : Std.HashSet String  -- Variables we've seen (first occurrence binds)
+  counter : Nat              -- Counter for generating fresh names
+  guards : List (String × String)  -- (fresh_name, original_var) pairs for equality checks
+
+def PatGenState.init : PatGenState := { seen := Std.HashSet.emptyWithCapacity 16, counter := 0, guards := [] }
+
+/-- Escape a string for Lean string literal -/
+def escapeLeanString (s : String) : String :=
+  s.foldl (fun acc c =>
+    if c == '"' then acc ++ "\\\""
+    else if c == '\\' then acc ++ "\\\\"
+    else if c == '\n' then acc ++ "\\n"
+    else if c == '\r' then acc ++ "\\r"
+    else if c == '\t' then acc ++ "\\t"
+    else acc.push c
+  ) ""
+
+/-- Sanitize variable names for Lean (escape reserved keywords) -/
+def leanVarName (n : String) : String :=
+  let leanKeywords := ["abbrev", "axiom", "class", "def", "do", "else", "end", "example", "export",
+                       "extends", "for", "fun", "if", "import", "in", "inductive", "instance",
+                       "let", "macro", "match", "mutual", "namespace", "notation", "opaque",
+                       "open", "partial", "private", "protected", "return", "scoped", "section",
+                       "set_option", "structure", "syntax", "theorem", "then", "universe", "variable",
+                       "where", "with", "t"]  -- t conflicts with function param
+  -- Replace ' with _prime
+  let sanitized := n.foldl (fun acc c =>
+    if c == '\'' then acc ++ "_prime"
+    else acc.push c
+  ) ""
+  -- Escape reserved keywords by prefixing with v_
+  if leanKeywords.contains sanitized then "v_" ++ sanitized
+  else sanitized
+
+/-- Convert a pattern Term to Lean pattern syntax, tracking duplicate vars -/
+partial def termToLeanPatternWithState (t : Term) (st : PatGenState) : (String × PatGenState) :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := leanVarName (n.drop 1)
+      if st.seen.contains varName then
+        -- Duplicate! Generate fresh name and record guard
+        let freshName := varName ++ "_" ++ toString st.counter
+        (freshName, { st with counter := st.counter + 1, guards := (freshName, varName) :: st.guards })
+      else
+        -- First occurrence: bind it
+        (varName, { st with seen := st.seen.insert varName })
+    else
+      (".Lit \"" ++ escapeLeanString n ++ "\"", st)  -- Literal becomes .Lit
+  | .lit s => (".Lit \"" ++ escapeLeanString s ++ "\"", st)
+  | .con name args =>
+    if args.isEmpty then (".Con \"" ++ escapeLeanString name ++ "\" []", st)
+    else
+      let (argStrs, finalSt) := args.foldl (fun (accStrs, accSt) arg =>
+        let (s, newSt) := termToLeanPatternWithState arg accSt
+        (accStrs ++ [s], newSt)
+      ) ([], st)
+      (".Con \"" ++ escapeLeanString name ++ "\" [" ++ ", ".intercalate argStrs ++ "]", finalSt)
+
+/-- Convert a pattern Term to Lean pattern syntax (simple version for backward compat) -/
+partial def termToLeanPattern (t : Term) : String :=
+  (termToLeanPatternWithState t PatGenState.init).1
+
+/-- Convert a template Term to Lean expression syntax.
+    boundVars is the set of variables bound in the LHS pattern.
+    Variables starting with $ that are in boundVars become Lean variable references.
+    Variables starting with $ that are NOT in boundVars become .Var constructors. -/
+partial def termToLeanExpr (t : Term) (boundVars : List String) : String :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := n.drop 1
+      -- Only use as Lean variable if it was actually bound in the LHS pattern
+      if boundVars.contains varName then leanVarName varName
+      else ".Var \"" ++ escapeLeanString varName ++ "\""  -- Free variable becomes .Var
+    else ".Lit \"" ++ escapeLeanString n ++ "\""  -- Literal
+  | .lit s => ".Lit \"" ++ escapeLeanString s ++ "\""
+  | .con name args =>
+    if args.isEmpty then ".Con \"" ++ escapeLeanString name ++ "\" []"
+    else
+      let argStrs := args.map (fun a => termToLeanExpr a boundVars)
+      ".Con \"" ++ escapeLeanString name ++ "\" [" ++ ", ".intercalate argStrs ++ "]"
+
+/-- Emit a Lean rewrite rule function with proper handling of duplicate pattern vars -/
+def emitLeanRewriteRule (name : String) (lhs rhs : Term) (st : PPState') : PPState' :=
+  let patVars := collectPatternVars lhs  -- Variables from $x patterns in LHS
+  let (patStr, genSt) := termToLeanPatternWithState lhs PatGenState.init
+  let resStr := termToLeanExpr rhs patVars
+  if genSt.guards.isEmpty then
+    -- No duplicate vars - simple pattern match
+    st.noSpace
+      |>.emit ("def " ++ name ++ " : Term → Option Term")
+      |>.newline |>.emit ("  | " ++ patStr ++ " => some (" ++ resStr ++ ")")
+      |>.newline |>.emit "  | _ => none"
+      |>.newline |>.newline
+  else
+    -- Has duplicate vars - need guards
+    let guardChecks := genSt.guards.map (fun (fresh, orig) => fresh ++ " == " ++ orig) |> " && ".intercalate
+    st.noSpace
+      |>.emit ("def " ++ name ++ " : Term → Option Term")
+      |>.newline |>.emit ("  | " ++ patStr ++ " => if " ++ guardChecks ++ " then some (" ++ resStr ++ ") else none")
+      |>.newline |>.emit "  | _ => none"
+      |>.newline |>.newline
+
+/-- Escape a string for Scala string literal (used in pattern and expression generation) -/
+def escapeScalaString (s : String) : String :=
+  s.foldl (fun acc c =>
+    if c == '"' then acc ++ "\\\""
+    else if c == '\\' then acc ++ "\\\\"
+    else if c == '\n' then acc ++ "\\n"
+    else if c == '\r' then acc ++ "\\r"
+    else if c == '\t' then acc ++ "\\t"
+    else acc.push c
+  ) ""
+
+/-- Sanitize variable names for Scala (replace ' with _prime, escape reserved keywords) -/
+def scalaVarName (n : String) : String :=
+  let scalaKeywords := ["abstract", "case", "catch", "class", "def", "do", "else", "extends",
+                        "false", "final", "finally", "for", "forSome", "if", "implicit", "import",
+                        "lazy", "match", "new", "null", "object", "override", "package", "private",
+                        "protected", "return", "sealed", "super", "then", "this", "throw", "trait", "try",
+                        "true", "type", "val", "var", "while", "with", "yield", "t"]  -- t conflicts with function param
+  -- Replace ' with _prime
+  let sanitized := n.foldl (fun acc c =>
+    if c == '\'' then acc ++ "_prime"
+    else acc.push c
+  ) ""
+  -- Escape reserved keywords by prefixing with v_
+  if scalaKeywords.contains sanitized then "v_" ++ sanitized
+  else sanitized
+
+/-- Convert a pattern Term to Scala pattern syntax with state -/
+partial def termToScalaPatternWithState (t : Term) (st : PatGenState) : (String × PatGenState) :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := scalaVarName (n.drop 1)
+      if st.seen.contains varName then
+        let freshName := varName ++ st.counter.repr
+        (freshName, { st with counter := st.counter + 1, guards := (freshName, varName) :: st.guards })
+      else
+        (varName, { st with seen := st.seen.insert varName })
+    else
+      ("Lit(\"" ++ escapeScalaString n ++ "\")", st)
+  | .lit s => ("Lit(\"" ++ escapeScalaString s ++ "\")", st)
+  | .con name args =>
+    if args.isEmpty then ("Con(\"" ++ escapeScalaString name ++ "\", Nil)", st)
+    else
+      let (argStrs, finalSt) := args.foldl (fun (accStrs, accSt) arg =>
+        let (s, newSt) := termToScalaPatternWithState arg accSt
+        (accStrs ++ [s], newSt)
+      ) ([], st)
+      ("Con(\"" ++ escapeScalaString name ++ "\", List(" ++ ", ".intercalate argStrs ++ "))", finalSt)
+
+/-- Convert a pattern Term to Scala pattern syntax -/
+partial def termToScalaPattern (t : Term) : String :=
+  (termToScalaPatternWithState t PatGenState.init).1
+
+/-- Convert a template Term to Scala expression syntax.
+    boundVars is the set of variables bound in the LHS pattern (from collectPatternVars).
+    Variables starting with $ that are in boundVars become Scala variable references.
+    Variables starting with $ that are NOT in boundVars become Term.Var constructors. -/
+partial def termToScalaExpr (t : Term) (boundVars : List String) : String :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := n.drop 1
+      -- Only use as Scala variable if it was actually bound in the LHS pattern
+      if boundVars.contains varName then scalaVarName varName
+      else "Var(\"" ++ escapeScalaString varName ++ "\")"  -- Free variable becomes Term.Var
+    else "Lit(\"" ++ escapeScalaString n ++ "\")"
+  | .lit s => "Lit(\"" ++ escapeScalaString s ++ "\")"
+  | .con name args =>
+    if args.isEmpty then "Con(\"" ++ escapeScalaString name ++ "\", Nil)"
+    else
+      let argStrs := args.map (fun a => termToScalaExpr a boundVars)
+      "Con(\"" ++ escapeScalaString name ++ "\", List(" ++ ", ".intercalate argStrs ++ "))"
+
+/-- Emit a Scala rewrite rule function -/
+def emitScalaRewriteRule (name : String) (lhs rhs : Term) (st : PPState') : PPState' :=
+  let patVars := collectPatternVars lhs  -- Variables from $x patterns in LHS
+  let (patStr, genSt) := termToScalaPatternWithState lhs PatGenState.init
+  let resStr := termToScalaExpr rhs patVars
+  if genSt.guards.isEmpty then
+    st.noSpace
+      |>.emit ("def " ++ name ++ "(t: Term): Option[Term] = t match {")
+      |>.newline |>.emit ("  case " ++ patStr ++ " => Some(" ++ resStr ++ ")")
+      |>.newline |>.emit "  case _ => None"
+      |>.newline |>.emit "}"
+      |>.newline |>.newline
+  else
+    let guardChecks := genSt.guards.map (fun (fresh, orig) => fresh ++ " == " ++ orig) |> " && ".intercalate
+    st.noSpace
+      |>.emit ("def " ++ name ++ "(t: Term): Option[Term] = t match {")
+      |>.newline |>.emit ("  case " ++ patStr ++ " if " ++ guardChecks ++ " => Some(" ++ resStr ++ ")")
+      |>.newline |>.emit "  case _ => None"
+      |>.newline |>.emit "}"
+      |>.newline |>.newline
+
+/-- Escape a string for Haskell string literal -/
+def escapeHaskellString (s : String) : String :=
+  s.foldl (fun acc c =>
+    if c == '"' then acc ++ "\\\""
+    else if c == '\\' then acc ++ "\\\\"
+    else if c == '\n' then acc ++ "\\n"
+    else if c == '\r' then acc ++ "\\r"
+    else if c == '\t' then acc ++ "\\t"
+    else acc.push c
+  ) ""
+
+/-- Sanitize variable names for Haskell (replace ' with _prime if at end, escape reserved keywords) -/
+def haskellVarName (n : String) : String :=
+  let haskellKeywords := ["case", "class", "data", "default", "deriving", "do", "else", "foreign",
+                          "if", "import", "in", "infix", "infixl", "infixr", "instance", "let",
+                          "module", "newtype", "of", "then", "type", "where", "t"]  -- t conflicts with function param
+  -- Replace ' with _prime (Haskell allows ' in names but not at the start)
+  let sanitized := n.foldl (fun acc c =>
+    if c == '\'' then acc ++ "_prime"
+    else acc.push c
+  ) ""
+  -- Escape reserved keywords by prefixing with v_
+  if haskellKeywords.contains sanitized then "v_" ++ sanitized
+  else sanitized
+
+partial def termToHaskellPatternWithState (t : Term) (st : PatGenState) : (String × PatGenState) :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := haskellVarName (n.drop 1)
+      if st.seen.contains varName then
+        let freshName := varName ++ st.counter.repr
+        (freshName, { st with counter := st.counter + 1, guards := (freshName, varName) :: st.guards })
+      else
+        (varName, { st with seen := st.seen.insert varName })
+    else
+      ("(Lit \"" ++ escapeHaskellString n ++ "\")", st)
+  | .lit s => ("(Lit \"" ++ escapeHaskellString s ++ "\")", st)
+  | .con name args =>
+    if args.isEmpty then ("(Con \"" ++ escapeHaskellString name ++ "\" [])", st)
+    else
+      let (argStrs, finalSt) := args.foldl (fun (accStrs, accSt) arg =>
+        let (s, newSt) := termToHaskellPatternWithState arg accSt
+        (accStrs ++ [s], newSt)
+      ) ([], st)
+      ("(Con \"" ++ escapeHaskellString name ++ "\" [" ++ ", ".intercalate argStrs ++ "])", finalSt)
+
+/-- Convert a pattern Term to Haskell pattern syntax -/
+partial def termToHaskellPattern (t : Term) : String :=
+  (termToHaskellPatternWithState t PatGenState.init).1
+
+/-- Convert a template Term to Haskell expression syntax.
+    boundVars is the set of variables bound in the LHS pattern.
+    Variables starting with $ that are in boundVars become Haskell variable references.
+    Variables starting with $ that are NOT in boundVars become Var constructors. -/
+partial def termToHaskellExpr (t : Term) (boundVars : List String) : String :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := n.drop 1
+      -- Only use as Haskell variable if it was actually bound in the LHS pattern
+      if boundVars.contains varName then haskellVarName varName
+      else "Var \"" ++ escapeHaskellString varName ++ "\""  -- Free variable becomes Var
+    else "Lit \"" ++ escapeHaskellString n ++ "\""
+  | .lit s => "Lit \"" ++ escapeHaskellString s ++ "\""
+  | .con name args =>
+    if args.isEmpty then "Con \"" ++ escapeHaskellString name ++ "\" []"
+    else
+      let argStrs := args.map (fun a => termToHaskellExpr a boundVars)
+      "Con \"" ++ escapeHaskellString name ++ "\" [" ++ ", ".intercalate argStrs ++ "]"
+
+/-- Emit a Haskell rewrite rule function -/
+def emitHaskellRewriteRule (name : String) (lhs rhs : Term) (st : PPState') : PPState' :=
+  let patVars := collectPatternVars lhs  -- Variables from $x patterns in LHS
+  let (patStr, genSt) := termToHaskellPatternWithState lhs PatGenState.init
+  let resStr := termToHaskellExpr rhs patVars
+  if genSt.guards.isEmpty then
+    st.noSpace
+      |>.emit (name ++ " :: Term -> Maybe Term")
+      |>.newline |>.emit (name ++ " " ++ patStr ++ " = Just (" ++ resStr ++ ")")
+      |>.newline |>.emit (name ++ " _ = Nothing")
+      |>.newline |>.newline
+  else
+    -- Haskell doesn't have pattern guards in function definitions the same way,
+    -- so we use a case expression with guards
+    let guardChecks := genSt.guards.map (fun (fresh, orig) => fresh ++ " == " ++ orig) |> ", ".intercalate
+    st.noSpace
+      |>.emit (name ++ " :: Term -> Maybe Term")
+      |>.newline |>.emit (name ++ " " ++ patStr ++ " | " ++ guardChecks ++ " = Just (" ++ resStr ++ ")")
+      |>.newline |>.emit (name ++ " _ = Nothing")
+      |>.newline |>.newline
+
+/-- Convert camelCase to snake_case -/
+def toSnakeCase (s : String) : String :=
+  let r := s.foldl (fun acc c =>
+    if c.isUpper then acc ++ "_" ++ c.toLower.toString
+    else acc ++ c.toString) ""
+  if r.startsWith "_" then r.drop 1 else r
+
+/-- Generate a Rust condition expression for matching a pattern against a variable -/
+partial def genRustCondition (pat : Term) (varExpr : String) : (String × List (String × String)) :=
+  -- Returns (condition_expr, [(var_name, binding_expr)])
+  match pat with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := n.drop 1
+      -- Any term matches, bind it
+      ("true", [(varName, varExpr)])
+    else
+      -- Match literal
+      ("matches!(" ++ varExpr ++ ", Term::Lit(ref s) if s == \"" ++ n ++ "\")", [])
+  | .lit s =>
+    ("matches!(" ++ varExpr ++ ", Term::Lit(ref s) if s == \"" ++ s ++ "\")", [])
+  | .con name args =>
+    if args.isEmpty then
+      ("matches!(" ++ varExpr ++ ", Term::Con(ref n, ref a) if n == \"" ++ name ++ "\" && a.is_empty())", [])
+    else
+      -- Generate nested conditions - simplified
+      let baseCond := "matches!(" ++ varExpr ++ ", Term::Con(ref n, ref a) if n == \"" ++ name ++ "\" && a.len() == " ++ toString args.length ++ ")"
+      (baseCond, [])
+
+/-- Convert a pattern Term to Rust pattern syntax with state -/
+partial def termToRustPatternWithState (t : Term) (st : PatGenState) : (String × PatGenState) :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := n.drop 1
+      if st.seen.contains varName then
+        let freshName := varName ++ "_" ++ st.counter.repr
+        (freshName, { st with counter := st.counter + 1, guards := (freshName, varName) :: st.guards })
+      else
+        (varName, { st with seen := st.seen.insert varName })
+    else
+      ("Term::Lit(s) if s == \"" ++ n ++ "\"", st)
+  | .lit s => ("Term::Lit(s) if s == \"" ++ s ++ "\"", st)
+  | .con name args =>
+    if args.isEmpty then
+      ("Term::Con(ref n, ref args) if n == \"" ++ name ++ "\" && args.is_empty()", st)
+    else
+      let (argStrs, finalSt) := args.foldl (fun (accStrs, accSt) arg =>
+        let (s, newSt) := termToRustPatternWithState arg accSt
+        (accStrs ++ [s], newSt)
+      ) ([], st)
+      ("Term::Con(ref n, ref a) if n == \"" ++ name ++ "\" && a.len() == " ++ toString args.length, finalSt)
+
+/-- Convert a pattern Term to Rust pattern syntax -/
+partial def termToRustPattern (t : Term) : String :=
+  (termToRustPatternWithState t PatGenState.init).1
+
+/-- Escape a string for Rust string literal -/
+def escapeRustString (s : String) : String :=
+  s.foldl (fun acc c =>
+    if c == '"' then acc ++ "\\\""
+    else if c == '\\' then acc ++ "\\\\"
+    else if c == '\n' then acc ++ "\\n"
+    else if c == '\r' then acc ++ "\\r"
+    else if c == '\t' then acc ++ "\\t"
+    else acc.push c
+  ) ""
+
+/-- Sanitize variable names for Rust (replace ' with _prime, escape keywords, avoid shadowing t) -/
+def rustVarName (n : String) : String :=
+  let keywords := ["as", "break", "const", "continue", "crate", "else", "enum",
+                   "extern", "false", "fn", "for", "if", "impl", "in", "let",
+                   "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+                   "self", "Self", "static", "struct", "super", "trait", "true",
+                   "type", "unsafe", "use", "where", "while", "async", "await",
+                   "dyn", "abstract", "become", "box", "do", "final", "macro",
+                   "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
+                   "t"]  -- Also avoid shadowing the function parameter 't'
+  let n' := n.replace "'" "_prime"
+  if keywords.contains n' then "v_" ++ n' else n'
+
+/-- Convert a template Term to Rust expression syntax.
+    boundVars is the set of pattern variables that were bound in the LHS. -/
+partial def termToRustExpr (t : Term) (boundVars : List String := []) : String :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := n.drop 1
+      -- Only reference as variable if it was bound in the pattern
+      if boundVars.contains varName then "Box::new(" ++ rustVarName varName ++ ".clone())"
+      else "Box::new(Term::Var(\"" ++ escapeRustString varName ++ "\".to_string()))"
+    else "Box::new(Term::Lit(\"" ++ escapeRustString n ++ "\".to_string()))"
+  | .lit s => "Box::new(Term::Lit(\"" ++ escapeRustString s ++ "\".to_string()))"
+  | .con name args =>
+    if args.isEmpty then "Box::new(Term::Con(\"" ++ escapeRustString name ++ "\".to_string(), vec![]))"
+    else
+      let argStrs := args.map (termToRustExpr · boundVars)
+      "Box::new(Term::Con(\"" ++ escapeRustString name ++ "\".to_string(), vec![" ++ ", ".intercalate argStrs ++ "]))"
+
+/-- Convert a template Term to Rust expression syntax (top-level, no Box) -/
+partial def termToRustExprTop (t : Term) (boundVars : List String := []) : String :=
+  match t with
+  | .var n =>
+    if n.startsWith "$" then
+      let varName := n.drop 1
+      if boundVars.contains varName then rustVarName varName ++ ".clone()"
+      else "Term::Var(\"" ++ escapeRustString varName ++ "\".to_string())"
+    else "Term::Lit(\"" ++ escapeRustString n ++ "\".to_string())"
+  | .lit s => "Term::Lit(\"" ++ escapeRustString s ++ "\".to_string())"
+  | .con name args =>
+    if args.isEmpty then "Term::Con(\"" ++ escapeRustString name ++ "\".to_string(), vec![])"
+    else
+      let argStrs := args.map (termToRustExpr · boundVars)
+      "Term::Con(\"" ++ escapeRustString name ++ "\".to_string(), vec![" ++ ", ".intercalate argStrs ++ "])"
+
+/-- Generate Rust match conditions and bindings for a pattern -/
+partial def genRustMatchCode (pat : Term) (varPath : String) (depth : Nat) : (List String × List (String × String × String)) :=
+  -- Returns (conditions, bindings) where bindings are (rustVarName, extractExpr, originalName)
+  match pat with
+  | .var n =>
+    if n.startsWith "$" then
+      let origName := n.drop 1
+      let rustName := rustVarName origName
+      -- Bind the variable to the current path
+      ([], [(rustName, varPath ++ ".clone()", origName)])
+    else
+      -- Match literal identifier
+      let escaped := escapeRustString n
+      ([s!"matches!({varPath}, Term::Lit(ref s) if s == \"{escaped}\")"], [])
+  | .lit s =>
+    let escaped := escapeRustString s
+    ([s!"matches!({varPath}, Term::Lit(ref s) if s == \"{escaped}\")"], [])
+  | .con name args =>
+    let escapedName := escapeRustString name
+    if args.isEmpty then
+      ([s!"matches!({varPath}, Term::Con(ref n, ref a) if n == \"{escapedName}\" && a.is_empty())"], [])
+    else
+      -- Check constructor name and arity
+      let baseCond := s!"matches!({varPath}, Term::Con(ref n, ref a) if n == \"{escapedName}\" && a.len() == {args.length})"
+      -- Generate conditions for each argument using indices
+      let indices := List.range args.length
+      let indexedArgs := List.zip indices args
+      let (argConds, argBinds) := indexedArgs.foldl (fun (conds, binds) (i, arg) =>
+        let argPath := s!"get_arg({varPath}, {i})"
+        let (c, b) := genRustMatchCode arg argPath (depth + 1)
+        (conds ++ c, binds ++ b)
+      ) ([baseCond], [])
+      (argConds, argBinds)
+
+/-- Emit a Rust rewrite rule function with actual pattern matching -/
+def emitRustRewriteRule (name : String) (lhs rhs : Term) (st : PPState') : PPState' :=
+  let rustName := toSnakeCase name
+  let (conditions, bindings) := genRustMatchCode lhs "t" 0
+  -- Get the list of original bound variable names for RHS generation
+  let boundVarNames := bindings.map (fun (_, _, orig) => orig)
+  let resStr := termToRustExprTop rhs boundVarNames
+
+  -- Note: Duplicate variable guards for non-linear patterns (e.g., $x ... $x)
+  -- are not yet implemented. For now we skip them.
+  let bindNames := bindings.map (fun (rn, _, _) => rn)
+
+  if conditions.isEmpty && bindings.isEmpty then
+    -- Simple atom match
+    st.noSpace
+      |>.emit (s!"pub fn {rustName}(t: &Term) -> Option<Term> " ++ "{")
+      |>.newline |>.emit (s!"    if matches!(t, Term::Lit(ref s) if s == \"{name}\") " ++ "{")
+      |>.newline |>.emit s!"        Some({resStr})"
+      |>.newline |>.emit "    } else {"
+      |>.newline |>.emit "        None"
+      |>.newline |>.emit "    }"
+      |>.newline |>.emit "}"
+      |>.newline |>.newline
+  else
+    -- Generate the match function
+    let allConds := " && ".intercalate conditions
+    -- Use only unique bindings (skip duplicates for now)
+    let seenNames : Std.HashSet String := Std.HashSet.emptyWithCapacity 16
+    let (_, uniqueBindings) := bindings.foldl (fun (seen, acc) (varName, expr, orig) =>
+      if seen.contains varName then (seen, acc)
+      else (seen.insert varName, acc ++ [(varName, expr, orig)])
+    ) (seenNames, [])
+    let bindingStmts := uniqueBindings.map (fun (varName, expr, _) => "    let " ++ varName ++ " = " ++ expr ++ ";")
+
+    st.noSpace
+      |>.emit (s!"pub fn {rustName}(t: &Term) -> Option<Term> " ++ "{")
+      |>.newline |>.emit (s!"    if {allConds} " ++ "{")
+      |> (fun s => bindingStmts.foldl (fun s' stmt => s'.newline.emit stmt) s)
+      |>.newline |>.emit s!"        Some({resStr})"
+      |>.newline |>.emit "    } else {"
+      |>.newline |>.emit "        None"
+      |>.newline |>.emit "    }"
+      |>.newline |>.emit "}"
+      |>.newline |>.newline
+
+/-- Pretty-print using grammar layout -/
+partial def prettyPrint (prods : List PrettyProduction) (t : Term) (lang : TargetLang := .Lean) : String :=
+  (go t { : PPState' }).output
+where
+  go (t : Term) (st : PPState') : PPState' :=
+    match t with
+    | .var n => st.emit n
+    | .lit s => st.emit s
     | .con name args =>
-      -- Look up production for this constructor
-      match prods.find? (·.name == name) with
-      | some prod => applyLayout prod.layout args st
-      | none =>
-        -- Default: emit constructor name and args
-        let st := st.emit name |>.space
-        args.foldl (fun s a => go a s) st
+      -- For target AST nodes (from transformation), use defaultPrint
+      -- These are the constructs our transforms produce:
+      let targetNodes := ["leanModule", "inductiveDecl", "whereCtors", "ctor", "arrowTy", "var",
+                          "scalaFile", "sealedTrait", "caseClass",
+                          "haskellModule", "dataDecl", "dataCon",
+                          "rustFile", "enumDecl", "enumVariant",
+                          "tyVar", "tyFun", "tyApp", "tyPath", "tyGeneric", "tyFn", "typeList", "tyAny", "unitTy"]
+      if targetNodes.contains name then
+        defaultPrint name args st
+      else
+        -- Look up production for this constructor
+        match prods.find? (·.name == name) with
+        | some prod =>
+          -- Apply layout with args available
+          applyLayout prod.layout args (st.resetArgs)
+        | none =>
+          -- No production found - fall back to default
+          defaultPrint name args st
 
-  applyLayout (cmds : List LayoutCmd) (_args : List Term) (st : PPState) : PPState :=
-    cmds.foldl (fun s cmd => applyCmd cmd _args s) st
+  -- Default printing for constructs without grammar productions
+  defaultPrint (name : String) (args : List Term) (st : PPState') : PPState' :=
+    match name with
+    -- === Lean target nodes ===
+    | "inductiveDecl" =>
+      match args with
+      | [tyName, ctors] =>
+        let st := st.emit "inductive" |>.emit (termToString tyName) |>.emit "where" |>.newline |>.addIndent
+        let st := go ctors st |>.dedent
+        st.emit "deriving BEq, Repr" |>.newline
+      | _ => st.emit s!"inductiveDecl({args.length})"
+    | "whereCtors" =>
+      args.foldl (fun s a => go a s) st
+    | "ctor" =>
+      match args with
+      | [ctorName, ty] =>
+        st.emit "|" |>.emit (termToString ctorName) |>.emit ":" |>.space |> (go ty ·) |>.newline
+      | _ => st.emit s!"ctor({args.length})"
+    | "arrowTy" =>
+      match args with
+      | [l, r] =>
+        go l st |>.emit "→" |> (go r ·)
+      | _ => st.emit "arrowTy?"
+    | "var" =>
+      match args with
+      | [.var n] => st.emit n
+      | [.lit s] => st.emit s
+      | _ => args.foldl (fun s a => go a s) st
 
-  applyCmd (cmd : LayoutCmd) (_args : List Term) (st : PPState) : PPState :=
+    -- === Scala target nodes ===
+    | "scalaFile" => args.foldl (fun s a => go a s) st
+    | "sealedTrait" =>
+      match args with
+      | [tyName, ctors] =>
+        let st := st.emit "sealed trait" |>.emit (termToString tyName) |>.newline |>.newline
+        go ctors st
+      | _ => st.emit s!"sealedTrait({args.length})"
+    | "caseClass" =>
+      match args with
+      | [ctorName, fields, parent] =>
+        let st := st.emit "case class" |>.emit (termToString ctorName) |>.noSpace |>.emit "("
+        let st := go fields st
+        st.noSpace |>.emit ")" |>.emit "extends" |>.emit (termToString parent) |>.newline
+      | _ => st.emit s!"caseClass({args.length})"
+
+    -- === Haskell target nodes ===
+    | "haskellModule" => args.foldl (fun s a => go a s) st
+    | "dataDecl" =>
+      match args with
+      | [tyName, ctors] =>
+        let st := st.emit "data" |>.emit (termToString tyName) |>.emit "=" |>.newline |>.addIndent
+        go ctors st |>.dedent
+      | _ => st.emit s!"dataDecl({args.length})"
+    | "dataCon" =>
+      match args with
+      | [ctorName, fields] =>
+        let st := st.emit "|" |>.emit (termToString ctorName)
+        go fields st |>.newline
+      | _ => st.emit s!"dataCon({args.length})"
+
+    -- === Rust target nodes ===
+    | "rustFile" => args.foldl (fun s a => go a s) st
+    | "enumDecl" =>
+      match args with
+      | [tyName, variants] =>
+        let st := st.emit "#[derive(Clone)]" |>.newline |>.emit "pub enum" |>.emit (termToString tyName) |>.emit "{" |>.newline |>.addIndent
+        let st := go variants st
+        st.dedent |>.emit "}" |>.newline
+      | _ => st.emit s!"enumDecl({args.length})"
+    | "enumVariant" =>
+      match args with
+      | [varName, fields] =>
+        let st := st.emit (termToString varName)
+        let st := if hasFields fields then st.noSpace |>.emit "(" |> (go fields ·) |>.noSpace |>.emit ")" else st
+        st.emit "," |>.newline
+      | _ => st.emit s!"enumVariant({args.length})"
+
+    -- === Type target nodes (shared across languages) ===
+    | "tyVar" =>
+      match args with
+      | [.var n] => st.emit n
+      | [.lit s] => st.emit s
+      | _ => args.foldl (fun s a => go a s) st
+    | "tyFun" =>
+      match args with
+      | [l, r] => go l st |>.emit "→" |> (go r ·)
+      | _ => st.emit "tyFun?"
+    | "tyApp" =>
+      match args with
+      | [f, a] => go f st |>.noSpace |>.emit "[" |> (go a ·) |>.noSpace |>.emit "]"
+      | _ => args.foldl (fun s a => go a s) st
+    | "tyPath" =>
+      match args with
+      | [.var n] => st.emit n
+      | [.lit s] => st.emit s
+      | _ => args.foldl (fun s a => go a s) st
+    | "tyGeneric" =>
+      match args with
+      | [f, a] => go f st |>.noSpace |>.emit "<" |> (go a ·) |>.noSpace |>.emit ">"
+      | _ => args.foldl (fun s a => go a s) st
+    | "tyFn" =>
+      -- Rust fn type: fn(args) -> ret
+      match args with
+      | [argTypes, retType] =>
+        st.emit "fn" |>.noSpace |>.emit "(" |> (go argTypes ·) |>.noSpace |>.emit ")" |>.emit "->" |> (go retType ·)
+      | _ => st.emit "tyFn?"
+    | "typeList" =>
+      args.foldl (fun s a => go a s) st
+    | "tyAny" => st.emit "Any"
+    | "unitTy" => st.emit "()"
+
+    -- === Import handling (per-language) ===
+    | "DImport" =>
+      -- Skip imports in single-file output (all definitions merged)
+      -- TODO: For multi-file output, would emit proper imports
+      st
+
+    | "modulePath" =>
+      -- (modulePath ident ("." ident)*)
+      let parts := args.filterMap (fun a => match a with
+        | .var n => some n
+        | .lit s => if s != "." then some s else none
+        | .con "ident" [.var n] => some n
+        | _ => none)
+      st.emit (parts.foldl (fun acc p => if acc.isEmpty then p else acc ++ "." ++ p) "")
+
+    -- === Rosetta source nodes → Target-specific code generation ===
+    | "leanModule" | "toLeanDecl" | "toScala" | "toHaskell" | "toRust" | "toLean" | "seq" =>
+      -- Sequence nodes: just process all children
+      args.foldl (fun s a => go a s) st
+
+    | "adtDef" =>
+      -- (adtDef "adt" Name "{" constrs... "}")
+      -- The args are: [kw, name, lb, ...constrs, rb]
+      if args.length >= 4 then
+        let nameArg := args[1]!
+        let tyName := match nameArg with
+          | .var n => n
+          | .lit s => s
+          | _ => "Unknown"
+        -- All middle args (from index 3 to len-2) are constructors
+        let constrs := args.drop 3 |>.dropLast
+        -- Extract type parameters from constructor return types
+        let tyParams := extractTypeParams tyName constrs
+        match lang with
+        | .Lean =>
+          let tyParamStr := if tyParams.isEmpty then "" else " " ++ (tyParams.map (fun p => s!"({p} : Type)") |> " ".intercalate)
+          let st := st.emit "inductive" |>.emit tyName |>.emit tyParamStr |>.emit "where" |>.addIndent |>.newline
+          let st := constrs.foldl (fun s c => goConstrs c s) st
+          -- Check if any constructor has function parameters (-> in parameter types)
+          -- Types with function fields can't derive BEq/Repr
+          -- Also skip deriving for types containing certain problematic types
+          let nonDerivableTypes := ["Iso", "AST"]  -- Types that can't derive BEq
+          let anyHasFunctions := constrs.any (fun c =>
+            match c with
+            | .con "constr" [_, _, ty] =>
+              let paramTypes := getParamTypes ty
+              let hasArrow := paramTypes.any (fun pt => ((typeToHaskell pt).splitOn "->").length > 1)
+              let hasNonDerivable := paramTypes.any (fun pt =>
+                let tyStr := typeToHaskell pt
+                nonDerivableTypes.any (fun nd => (tyStr.splitOn nd).length > 1))
+              hasArrow || hasNonDerivable
+            | _ => false)
+          if anyHasFunctions then
+            st.dedent |>.newline |>.newline  -- No deriving clause for types with function params
+          else
+            st.dedent |>.emit "deriving BEq, Repr" |>.newline |>.newline
+        | .Scala =>
+          let tyParamStr := if tyParams.isEmpty then "" else "[" ++ tyParams.foldl (fun acc p => if acc.isEmpty then p else acc ++ ", " ++ p) "" ++ "]"
+          let st := st.emit "sealed trait" |>.emit tyName |>.noSpace |>.emit tyParamStr |>.newline |>.newline
+          let st := constrs.foldl (fun s c => goScalaConstrs tyName tyParamStr c s) st
+          st.newline
+        | .Haskell =>
+          let tyParamStr := if tyParams.isEmpty then "" else " " ++ tyParams.foldl (fun acc p => if acc.isEmpty then p else acc ++ " " ++ p) ""
+          let st := st.emit "data" |>.emit tyName |>.emit tyParamStr |>.addIndent |>.newline
+          -- For Haskell, first constructor uses =, rest use |
+          let indexed := constrs.zip (List.range constrs.length)
+          let st := indexed.foldl (fun s (c, i) => goHaskellConstrs c (i == 0) s) st
+          -- Check if any constructor has function parameters (-> in type before return)
+          -- Types with function fields can't derive Show/Eq
+          -- Also skip deriving for types containing Iso (no Show/Eq instance)
+          let nonDerivableTypes := ["Iso"]
+          let anyHasFunctions := constrs.any (fun c =>
+            match c with
+            | .con "constr" [_, _, ty] =>
+              let paramTypes := getParamTypes ty
+              let hasArrow := paramTypes.any (fun pt => ((typeToHaskell pt).splitOn "->").length > 1)
+              let hasNonDerivable := paramTypes.any (fun pt =>
+                let tyStr := typeToHaskell pt
+                nonDerivableTypes.any (fun nd => (tyStr.splitOn nd).length > 1))
+              hasArrow || hasNonDerivable
+            | _ => false)
+          if anyHasFunctions then
+            st.dedent |>.newline |>.newline  -- No deriving clause
+          else
+            st.dedent |>.newline |>.emit "  deriving (Show, Eq)" |>.newline |>.newline
+        | .Rust =>
+          -- Rust type params should be uppercase
+          let rustTyParams := tyParams.map (fun p => p.capitalize)
+          let tyParamStr := if rustTyParams.isEmpty then "" else "<" ++ rustTyParams.foldl (fun acc p => if acc.isEmpty then p else acc ++ ", " ++ p) "" ++ ">"
+          let st := st.emit "#[derive(Clone)]" |>.newline |>.emit "pub enum" |>.emit tyName |>.noSpace |>.emit tyParamStr |>.emit "{" |>.addIndent |>.newline
+          let st := constrs.foldl (fun s c => goRustConstrs tyName rustTyParams c s) st
+          st.dedent |>.emit "}" |>.newline |>.newline
+      else st.emit s!"-- adtDef({args.length})\n"
+
+    | "constr" =>
+      -- Forward to appropriate target handler
+      match lang with
+      | .Lean =>
+        match args with
+        | [.var ctorName, _colon, ty] =>
+          st.noSpace |>.emit "|" |>.emit ctorName |>.emit ":" |> (goType ty ·) |>.newline
+        | [.lit ctorName, _colon, ty] =>
+          st.noSpace |>.emit "|" |>.emit ctorName |>.emit ":" |> (goType ty ·) |>.newline
+        | _ => st.emit s!"-- constr({args.length})\n"
+      | _ => go t st  -- Other targets handle in their specific functions
+
+    | "rewriteRule" =>
+      -- (rewriteRule "rewrite" name ":" lhs "~>" rhs guard ";")
+      match args with
+      | [_kw, .var name, _colon, lhs, _arrow, rhs, _guard, _semi] =>
+        -- Convert the AST to our Term representation
+        let lhsTerm := parsedToTerm lhs
+        let rhsTerm := parsedToTerm rhs
+        match lang with
+        | .Lean => emitLeanRewriteRule name lhsTerm rhsTerm st
+        | .Scala => emitScalaRewriteRule name lhsTerm rhsTerm st
+        | .Haskell => emitHaskellRewriteRule name lhsTerm rhsTerm st
+        | .Rust => emitRustRewriteRule name lhsTerm rhsTerm st
+      | _ => st.emit s!"-- rewriteRule({args.length})\n"
+
+    | "DTest" =>
+      -- Skip tests for now
+      st
+
+    | _ =>
+      -- Generic: just print args
+      args.foldl (fun s a => go a s) st
+
+  -- Process constructors for Lean (handles seq of constrs)
+  goConstrs (t : Term) (st : PPState') : PPState' :=
+    match t with
+    | .con "seq" args => args.foldl (fun s a => goConstrs a s) st
+    | .con "constr" args =>
+      match args with
+      | [.var ctorName, _colon, ty] =>
+        st.noSpace |>.emit "|" |>.emit ctorName |>.emit ":" |> (goType ty ·) |>.newline
+      | [.lit ctorName, _colon, ty] =>
+        st.noSpace |>.emit "|" |>.emit ctorName |>.emit ":" |> (goType ty ·) |>.newline
+      | _ => st.emit s!"-- constr({args.length})\n"
+    | .lit "," => st.noSpace  -- skip comma separators
+    | _ => go t st
+
+  -- Process constructors for Scala (case classes extending sealed trait)
+  goScalaConstrs (parentName : String) (tyParamStr : String) (t : Term) (st : PPState') : PPState' :=
+    match t with
+    | .con "seq" args => args.foldl (fun s a => goScalaConstrs parentName tyParamStr a s) st
+    | .con "constr" args =>
+      match args with
+      | [.var ctorName, _colon, ty] =>
+        -- Case class also needs type parameters if extending a parameterized trait
+        st.noSpace |>.emit "case class" |>.emit ctorName |>.noSpace |>.emit tyParamStr |>.noSpace |>.emit "(" |> (goScalaType ty ·) |>.noSpace |>.emit ")" |>.emit "extends" |>.emit parentName |>.noSpace |>.emit tyParamStr |>.newline
+      | [.lit ctorName, _colon, ty] =>
+        st.noSpace |>.emit "case class" |>.emit ctorName |>.noSpace |>.emit tyParamStr |>.noSpace |>.emit "(" |> (goScalaType ty ·) |>.noSpace |>.emit ")" |>.emit "extends" |>.emit parentName |>.noSpace |>.emit tyParamStr |>.newline
+      | _ => st.emit s!"// constr({args.length})\n"
+    | .lit "," => st.noSpace
+    | _ => go t st
+
+  -- Process constructors for Haskell (data constructors)
+  -- isFirst indicates whether this is the first constructor (uses = instead of |)
+  goHaskellConstrs (t : Term) (isFirst : Bool) (st : PPState') : PPState' :=
+    let sep := if isFirst then "=" else "|"
+    match t with
+    | .con "seq" args => args.foldl (fun s a => goHaskellConstrs a false s) st
+    | .con "constr" args =>
+      match args with
+      | [.var ctorName, _colon, ty] =>
+        st.emit sep |>.emit ctorName |> (goHaskellType ty ·) |>.newline
+      | [.lit ctorName, _colon, ty] =>
+        st.emit sep |>.emit ctorName |> (goHaskellType ty ·) |>.newline
+      | _ => st.emit s!"-- constr({args.length})\n"
+    | .lit "," => st.noSpace
+    | _ => go t st
+
+  -- Process constructors for Rust (enum variants)
+  -- rustTyParams are already uppercased (e.g., ["A", "B"])
+  goRustConstrs (adtName : String) (rustTyParams : List String) (t : Term) (st : PPState') : PPState' :=
+    match t with
+    | .con "seq" args => args.foldl (fun s a => goRustConstrs adtName rustTyParams a s) st
+    | .con "constr" args =>
+      match args with
+      | [.var ctorName, _colon, ty] =>
+        let hasFields := match ty with
+          | .con "typeExpr" [.con "typeApp" [_]] => false  -- simple type, no fields
+          | _ => true
+        if hasFields then
+          st.noSpace |>.emit ctorName |>.noSpace |>.emit "(" |> (goRustTypeBoxed adtName rustTyParams ty ·) |>.noSpace |>.emit ")," |>.newline
+        else
+          st.noSpace |>.emit ctorName |>.emit "," |>.newline
+      | [.lit ctorName, _colon, ty] =>
+        let hasFields := match ty with
+          | .con "typeExpr" [.con "typeApp" [_]] => false
+          | _ => true
+        if hasFields then
+          st.noSpace |>.emit ctorName |>.noSpace |>.emit "(" |> (goRustTypeBoxed adtName rustTyParams ty ·) |>.noSpace |>.emit ")," |>.newline
+        else
+          st.noSpace |>.emit ctorName |>.emit "," |>.newline
+      | _ => st.emit s!"// constr({args.length})\n"
+    | .lit "," => st.noSpace
+    | _ => go t st
+
+  -- Convert Rosetta type expressions to Lean types
+  goType (t : Term) (st : PPState') : PPState' :=
+    match t with
+    | .con "typeExpr" args =>
+      -- (typeExpr left "->" right) or (typeExpr base)
+      match args with
+      | [left, .lit "->", right] => goType left st |>.emit "→" |> (goType right ·)
+      | [single] => goType single st
+      | _ => args.foldl (fun s a => goType a s) st
+    | .con "typeApp" args =>
+      -- (typeApp Name args...) → Name args
+      match args with
+      | [.var name] =>
+        -- Check if this is a known poly type used without args
+        match knownPolyTypes.find? (fun (n, _) => n == name) with
+        | some (_, arity) =>
+          let placeholders := (List.range arity).map (fun _ => "_") |> " ".intercalate
+          st.emit "(" |>.emit name |>.emit placeholders |>.emit ")"
+        | none => st.emit name
+      | [.lit name] =>
+        match knownPolyTypes.find? (fun (n, _) => n == name) with
+        | some (_, arity) =>
+          let placeholders := (List.range arity).map (fun _ => "_") |> " ".intercalate
+          st.emit "(" |>.emit name |>.emit placeholders |>.emit ")"
+        | none => st.emit name
+      | [.var name, arg] => st.emit "(" |>.emit name |> (goType arg ·) |>.emit ")"
+      | [.lit name, arg] => st.emit "(" |>.emit name |> (goType arg ·) |>.emit ")"
+      | _ => args.foldl (fun s a => goType a s) st
+    | .var name => st.emit name
+    | .lit s => st.emit s
+    | _ => go t st
+
+  -- Extract parameter types from a constructor type (all but the last in arrow chain)
+  -- e.g., String -> Term -> Result becomes [String, Term]
+  getParamTypes (t : Term) : List Term :=
+    match t with
+    | .con "typeExpr" args =>
+      match args with
+      | [left, .lit "->", right] =>
+        -- Arrow: left is a param, recurse right
+        left :: getParamTypes right
+      | [single] =>
+        -- Single type = return type, no params from this level
+        []
+      | _ => []
+    | _ => []
+
+  -- Convert Rosetta type to Scala types (as parameters) - only params, not return type
+  goScalaType (t : Term) (st : PPState') : PPState' :=
+    let params := getParamTypes t
+    let indexed := params.zip (List.range params.length)
+    indexed.foldl (fun s (p, i) =>
+      let tyStr := typeToScala p
+      s.emit s!"v{i}: {tyStr}" |>.emit (if i < params.length - 1 then ", " else "")
+    ) st
+
+  typeToScala (t : Term) : String :=
+    match t with
+    | .con "typeExpr" args =>
+      match args with
+      | [left, .lit "->", right] => s!"({typeToScala left}) => {typeToScala right}"
+      | [single] => typeToScala single
+      | _ => args.map typeToScala |>.filter (!·.isEmpty) |> " ".intercalate
+    | .con "parenType" args =>
+      -- Parenthesized type - unwrap the contents but may need to add parens
+      let inner := args.map typeToScala |>.filter (!·.isEmpty) |> "".intercalate
+      -- If inner contains =>, add parens (function type), otherwise no parens needed
+      if (inner.splitOn "=>").length > 1 then s!"({inner})" else inner
+    | .con "typeApp" args =>
+      -- Handle special types before converting, to preserve arguments correctly
+      match args with
+      | [.var "List", arg] => s!"List[{typeToScala arg}]"
+      | [.var "Option", arg] => s!"Option[{typeToScala arg}]"
+      | [.var "List"] => "List[Any]"
+      | [.var "Option"] => "Option[Any]"
+      | [.var n] =>
+        -- Check if this is a known poly type used without arguments
+        match knownPolyTypes.find? (fun (tn, _) => tn == n) with
+        | some (_, arity) =>
+          let anyList := (List.replicate arity "Any").foldl (fun acc s => if acc.isEmpty then s else acc ++ ", " ++ s) ""
+          s!"{n}[{anyList}]"
+        | none => n
+      | _ =>
+        let names := args.map typeToScala |>.filter (!·.isEmpty)
+        match names with
+        | [n] => n
+        | n :: rest => s!"{n}[{rest.foldl (fun acc s => if acc.isEmpty then s else acc ++ ", " ++ s) ""}]"
+        | [] => "Any"
+    | .var name =>
+      -- For bare variable names, don't expand poly types - only expand in typeApp
+      name
+    | .lit s => if s == "(" || s == ")" then "" else s
+    | .con _ args => args.map typeToScala |>.filter (!·.isEmpty) |> "".intercalate
+
+  -- Convert Rosetta type to Haskell types (just param types for data constructors)
+  goHaskellType (t : Term) (st : PPState') : PPState' :=
+    let params := getParamTypes t
+    params.foldl (fun s p =>
+      s.emit (typeToHaskell p)
+    ) st
+
+  typeToHaskell (t : Term) : String :=
+    match t with
+    | .con "typeExpr" args =>
+      match args with
+      | [left, .lit "->", right] => s!"({typeToHaskell left} -> {typeToHaskell right})"
+      | [single] => typeToHaskell single
+      | _ => args.map typeToHaskell |> " ".intercalate
+    | .con "typeApp" args =>
+      -- First check for special type constructors before converting
+      match args with
+      | [.var "List", arg] => s!"[{typeToHaskell arg}]"
+      | [.var "Option", arg] => s!"(Maybe {typeToHaskell arg})"
+      | [.var "List"] => "[()]"
+      | [.var "Option"] => "Maybe ()"
+      | [.var n] =>
+        -- Check if this is a known poly type used without arguments
+        match knownPolyTypes.find? (fun (tn, _) => tn == n) with
+        | some (_, arity) => s!"({n} {String.join (List.replicate arity "() ")})"
+        | none => n
+      | _ =>
+        let names := args.map typeToHaskell
+        match names with
+        | [n] => n
+        | n :: rest => s!"({n} {rest.foldl (fun acc s => if acc.isEmpty then s else acc ++ " " ++ s) ""})"
+        | [] => "?"
+    | .var name =>
+      -- Map Rosetta types to Haskell equivalents
+      match name with
+      | "Option" => "Maybe ()"
+      | "List" => "[()]"  -- Bare List becomes [()]
+      | "Int" => "Int"
+      | "String" => "String"
+      | _ =>
+        -- Check if this is a known poly type used without arguments
+        match knownPolyTypes.find? (fun (tn, _) => tn == name) with
+        | some (_, arity) => s!"({name} {String.join (List.replicate arity "() ")})"
+        | none => name
+    | .lit s => if s == "(" || s == ")" then "" else s
+    | .con _ args => args.map typeToHaskell |>.filter (!·.isEmpty) |> " ".intercalate
+
+  goHaskellTypeAtom (t : Term) (st : PPState') : PPState' :=
+    match t with
+    | .con "typeApp" args =>
+      match args with
+      | [.var name] => st.emit name
+      | [.lit name] => st.emit name
+      | [.var name, arg] => st.emit "(" |>.emit name |> (goHaskellTypeAtom arg ·) |>.emit ")"
+      | [.lit name, arg] => st.emit "(" |>.emit name |> (goHaskellTypeAtom arg ·) |>.emit ")"
+      | _ => st.emit "?"
+    | .var name => st.emit name
+    | .lit s => st.emit s
+    | _ => st.emit "?"
+
+  -- Convert Rosetta type to Rust types (just param types for enum variants)
+  goRustType (t : Term) (st : PPState') : PPState' :=
+    let params := getParamTypes t
+    let indexed := params.zip (List.range params.length)
+    indexed.foldl (fun s (p, i) =>
+      let tyStr := typeToRust p
+      s.emit tyStr |>.emit (if i < params.length - 1 then ", " else "")
+    ) st
+
+  -- Convert Rosetta type to Rust, wrapping recursive self-references in Box<>
+  -- rustTyParams contains already-uppercased type param names (e.g., ["A", "B"])
+  goRustTypeBoxed (adtName : String) (rustTyParams : List String) (t : Term) (st : PPState') : PPState' :=
+    let params := getParamTypes t
+    let indexed := params.zip (List.range params.length)
+    indexed.foldl (fun s (p, i) =>
+      let tyStr := typeToRustWithParams adtName rustTyParams p
+      s.emit tyStr |>.emit (if i < params.length - 1 then ", " else "")
+    ) st
+
+  -- Convert type to Rust string, with Box<> wrapping for self-reference and uppercase type params
+  typeToRustWithParams (adtName : String) (rustTyParams : List String) (t : Term) : String :=
+    match t with
+    | .con "typeExpr" args =>
+      match args with
+      | [left, .lit "->", right] =>
+        s!"fn({typeToRustWithParams adtName rustTyParams left}) -> {typeToRustWithParams adtName rustTyParams right}"
+      | [single] => typeToRustWithParams adtName rustTyParams single
+      | _ => args.map (typeToRustWithParams adtName rustTyParams) |>.filter (!·.isEmpty) |> ", ".intercalate
+    | .con "parenType" args =>
+      args.map (typeToRustWithParams adtName rustTyParams) |>.filter (!·.isEmpty) |> "".intercalate
+    | .con "typeApp" args =>
+      match args with
+      | [.var "String"] => "String"
+      | [.var "Int"] => "i64"
+      | [.var "List", arg] => s!"Vec<{typeToRustWithParams adtName rustTyParams arg}>"
+      | [.var "Option", arg] => s!"Option<{typeToRustWithParams adtName rustTyParams arg}>"
+      | [.var "List"] => "Vec<()>"
+      | [.var "Option"] => "Option<()>"
+      | [.var n] =>
+        -- Self-reference needs Box<>
+        if n == adtName then s!"Box<{n}>"
+        -- Type parameter needs uppercasing
+        else if rustTyParams.contains n.capitalize then n.capitalize
+        else
+          match knownPolyTypes.find? (fun (tn, _) => tn == n) with
+          | some (_, arity) =>
+            let anyList := (List.replicate arity "()").foldl (fun acc s => if acc.isEmpty then s else acc ++ ", " ++ s) ""
+            s!"{n}<{anyList}>"
+          | none => n
+      | _ =>
+        let names := args.map (typeToRustWithParams adtName rustTyParams) |>.filter (!·.isEmpty)
+        match names with
+        | [n] => n
+        | n :: rest => s!"{n}<{rest.foldl (fun acc s => if acc.isEmpty then s else acc ++ ", " ++ s) ""}>"
+        | [] => "?"
+    | .var n =>
+      -- Self-reference needs Box<>
+      if n == adtName then s!"Box<{n}>"
+      -- Type parameter needs uppercasing
+      else if rustTyParams.contains n.capitalize then n.capitalize
+      else
+        match n with
+        | "Int" => "i64"
+        | _ => n
+    | .lit s => if s == "(" || s == ")" then "" else s
+    | .con _ args => args.map (typeToRustWithParams adtName rustTyParams) |>.filter (!·.isEmpty) |> "".intercalate
+
+  typeToRust (t : Term) : String :=
+    match t with
+    | .con "typeExpr" args =>
+      match args with
+      | [left, .lit "->", right] => s!"fn({typeToRust left}) -> {typeToRust right}"
+      | [single] => typeToRust single
+      | _ => args.map typeToRust |>.filter (!·.isEmpty) |> ", ".intercalate
+    | .con "parenType" args =>
+      -- Parenthesized type - unwrap the contents
+      args.map typeToRust |>.filter (!·.isEmpty) |> "".intercalate
+    | .con "typeApp" args =>
+      -- Handle special types before converting, to preserve arguments correctly
+      match args with
+      | [.var "String"] => "String"
+      | [.var "Int"] => "i64"
+      | [.var "List", arg] => s!"Vec<{typeToRust arg}>"
+      | [.var "Option", arg] => s!"Option<{typeToRust arg}>"
+      | [.var "List"] => "Vec<()>"
+      | [.var "Option"] => "Option<()>"
+      | [.var n] =>
+        -- Check if this is a known poly type used without arguments
+        match knownPolyTypes.find? (fun (tn, _) => tn == n) with
+        | some (_, arity) =>
+          let anyList := (List.replicate arity "()").foldl (fun acc s => if acc.isEmpty then s else acc ++ ", " ++ s) ""
+          s!"{n}<{anyList}>"
+        | none => n
+      | _ =>
+        let names := args.map typeToRust |>.filter (!·.isEmpty)
+        match names with
+        | [n] => n
+        | n :: rest => s!"{n}<{rest.foldl (fun acc s => if acc.isEmpty then s else acc ++ ", " ++ s) ""}>"
+        | [] => "?"
+    | .var name =>
+      -- Map special types
+      match name with
+      | "Int" => "i64"
+      | _ => name  -- Don't expand poly types for bare vars, only in typeApp
+    | .lit s => if s == "(" || s == ")" then "" else s
+    | .con _ args => args.map typeToRust |>.filter (!·.isEmpty) |> "".intercalate
+
+  goRustTypeAtom (t : Term) (st : PPState') : PPState' :=
+    st.emit (typeToRust t)
+
+  -- Check if a term has any content
+  hasFields : Term → Bool
+    | .con _ [] => false
+    | .con _ _ => true
+    | _ => false
+
+  termToString : Term → String
+    | .var n => n
+    | .lit s => s
+    | .con n [] => n
+    | .con _ args => args.map termToString |> " ".intercalate
+
+  applyLayout (cmds : List LayoutCmd) (args : List Term) (st : PPState') : PPState' :=
+    cmds.foldl (fun s cmd => applyCmd cmd args s) st
+
+  applyCmd (cmd : LayoutCmd) (args : List Term) (st : PPState') : PPState' :=
     match cmd with
-    | .text t => st.emit t |>.space
+    | .text t => st.emit t
     | .ref _name =>
-      -- Find matching arg by trying to match production names
-      -- Simplified: just print next arg
-      st  -- TODO: proper arg matching
+      -- Use next arg in sequence
+      match args[st.argIndex]? with
+      | some arg => (go arg st).nextArg
+      | none => st.nextArg
     | .nl => st.newline
-    | .indent => st.indent
+    | .indent => st.addIndent
     | .dedent => st.dedent
     | .space => st.space
     | .noSpace => st.noSpace
-    | .star _inner => st  -- TODO: handle repetition
-    | .plus _inner => st  -- TODO: handle repetition
-    | .opt _inner => st   -- TODO: handle optional
-    | .seq cmds => cmds.foldl (fun s c => applyCmd c _args s) st
+    | .star inner =>
+      -- For star/plus, try to apply to remaining args
+      let remaining := args.drop st.argIndex
+      remaining.foldl (fun s a =>
+        let s' := applyCmd inner [a] s
+        s'.nextArg
+      ) st
+    | .plus inner => applyCmd (.star inner) args st
+    | .opt inner =>
+      if st.argIndex < args.length then
+        applyCmd inner args st
+      else st
+    | .seq cmds => cmds.foldl (fun s c => applyCmd c args s) st
 
 /-! ## Main Pipeline -/
 
@@ -334,86 +1984,122 @@ structure TargetResult where
   outPath : String
   deriving Repr
 
+/-- Check if a declaration is a type/ADT definition (should come first) -/
+def isTypeDecl (t : Term) : Bool :=
+  match t with
+  | .con "inductiveDecl" _ => true  -- Lean
+  | .con "sealedTrait" _ => true    -- Scala
+  | .con "caseClass" _ => true      -- Scala
+  | .con "dataDecl" _ => true       -- Haskell
+  | .con "enumDecl" _ => true       -- Rust
+  | .con "adtDef" _ => true         -- Generic
+  | _ => false
+
+/-- Sort declarations so type definitions come before functions -/
+partial def sortDeclarations (t : Term) : Term :=
+  match t with
+  | .con "seq" children =>
+    -- Partition into type declarations and other declarations
+    let (types, others) := children.partition isTypeDecl
+    -- Recursively sort nested sequences
+    let sortedTypes := types.map sortDeclarations
+    let sortedOthers := others.map sortDeclarations
+    -- Types first, then other declarations
+    .con "seq" (sortedTypes ++ sortedOthers)
+  | .con name args =>
+    -- Recursively sort inside other constructors (e.g., modules)
+    .con name (args.map sortDeclarations)
+  | _ => t
+
 /-- Run grammar-driven pipeline for one target -/
 def runForTarget (rt : Runtime) (sourceAst : Term) (lang : TargetLang) (outDir : String)
-    : IO (Except String TargetResult) := do
+    (_quiet : Bool := false) : IO (Except String TargetResult) := do
   -- 1. Load grammar file - contains both syntax AND layout annotations
-  IO.println s!"  Loading {lang} grammar..."
-  let grammarAst ← match ← parseLegoFilePathE rt lang.grammarPath with
+  let (grammarAst, _) ← match ← loadLanguage rt lang.grammarPath with
     | .error e => return .error s!"Failed to load grammar: {e}"
-    | .ok ast => pure ast
+    | .ok grammarLang =>
+      let content ← IO.FS.readFile lang.grammarPath
+      match parseWithGrammarE grammarLang content with
+      | .error _ =>
+        match parseLegoFileE rt content with
+        | .error e2 => return .error s!"Failed to parse grammar file: {e2}"
+        | .ok ast => pure (ast, grammarLang.productions.length)
+      | .ok ast => pure (ast, grammarLang.productions.length)
+
   let prods := extractProductions grammarAst
-  IO.println s!"    Found {prods.length} productions (with layout annotations)"
 
   -- 2. Load transformation rules (rosetta2<L>.lego)
-  IO.println s!"  Loading transformation rules..."
-  let transformAst ← match ← parseLegoFilePathE rt lang.transformPath with
-    | .error _ =>
-      IO.println s!"    Warning: No transform file, using source AST directly"
-      pure sourceAst
-    | .ok ast => pure ast
-  let rules := extractTransformRules transformAst
-  IO.println s!"    Found {rules.length} rules"
+  -- Use parseLegoFileE directly since loadLanguage can hang on complex files
+  let rules ← do
+    let content ← IO.FS.readFile lang.transformPath
+    match parseLegoFileE rt content with
+    | .error _e =>
+      pure ([] : List TransformRule)
+    | .ok ast =>
+      pure (extractTransformRules ast)
 
   -- 3. Apply transformations
-  let transformed := if rules.isEmpty then sourceAst else applyTransforms rules sourceAst
+  let entryFn := match lang with
+    | .Lean => "toLean"
+    | .Scala => "toScala"
+    | .Haskell => "toHaskell"
+    | .Rust => "toRust"
+
+  -- First convert Lego AST (DLang/DPiece/DRule) to Rosetta IR format
+  let rosettaIR := legoToRosetta sourceAst
+
+  let wrappedAst := Term.con entryFn [rosettaIR]
+  let transformed := if rules.isEmpty then rosettaIR else applyTransforms rules wrappedAst true
+
+  -- Sort declarations: ADTs/inductives first, then rewrites
+  -- This ensures type definitions appear before functions that use them
+  let sorted := sortDeclarations transformed
 
   -- 4. Pretty-print using grammar layout annotations
-  let code := prettyPrint prods transformed
+  let code := prettyPrint prods sorted lang
 
-  -- 5. Build result
-  let moduleName := "Generated"  -- TODO: extract from source
+  -- 5. Add language-specific headers
+  let finalCode := match lang with
+    | .Haskell => "module Generated where\n\n" ++ code
+    | .Scala => "package generated\n\n" ++ code
+    | .Rust => "#![allow(dead_code)]\n#![allow(unused_variables)]\n\n" ++
+               "// Helper function to extract argument from Term (returns reference into boxed term)\n" ++
+               "fn get_arg(t: &Term, i: usize) -> &Term {\n" ++
+               "    match t {\n" ++
+               "        Term::Con(_, args) => &*args[i],\n" ++
+               "        _ => panic!(\"get_arg called on non-Con\")\n" ++
+               "    }\n" ++
+               "}\n\n" ++ code
+    | .Lean => code
+
+  -- 6. Build result
+  let moduleName := "Generated"
   let outPath := s!"{outDir}/{moduleName}{lang.ext}"
 
-  return .ok { lang, code, outPath }
+  return .ok { lang, code := finalCode, outPath }
 
-/-- Run pipeline for all targets -/
+/-- Run pipeline for all targets (library function) -/
 def runGrammarDrivenPipeline (rt : Runtime) (sourcePath : String)
     (targets : List TargetLang := [.Lean, .Scala, .Haskell, .Rust])
     (outDir : String := "./generated/Rosetta")
+    (quiet : Bool := false)
     : IO (Except String (List TargetResult)) := do
 
-  IO.println "═══════════════════════════════════════════════════════════════"
-  IO.println "Grammar-Driven Rosetta Pipeline"
-  IO.println "═══════════════════════════════════════════════════════════════"
-
   -- Parse source
-  IO.println s!"[1] Parsing source: {sourcePath}"
   let sourceAst ← match ← parseLegoFilePathE rt sourcePath with
     | .error e => return .error s!"Failed to parse source: {e}"
     | .ok ast => pure ast
-  IO.println "    ✓ Parsed"
 
   -- Generate for each target
-  IO.println s!"[2] Generating for {targets.length} targets..."
   let mut results : List TargetResult := []
   for lang in targets do
-    IO.println s!"  → {lang}..."
-    match ← runForTarget rt sourceAst lang outDir with
-    | .error e => IO.println s!"    ✗ {e}"
-    | .ok r =>
-      results := results ++ [r]
-      IO.println s!"    ✓ {r.code.length} chars"
+    match ← runForTarget rt sourceAst lang outDir quiet with
+    | .error _ => pure ()
+    | .ok r => results := results ++ [r]
 
   -- Write files
-  IO.println "[3] Writing files..."
   IO.FS.createDirAll outDir
   for r in results do
     IO.FS.writeFile r.outPath r.code
-    IO.println s!"    ✓ {r.outPath}"
 
   return .ok results
-
-/-! ## Main -/
-
-def main (args : List String) : IO Unit := do
-  let sourcePath := args.getD 0 "./examples/Arith.lego"
-  let outDir := args.getD 1 "./generated/Rosetta"
-
-  let rt ← Lego.Runtime.init
-
-  match ← runGrammarDrivenPipeline rt sourcePath [.Lean, .Scala, .Haskell, .Rust] outDir with
-  | .error e => IO.eprintln s!"✗ {e}"
-  | .ok results =>
-    IO.println ""
-    IO.println s!"✓ Generated {results.length} files"

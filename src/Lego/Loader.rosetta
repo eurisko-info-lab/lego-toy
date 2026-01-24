@@ -7,8 +7,29 @@
 -- Key insight: The grammar is just data - we can interpret it at runtime.
 -----------------------------------------------------
 
-import Algebra ;
-import Interp ;
+-----------------------------------------------------
+-- Core Types (needed for loading)
+-----------------------------------------------------
+
+adt Term {
+  Var : String -> Term,
+  Lit : String -> Term,
+  Con : String -> List Term -> Term
+}
+
+adt GrammarExpr {
+  GEmpty  : GrammarExpr,
+  GLit    : String -> GrammarExpr,
+  GRef    : String -> GrammarExpr,
+  GSeq    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GAlt    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GStar   : GrammarExpr -> GrammarExpr,
+  GPlus   : GrammarExpr -> GrammarExpr,
+  GOpt    : GrammarExpr -> GrammarExpr,
+  GNot    : GrammarExpr -> GrammarExpr,
+  GAnd    : GrammarExpr -> GrammarExpr,
+  GCon    : String -> GrammarExpr -> GrammarExpr
+}
 
 -----------------------------------------------------
 -- Production: A grammar rule

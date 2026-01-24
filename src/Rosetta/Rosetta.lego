@@ -75,15 +75,21 @@ piece File
   adtDecl ::= "adt" <ident> "{" constr ("," constr)* "}" → adtDef ;
   constr ::= <ident> ":" type → constr ;
   -- Type: avoid left recursion by making -> right-associative
-  type ::= baseType ("->" type)? → typeExpr ;
+  -- Support type application: F a b is (F a) b
+  type ::= appType ("->" type)? → typeExpr ;
+  appType ::= baseType+ → typeApp ;
   baseType ::= <ident> | "(" type ")" ;
   
   -- Rewrite rule: rewrite name: pattern ~> template ;
-  rewriteDecl ::= "rewrite" <ident> ":" pattern "~>" term ";" → rewriteRule ;
+  rewriteDecl ::= "rewrite" <ident> ":" pattern "~>" term guardClause? ";" → rewriteRule ;
+  guardClause ::= "when" term → guard ;
   pattern ::= term | "_" → wildcard ;
   
-  -- Term expressions (S-expressions)
-  term ::= atom | "(" term+ ")" → compound ;
+  -- Term expressions (S-expressions with binder support)
+  -- Supports: atoms, applications, binders (x . body), and compound expressions
+  term ::= binder | compound | atom ;
+  binder ::= <ident> "." term → binder ;
+  compound ::= "(" term+ ")" → compound ;
   atom ::= <ident> | "$" <ident> → metavar | <string> | <number> ;
   
   -- Test declaration

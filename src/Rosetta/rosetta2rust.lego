@@ -18,7 +18,53 @@
 import Rosetta
 import Rust
 
-lang RosettaToRust (Rosetta Rust) :=
+lang RosettaToRust :=
+
+-----------------------------------------------------
+-- FileTransform
+-- Entry point: handle file-level (seq) wrapper
+-----------------------------------------------------
+piece FileTransform
+  -- File is a sequence of declarations - transform each
+  @file rule fileToRust: (toRust (seq $decls)) ~~>
+    (rustFile (toRustDecls $decls)) ;
+  
+  -- Transform declaration list
+  rule declsToRust: (toRustDecls ($decl $rest)) ~~>
+    ((toRustDecl $decl) (toRustDecls $rest)) ;
+  rule declsToRustSingle: (toRustDecls $decl) ~~>
+    (toRustDecl $decl) ;
+  
+  -- Route declarations to appropriate transformers  
+  @decl rule declAdtToRust: (toRustDecl (adtDef $kw $name $lb $constrs $rb)) ~~>
+    (toRust (adtDef $kw $name $lb $constrs $rb)) ;
+
+-----------------------------------------------------
+-- ADTTransform (updated)
+-- Transform Rosetta ADT definitions to Rust enum
+-- Structure: (adtDef "adt" Name "{" constr1 (seq "," constr2) ... "}")
+-----------------------------------------------------
+piece ADTTransformNew
+  -- adtDef → enum (with literal syntax tokens)
+  @decl rule adtToRustNew: (toRust (adtDef $kw $name $lb $constrs $rb)) ~~>
+    (enumDecl $name (toRustVariants $constrs)) ;
+  
+  -- Transform constructor sequence - handle (seq "," next)
+  rule variantsToRustSeqComma: (toRustVariants (seq "," $next)) ~~>
+    (toRustVariants $next) ;
+  -- Handle multiple constructors: first constr followed by rest
+  rule variantsToRustFirst: (toRustVariants ((constr $name ":" $ty) $rest)) ~~>
+    ((enumVariant $name (toRustFields $ty)) (toRustVariants $rest)) ;
+  -- Single constructor
+  rule variantsToRustSingle: (toRustVariants (constr $name ":" $ty)) ~~>
+    (enumVariant $name (toRustFields $ty)) ;
+  rule variantsToRustNil: (toRustVariants ()) ~~> () ;
+  
+  -- Transform constructor types to enum variant fields
+  rule fieldsArrow: (toRustFields (typeExpr $left -> $right)) ~~>
+    ((toRustType $left) (toRustFields $right)) ;
+  rule fieldsBase: (toRustFields (typeExpr $t)) ~~> () ;
+  rule fieldsApp: (toRustFields (typeApp $t)) ~~> () ;
 
 -----------------------------------------------------
 -- CoreTransform
@@ -249,12 +295,26 @@ piece ErrorTransform
 -- Transform Rosetta types to Rust types
 -----------------------------------------------------
 piece TypeTransform
+  -- Source syntax: typeExpr with arrow
+  rule typeExprArrowToRust: (toRustType (typeExpr $left -> $right)) ~~>
+    (tyFn (typeList (toRustType $left)) (toRustType $right)) ;
+  -- Source syntax: simple typeExpr
+  rule typeExprBaseToRust: (toRustType (typeExpr $t)) ~~>
+    (toRustType $t) ;
+  -- Source syntax: typeApp (type application)
+  rule typeAppSingleToRust: (toRustType (typeApp $t)) ~~>
+    (tyPath $t) ;
+  rule typeAppMultiToRust: (toRustType (typeApp $t $args)) ~~>
+    (tyGeneric $t (toRustType $args)) ;
+  -- IR syntax
   rule typeVarToRust: (toRustType (Var $x)) ~~> (tyPath $x) ;
   rule typeAppToRust: (toRustType (App $f $a)) ~~>
-    (tyGeneric (toRustType $f) (typeList (toRustType $a))) ;
-  rule typeUnivToRust: (toRustType Univ) ~~> (tyUnit) ;
+    (tyGeneric (toRustType $f) (toRustType $a)) ;
+  rule typeUnivToRust: (toRustType Univ) ~~> (unitTy) ;
   rule typeBoxToRust: (toRustType (Box $A)) ~~>
-    (tyBox (toRustType $A)) ;
+    (tyGeneric Box (toRustType $A)) ;
+  -- Fallback
+  rule typeIdentToRust: (toRustType $t) ~~> (tyPath $t) ;
 
 -----------------------------------------------------
 -- BoxTransform
@@ -294,7 +354,7 @@ test "closureToRust": (toRust (Lam x . (Var x))) ~~>
 test "tupleToRust": (toRust (Pair (Var a) (Var b))) ~~>
   (tuple (exprList (var a) (var b))) ;
 
-test "enumToRust": (toRust (adtDef Option { (None : Option) (Some : Term → Option) })) ~~>
+test "enumToRust": (toRust (adtDef Option { (None : Option) (Some : (arrowTy Term Option)) })) ~~>
   (enumItem (pubVis) Option
     (enumVariantUnit None)
     (enumVariantTuple Some (tupleField (tyPath Term)))) ;

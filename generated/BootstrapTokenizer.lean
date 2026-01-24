@@ -43,11 +43,20 @@ def tokenPiece : Piece := {
     ("Token.printable", ((ref "Token.alpha").alt ((ref "Token.digit").alt ((ref "Token.symch").alt (lit " "))))),
     ("Token.char", (((lit "'").seq (ref "Token.charinner")).seq (lit "'"))),
     ("Token.charinner", (((empty.seq (lit "\\")).seq (ref "Token.escape")).alt ((ref "Token.alpha").alt ((ref "Token.digit").alt ((ref "Token.symch").alt ((lit " ").alt (lit "\""))))))),
-    ("Token.ws", ((lit " ").alt ((lit "\t").alt ((lit "\n").alt (lit ""))))),
+    ("Token.ws", ((lit " ").alt ((lit "\t").alt ((lit "\n").alt (lit "
+"))))),
     ("Token.comment", (((lit "-").seq (lit "-")).seq ((ref "Token.nonnl").star))),
     ("Token.nonnl", ((ref "Token.alpha").alt ((ref "Token.digit").alt ((ref "Token.symch").alt ((lit " ").alt ((lit "\t").alt ((lit "'").alt (lit "\"")))))))),
     ("Token.op3", ((((empty.seq (lit ":")).seq (lit ":")).seq (lit "=")).alt (((empty.seq (lit "=")).seq (lit "I")).seq (lit "=")))),
     ("Token.op2", ((((empty.seq (lit "~")).seq (lit "~")).seq (lit ">")).alt (((empty.seq (lit ":")).seq (lit "=")).alt (((empty.seq (lit "~")).seq (lit ">")).alt (((empty.seq (lit "-")).seq (lit ">")).alt (((empty.seq (lit "<")).seq (lit "-")).alt (((empty.seq (lit "=")).seq (lit ">")).alt ((empty.seq (lit "@")).seq (lit "@"))))))))),
+    -- Layout annotation tokens for pretty-printing
+    ("Token.layout", (longest [
+      (((((((lit "@").seq (lit "i")).seq (lit "n")).seq (lit "d")).seq (lit "e")).seq (lit "n")).seq (lit "t")),
+      (((((((lit "@").seq (lit "d")).seq (lit "e")).seq (lit "d")).seq (lit "e")).seq (lit "n")).seq (lit "t")),
+      (((lit "@").seq (lit "n")).seq (lit "l")),
+      (((lit "@").seq (lit "s")).seq (lit "p")),
+      ((((lit "@").seq (lit "n")).seq (lit "s")).seq (lit "p"))
+    ])),
     ("Token.special", (((lit "<").seq ((ref "Token.alpha").seq ((ref "Token.alpha").star))).seq (lit ">"))),
     ("Token.sym", (ref "Token.symch"))
   ]
@@ -58,7 +67,7 @@ def tokenPiece : Piece := {
 def tokenProductions : Productions := tokenPiece.grammar
 
 /-- Main token productions in priority order -/
-def mainTokenProds : List String := ["Token.comment", "Token.ws", "Token.op3", "Token.op2", "Token.string", "Token.char", "Token.special", "Token.hashident", "Token.ident", "Token.number", "Token.sym"]
+def mainTokenProds : List String := ["Token.comment", "Token.ws", "Token.op3", "Token.op2", "Token.layout", "Token.string", "Token.char", "Token.special", "Token.hashident", "Token.ident", "Token.number", "Token.sym"]
 
 /-! ## Tokenizer -/
 

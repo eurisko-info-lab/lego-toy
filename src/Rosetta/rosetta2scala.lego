@@ -18,7 +18,53 @@
 import Rosetta
 import Scala
 
-lang RosettaToScala (Rosetta Scala) :=
+lang RosettaToScala :=
+
+-----------------------------------------------------
+-- FileTransform
+-- Entry point: handle file-level (seq) wrapper
+-----------------------------------------------------
+piece FileTransform
+  -- File is a sequence of declarations - transform each
+  @file rule fileToScala: (toScala (seq $decls)) ~~>
+    (scalaFile (toScalaDecls $decls)) ;
+  
+  -- Transform declaration list
+  rule declsToScala: (toScalaDecls ($decl $rest)) ~~>
+    ((toScalaDecl $decl) (toScalaDecls $rest)) ;
+  rule declsToScalaSingle: (toScalaDecls $decl) ~~>
+    (toScalaDecl $decl) ;
+  
+  -- Route declarations to appropriate transformers  
+  @decl rule declAdtToScala: (toScalaDecl (adtDef $kw $name $lb $constrs $rb)) ~~>
+    (toScala (adtDef $kw $name $lb $constrs $rb)) ;
+
+-----------------------------------------------------
+-- ADTTransform
+-- Transform Rosetta ADT definitions to Scala sealed trait + case classes
+-- Structure: (adtDef "adt" Name "{" constr1 (seq "," constr2) ... "}")
+-----------------------------------------------------
+piece ADTTransform
+  -- adtDef → sealed trait with case classes
+  @decl rule adtToScala: (toScala (adtDef $kw $name $lb $constrs $rb)) ~~>
+    (sealedTrait $name (toScalaCtors $name $constrs)) ;
+  
+  -- Transform constructor sequence - handle (seq "," next)
+  rule ctorsToScalaSeqComma: (toScalaCtors $parent (seq "," $next)) ~~>
+    (toScalaCtors $parent $next) ;
+  -- Handle multiple constructors: first constr followed by (seq "," ...)
+  rule ctorsToScalaFirst: (toScalaCtors $parent ((constr $name ":" $ty) $rest)) ~~>
+    ((caseClass $name (toScalaParams $ty) $parent) (toScalaCtors $parent $rest)) ;
+  -- Single constructor
+  rule ctorsToScalaSingle: (toScalaCtors $parent (constr $name ":" $ty)) ~~>
+    (caseClass $name (toScalaParams $ty) $parent) ;
+  rule ctorsToScalaNil: (toScalaCtors $parent ()) ~~> () ;
+  
+  -- Transform type to params (for constructor fields)
+  rule typeToParams: (toScalaParams (typeExpr $left -> $right)) ~~>
+    ((toScalaType $left) (toScalaParams $right)) ;
+  rule typeToParamsBase: (toScalaParams (typeExpr $t)) ~~> () ;
+  rule typeToParamsApp: (toScalaParams (typeApp $t)) ~~> () ;
 
 -----------------------------------------------------
 -- CoreTransform
@@ -229,10 +275,24 @@ piece ErrorTransform
 -- Transform Rosetta types to Scala types
 -----------------------------------------------------
 piece TypeTransform
+  -- Source syntax: typeExpr with arrow
+  rule typeExprArrowToScala: (toScalaType (typeExpr $left -> $right)) ~~>
+    (tyFun (toScalaType $left) (toScalaType $right)) ;
+  -- Source syntax: simple typeExpr
+  rule typeExprBaseToScala: (toScalaType (typeExpr $t)) ~~>
+    (toScalaType $t) ;
+  -- Source syntax: typeApp (type application)
+  rule typeAppSingleToScala: (toScalaType (typeApp $t)) ~~>
+    (tyVar $t) ;
+  rule typeAppMultiToScala: (toScalaType (typeApp $t $args)) ~~>
+    (tyApp (toScalaType $t) (toScalaType $args)) ;
+  -- IR syntax: Var, App
   rule typeVarToScala: (toScalaType (Var $x)) ~~> (tyVar $x) ;
   rule typeAppToScala: (toScalaType (App $f $a)) ~~>
     (tyApp (toScalaType $f) (typeList (toScalaType $a))) ;
   rule typeUnivToScala: (toScalaType Univ) ~~> (tyAny) ;
+  -- Fallback for simple identifiers
+  rule typeIdentToScala: (toScalaType $t) ~~> (tyVar $t) ;
 
 -----------------------------------------------------
 -- Entry Point
@@ -249,6 +309,6 @@ test "lamToScala": (toScala (Lam x . (Var x))) ~~>
 test "pairToScala": (toScala (Pair (Var a) (Var b))) ~~>
   (tuple (termList (var a) (var b))) ;
 
-test "enumToScala": (toScala (adtDef Option { (None : Option) (Some : Term → Option) })) ~~>
+test "enumToScala": (toScala (adtDef Option { (None : Option) (Some : (arrowTy Term Option)) })) ~~>
   (enumDecl Option (enumCaseSimple None) (enumCaseParams Some (paramList (param arg (tyVar Term))))) ;
 

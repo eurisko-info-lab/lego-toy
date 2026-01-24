@@ -165,51 +165,51 @@ piece ForComprehension
 piece Declarations
   decl ::= 
     -- Enum (Scala 3 ADT)
-    "enum" <ident> typeParamList? extendsClause? "{" enumCase* "}"
+    "enum" <ident> typeParamList? extendsClause? "{" @nl @indent enumCase* @dedent "}" @nl
       → enumDecl
     -- Sealed trait + case class (Scala 2 style)
-    | "sealed" "trait" <ident> typeParamList?
+    | "sealed" "trait" <ident> typeParamList? @nl @nl
       → sealedTraitDecl
-    | "case" "class" <ident> typeParamList? "(" paramList ")" extendsClause?
+    | "case" "class" <ident> typeParamList? @nsp "(" paramList ")" extendsClause? @nl
       → caseClassDecl
-    | "case" "object" <ident> extendsClause?
+    | "case" "object" <ident> extendsClause? @nl
       → caseObjectDecl
     -- Regular class/object
-    | "class" <ident> typeParamList? "(" paramList ")" extendsClause? "{" member* "}"
+    | "class" <ident> typeParamList? @nsp "(" paramList ")" extendsClause? "{" @nl @indent member* @dedent "}" @nl
       → classDecl
-    | "object" <ident> extendsClause? "{" member* "}"
+    | "object" <ident> extendsClause? "{" @nl @indent member* @dedent "}" @nl
       → objectDecl
-    | "trait" <ident> typeParamList? extendsClause? "{" member* "}"
+    | "trait" <ident> typeParamList? extendsClause? "{" @nl @indent member* @dedent "}" @nl
       → traitDecl
     -- Definition
-    | "def" <ident> typeParamList? "(" paramList ")" ":" type "=" term
+    | "def" <ident> typeParamList? @nsp "(" paramList ")" ":" type "=" term @nl
       → defDecl
-    | "val" <ident> ":" type "=" term
+    | "val" <ident> ":" type "=" term @nl
       → valDecl
-    | "var" <ident> ":" type "=" term
+    | "var" <ident> ":" type "=" term @nl
       → varDecl
-    | "lazy" "val" <ident> ":" type "=" term
+    | "lazy" "val" <ident> ":" type "=" term @nl
       → lazyValDecl
     -- Type alias
-    | "type" <ident> typeParamList? "=" type
+    | "type" <ident> typeParamList? "=" type @nl
       → typeAliasDecl
     -- Given/using (Scala 3 implicits)
-    | "given" <ident>? ":" type "=" term
+    | "given" <ident>? ":" type "=" term @nl
       → givenDecl
-    | "given" <ident>? ":" type "with" "{" member* "}"
+    | "given" <ident>? ":" type "with" "{" @nl @indent member* @dedent "}" @nl
       → givenWithDecl
     -- Extension
-    | "extension" "(" <ident> ":" type ")" defDecl*
+    | "extension" @nsp "(" <ident> ":" type ")" @nl @indent defDecl* @dedent
       → extensionDecl
     -- Package/import
-    | "package" modulePath
+    | "package" modulePath @nl
       → packageDecl
-    | "import" modulePath importSel?
+    | "import" modulePath importSel? @nl
       → importDecl
     ;
 
-  enumCase ::= "case" <ident> "(" paramList ")"  → enumCaseParams
-             | "case" <ident>                    → enumCaseSimple
+  enumCase ::= "case" <ident> @nsp "(" paramList ")" @nl → enumCaseParams
+             | "case" <ident> @nl                       → enumCaseSimple
              ;
   member ::= defDecl | valDecl | typeAliasDecl ;
   extendsClause ::= "extends" type ("with" type)* → extendsClause ;

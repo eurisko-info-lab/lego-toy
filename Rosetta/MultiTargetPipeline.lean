@@ -1,628 +1,682 @@
 /-
   MultiTargetPipeline.lean
-  Automatic code generation for multiple targets from a single source.
+  Multi-target code generation: .rosetta/.lego → Lean/Scala/Haskell/Rust
 
-  Pipeline:
-    source.lego → lego2rosetta → Rosetta IR → rosetta2<L> → <L> code
+  Usage:
+    lake exe multi-target <source.rosetta|source.lego> [--out <dir>] [--targets lean,scala,haskell,rust]
 
-  Targets: Lean, Scala, Haskell, Rust
-
-  Each target has:
-  - <L>.lego: Pure AST definition for target language
-  - rosetta2<L>.lego: Transformation rules from Rosetta IR
-  - CodeGen functions: Convert AST to printable code
+  All the real work is done by:
+    - GrammarDrivenPipeline.lean (transform & print infrastructure)
+    - <L>.lego grammars (print mode via layout annotations)
+    - rosetta2<L>.lego (transformation rules)
 -/
 
 import Lego.Runtime
 import Lego.Loader
+import GrammarDrivenPipeline
 
 open Lego.Runtime
 open Lego.Loader
 open Lego
 
-/-! ## Language Definitions -/
+namespace MultiTargetPipeline
 
-/-- Target language enumeration -/
-inductive TargetLang | Lean | Scala | Haskell | Rust
-  deriving Repr, BEq, Inhabited
+/-- Parse target language from string -/
+def parseTarget (s : String) : Option TargetLang :=
+  match s.toLower with
+  | "lean" => some .Lean
+  | "scala" => some .Scala
+  | "haskell" | "hs" => some .Haskell
+  | "rust" | "rs" => some .Rust
+  | _ => none
 
-instance : ToString TargetLang where
-  toString
-    | .Lean => "Lean"
-    | .Scala => "Scala"
-    | .Haskell => "Haskell"
-    | .Rust => "Rust"
+/-- Parse comma-separated targets -/
+def parseTargets (s : String) : List TargetLang :=
+  s.splitOn "," |>.filterMap parseTarget
 
-/-- File extension for each target -/
-def TargetLang.ext : TargetLang → String
-  | .Lean => ".lean"
-  | .Scala => ".scala"
-  | .Haskell => ".hs"
-  | .Rust => ".rs"
+/-- Print usage information -/
+def printUsage : IO Unit := do
+  IO.println "╔══════════════════════════════════════════════════════════════════╗"
+  IO.println "║  Rosetta Multi-Target Code Generator                             ║"
+  IO.println "╚══════════════════════════════════════════════════════════════════╝"
+  IO.println ""
+  IO.println "Usage: lake exe multi-target <source...> [options]"
+  IO.println ""
+  IO.println "Arguments:"
+  IO.println "  <source...>           One or more .rosetta or .lego source files"
+  IO.println ""
+  IO.println "Options:"
+  IO.println "  --out, -o <dir>       Output directory (default: ./generated/Rosetta)"
+  IO.println "  --targets, -t <list>  Comma-separated targets: lean,scala,haskell,rust"
+  IO.println "                        (default: all four)"
+  IO.println "  --combined            Combine all sources into single file (legacy mode)"
+  IO.println "  --separate            Generate separate files per module (default)"
+  IO.println "  --quiet, -q           Suppress verbose output"
+  IO.println "  --help, -h            Show this help message"
+  IO.println ""
+  IO.println "Examples:"
+  IO.println "  lake exe multi-target src/Lego/Lego.rosetta"
+  IO.println "  lake exe multi-target src/Lego/*.rosetta -o ./out"
+  IO.println "  lake exe multi-target examples/Arith.lego -o ./out -t lean,rust"
+  IO.println "  lake exe multi-target src/Lego/*.rosetta --combined  # single file per lang"
+  IO.println ""
 
-/-- Path to rosetta2<L>.lego for each target -/
-def TargetLang.transformPath : TargetLang → String
-  | .Lean => "./src/Rosetta/rosetta2lean.lego"
-  | .Scala => "./src/Rosetta/rosetta2scala.lego"
-  | .Haskell => "./src/Rosetta/rosetta2haskell.lego"
-  | .Rust => "./src/Rosetta/rosetta2rust.lego"
+/-- Output mode: separate files per module or combined into one -/
+inductive OutputMode where
+  | Separate  -- One file per source module per language (default)
+  | Combined  -- Single file per language (legacy)
+  deriving Repr, BEq
 
-/-! ## Reserved Keywords per Language -/
+/-- Command line arguments -/
+structure Args where
+  sourcePaths : List String
+  outDir : String := "./generated/Rosetta"
+  targets : List TargetLang := [.Lean, .Scala, .Haskell, .Rust]
+  quiet : Bool := false
+  outputMode : OutputMode := .Separate
+  deriving Repr
 
-def leanKeywords : List String := [
-  "partial", "unsafe", "private", "protected", "scoped", "local",
-  "where", "rec", "match", "let", "in", "if", "then", "else",
-  "do", "return", "for", "fun", "by", "have", "show", "with",
-  "structure", "inductive", "class", "instance", "def", "theorem",
-  "axiom", "example", "abbrev", "opaque", "variable", "universe",
-  "end", "section", "namespace", "open", "import", "export", "Type"
-]
+/-- Parse command line arguments -/
+def parseArgs (args : List String) : IO (Option Args) := do
+  if args.isEmpty || args.contains "--help" || args.contains "-h" then
+    printUsage
+    return none
 
-def scalaKeywords : List String := [
-  "abstract", "case", "catch", "class", "def", "do", "else",
-  "enum", "export", "extends", "false", "final", "finally", "for",
-  "given", "if", "implicit", "import", "lazy", "match", "new",
-  "null", "object", "override", "package", "private", "protected",
-  "return", "sealed", "super", "then", "this", "throw", "trait",
-  "true", "try", "type", "val", "var", "while", "with", "yield"
-]
+  let mut sourcePaths : List String := []
+  let mut outDir := "./generated/Rosetta"
+  let mut targets := [TargetLang.Lean, .Scala, .Haskell, .Rust]
+  let mut quiet := false
+  let mut outputMode := OutputMode.Separate
+  let mut i := 0
 
-def haskellKeywords : List String := [
-  "case", "class", "data", "default", "deriving", "do", "else",
-  "forall", "foreign", "if", "import", "in", "infix", "infixl",
-  "infixr", "instance", "let", "mdo", "module", "newtype", "of",
-  "pattern", "proc", "qualified", "rec", "then", "type", "where"
-]
+  while i < args.length do
+    let arg := args[i]!
+    if arg == "--out" || arg == "-o" then
+      if i + 1 < args.length then
+        outDir := args[i + 1]!
+        i := i + 2
+      else
+        IO.eprintln "Error: --out requires a directory argument"
+        return none
+    else if arg == "--targets" || arg == "-t" then
+      if i + 1 < args.length then
+        targets := parseTargets args[i + 1]!
+        if targets.isEmpty then
+          IO.eprintln s!"Error: Invalid targets: {args[i + 1]!}"
+          return none
+        i := i + 2
+      else
+        IO.eprintln "Error: --targets requires a list argument"
+        return none
+    else if arg == "--quiet" || arg == "-q" then
+      quiet := true
+      i := i + 1
+    else if arg == "--combined" then
+      outputMode := .Combined
+      i := i + 1
+    else if arg == "--separate" then
+      outputMode := .Separate
+      i := i + 1
+    else if !arg.startsWith "-" then
+      sourcePaths := sourcePaths ++ [arg]
+      i := i + 1
+    else
+      IO.eprintln s!"Error: Unknown option: {arg}"
+      printUsage
+      return none
 
-def rustKeywords : List String := [
-  "as", "async", "await", "break", "const", "continue", "crate",
-  "dyn", "else", "enum", "extern", "false", "fn", "for", "if",
-  "impl", "in", "let", "loop", "match", "mod", "move", "mut",
-  "pub", "ref", "return", "self", "Self", "static", "struct",
-  "super", "trait", "true", "type", "unsafe", "use", "where", "while"
-]
+  if sourcePaths.isEmpty then
+    IO.eprintln "Error: No source file specified"
+    printUsage
+    return none
 
-def TargetLang.keywords : TargetLang → List String
-  | .Lean => leanKeywords
-  | .Scala => scalaKeywords
-  | .Haskell => haskellKeywords
-  | .Rust => rustKeywords
+  return some { sourcePaths, outDir, targets, quiet, outputMode }
 
-/-- Sanitize identifier for target language -/
-def sanitizeIdent (lang : TargetLang) (name : String) : String :=
-  if lang.keywords.contains name then name ++ "_"
-  else name
+/-- Get the name of an ADT definition -/
+def getAdtName (t : Term) : Option String :=
+  match t with
+  | .con "adtDef" args =>
+    if args.length >= 2 then
+      match args[1]! with
+      | .var n => some n
+      | .lit s => some s
+      | _ => none
+    else none
+  | _ => none
 
-/-! ## Code Generation Helpers -/
-
-def nl : String := "\n"
-
-/-- Capitalize first letter -/
-def capitalize (s : String) : String :=
-  if s.isEmpty then s
-  else
-    let c := s.get ⟨0⟩
-    s!"{c.toUpper}{s.drop 1}"
-
-/-- Lowercase first letter -/
-def lowercase (s : String) : String :=
-  if s.isEmpty then s
-  else
-    let c := s.get ⟨0⟩
-    s!"{c.toLower}{s.drop 1}"
-
-/-- Join lines with newlines -/
-def joinLines (lines : List String) : String :=
-  nl.intercalate lines
-
-/-! ## AST → Code Printers -/
-
-/-- Extract grammar alternatives from DGrammar -/
-partial def extractGrammarAlts (body : Term) : List String :=
-  match body with
-  | .con "alt" [l, _, r] => extractGrammarAlts l ++ extractGrammarAlts r
-  | .con "arrow" [_, .con "ident" [.var name]] => [name]
-  | .con "seq" args => args.flatMap extractGrammarAlts
+/-- Get constructor names from an ADT -/
+def getConstructorNames (t : Term) : List String :=
+  match t with
+  | .con "adtDef" args =>
+    let constrs := args.drop 3 |>.dropLast
+    constrs.flatMap (fun c =>
+      match c with
+      | .con "constr" cargs =>
+        match cargs with
+        | (.var name) :: _ => [name]
+        | (.lit name) :: _ => [name]
+        | _ => []
+      | .con "seq" inner => inner.flatMap (fun c' =>
+          match c' with
+          | .con "constr" [(.var name), _, _] => [name]
+          | .con "constr" [(.lit name), _, _] => [name]
+          | _ => [])
+      | _ => [])
   | _ => []
 
-/-- Extract constructors from a piece/grammar -/
-partial def extractPieceCtors (t : Term) : List (String × List (String × String)) :=
+/-- Rename a constructor within an ADT definition -/
+def renameConstructor (t : Term) (oldName newName : String) : Term :=
   match t with
-  | .con "DGrammar" args =>
-    -- DGrammar has form: (ident name) "::=" body ";"
-    let filtered := args.filter (· != .lit "::=") |>.filter (· != .lit ";")
-    match filtered with
-    | .con "ident" [.var name] :: rest =>
-      let alts := rest.flatMap extractGrammarAlts
-      [(name, alts.map (·, "Term"))]
-    | _ => []
-  | .con "DPiece" args => args.flatMap extractPieceCtors
-  | .con "DLang" args => args.flatMap extractPieceCtors
-  | .con "seq" ts => ts.flatMap extractPieceCtors
-  | .con _ args => args.flatMap extractPieceCtors
-  | _ => []
-
-/-- Extract rules from a parsed .lego AST -/
-partial def extractLegoRules (t : Term) : List (String × Term × Term) :=
-  match t with
-  | .con "DRule" args =>
-    -- Filter out keywords and punctuation
-    let filtered := args.filter (· != .lit "rule")
-                       |>.filter (· != .lit ":")
-                       |>.filter (· != .lit "~>")
-                       |>.filter (· != .lit "~~>")
-                       |>.filter (· != .lit ";")
-                       |>.filter (· != .con "unit" [])
-    match filtered with
-    | .con "ident" [.var name] :: rest =>
-      match rest with
-      | [pat, tmpl] => [(name, pat, tmpl)]
-      | [pat] => [(name, pat, pat)]
-      | _ => []
-    | _ => []
-  | .con "DPiece" args => args.flatMap extractLegoRules
-  | .con "DLang" args => args.flatMap extractLegoRules
-  | .con "seq" ts => ts.flatMap extractLegoRules
-  | .con _ args => args.flatMap extractLegoRules
-  | _ => []
-
-/-- Extract constructor definitions from transformed AST.
-    Looks for patterns like (adtDef name (ctor c1 ty1) (ctor c2 ty2) ...) -/
-partial def extractAdtDefs (t : Term) : List (String × List (String × String)) :=
-  -- First try standard Rosetta format, then fall back to Lego format
-  let rosettaDefs := extractRosettaAdtDefs t
-  if rosettaDefs.isEmpty then extractPieceCtors t else rosettaDefs
-where
-  extractRosettaAdtDefs : Term → List (String × List (String × String))
-    | .con "adtDef" args =>
-      match args with
-      | .var name :: ctors =>
-        let ctorList := ctors.filterMap fun c =>
-          match c with
-          | .con "ctor" [.var cname, .var cty] => some (cname, cty)
-          | .con "ctor" [.con "ident" [.var cname], ty] =>
-            some (cname, termToTypeString ty)
-          | _ => none
-        [(name, ctorList)]
-      | .con "ident" [.var name] :: ctors =>
-        let ctorList := ctors.filterMap fun c =>
-          match c with
-          | .con "ctor" [.var cname, .var cty] => some (cname, cty)
-          | .con "ctor" [.con "ident" [.var cname], ty] =>
-            some (cname, termToTypeString ty)
-          | _ => none
-        [(name, ctorList)]
-      | _ => []
-    | .con "moduleDecl" [_, .con "seq" body] =>
-      body.flatMap extractRosettaAdtDefs
-    | .con "seq" ts => ts.flatMap extractRosettaAdtDefs
-    | .con _ args => args.flatMap extractRosettaAdtDefs
-    | _ => []
-
-  termToTypeString : Term → String
-    | .var s => s
-    | .con "Arrow" [a, b] => s!"{termToTypeString a} → {termToTypeString b}"
-    | .con "ident" [.var s] => s
-    | _ => "Any"
-
-/-- Extract rewrite rules from transformed AST -/
-partial def extractRewriteRules (t : Term) : List (String × Term × Term) :=
-  -- First try standard Rosetta format, then fall back to Lego format
-  let rosettaRules := extractRosettaRules t
-  if rosettaRules.isEmpty then extractLegoRules t else rosettaRules
-where
-  extractRosettaRules : Term → List (String × Term × Term)
-    | .con "rewriteRule" args =>
-      match args with
-      | [.var name, pat, tmpl] => [(name, pat, tmpl)]
-      | [.con "ident" [.var name], pat, tmpl] => [(name, pat, tmpl)]
-      | _ => []
-    | .con "moduleDecl" [_, .con "seq" body] =>
-      body.flatMap extractRosettaRules
-    | .con "seq" ts => ts.flatMap extractRosettaRules
-    | .con _ args => args.flatMap extractRosettaRules
-    | _ => []
-
-/-- Convert Term to string (generic, used for patterns/templates) -/
-partial def termToString (t : Term) : String :=
-  match t with
-  | .var name => name
-  | .lit s => s
-  | .con "ident" [.var name] => name
-  | .con "metavar" [.var name] => "$" ++ name
-  | .con name args =>
-    if args.isEmpty then name
-    else "(" ++ name ++ " " ++ " ".intercalate (args.map termToString) ++ ")"
-
-/-- Clean pattern/template: extract meaningful structure from raw Lego AST -/
-partial def cleanLegoTerm (t : Term) : Term :=
-  match t with
-  -- Extract variable from (var "$" (ident name))
-  | .con "var" [.lit "$", .con "ident" [.var name]] => .var ("$" ++ name)
-  | .con "var" (.lit "$" :: .con "ident" [.var name] :: _) => .var ("$" ++ name)
-  -- S-expression: (con "(" head args... ")")
-  | .con "con" args =>
-    let filtered := args.filter fun x =>
-      match x with | .lit "(" => false | .lit ")" => false | _ => true
-    match filtered with
-    | .con "ident" [.var head] :: rest =>
-      .con head (rest.map cleanLegoTerm)
-    | [single] => cleanLegoTerm single
+  | .con "constr" args =>
+    match args with
+    | [.var n, colon, ty] =>
+      if n == oldName then .con "constr" [.var newName, colon, ty]
+      else t
+    | [.lit n, colon, ty] =>
+      if n == oldName then .con "constr" [.lit newName, colon, ty]
+      else t
     | _ => t
-  -- Sequence
-  | .con "seq" args =>
-    let cleaned := args.map cleanLegoTerm
-    .con "seq" cleaned
-  -- Recursive clean
-  | .con name args => .con name (args.map cleanLegoTerm)
+  | .con name inner =>
+    .con name (inner.map (renameConstructor · oldName newName))
   | _ => t
 
-/-! ## Lean Code Generator -/
+/-- Get rewrite rule name from a term -/
+def getRewriteRuleName (t : Term) : Option String :=
+  match t with
+  | .con "rewriteRule" args =>
+    match args with
+    | [_, .var name, _, _, _, _, _, _] => some name
+    | _ => none
+  | _ => none
 
-/-- Generate Lean 4 inductive type -/
-def genLeanInductive (name : String) (ctors : List (String × String)) : String :=
-  let ctorLines := ctors.map fun (cname, cty) =>
-    s!"  | {lowercase cname} : {cty} → {name}"
-  let body := joinLines ctorLines
-  s!"inductive {name} where" ++ nl ++ body ++ nl ++ "  deriving Repr, BEq" ++ nl
+/-- Reserved type names that conflict with target language built-ins - these are skipped -/
+def reservedTypeNames : Std.HashSet String :=
+  Std.HashSet.emptyWithCapacity 16
+    |>.insert "Option"  -- Lean, Rust, Scala
+    |>.insert "Unit"    -- Lean, Scala
 
-partial def termToLeanPattern (t : Term) : String :=
-  let cleaned := cleanLegoTerm t
-  go cleaned
-where
-  go : Term → String
-    | .var n =>
-      if n.startsWith "$" then sanitizeIdent .Lean (n.drop 1)
-      else sanitizeIdent .Lean n
-    | .con "ident" [.var n] => sanitizeIdent .Lean n
-    | .con "metavar" [.var n] => sanitizeIdent .Lean n
-    | .con name args =>
-      if args.isEmpty then s!".{lowercase name}"
-      else s!"(.{lowercase name} {" ".intercalate (args.map go)})"
-    | t => termToString t
+/-- Deduplicate terms by ADT name and rewrite rule name (keeps first occurrence) -/
+def deduplicateAdts (terms : List Term) : List Term :=
+  let init : (Std.HashSet String × Std.HashSet String × Std.HashSet String × List Term) :=
+    (Std.HashSet.emptyWithCapacity 32, Std.HashSet.emptyWithCapacity 64, Std.HashSet.emptyWithCapacity 128, [])
+  let (_, _, _, result) := terms.foldl (fun (seenAdts, seenCtors, seenRules, acc) t =>
+    -- Check if it's a rewrite rule
+    match getRewriteRuleName t with
+    | some ruleName =>
+      if seenRules.contains ruleName then (seenAdts, seenCtors, seenRules, acc)
+      else (seenAdts, seenCtors, seenRules.insert ruleName, acc ++ [t])
+    | none =>
+      -- Check if it's an ADT
+      match getAdtName t with
+      | some adtName =>
+        -- Skip reserved names entirely (use built-in types)
+        if reservedTypeNames.contains adtName then (seenAdts.insert adtName, seenCtors, seenRules, acc)
+        else if seenAdts.contains adtName then (seenAdts, seenCtors, seenRules, acc)
+        else
+          -- Check for constructor name conflicts and rename if needed
+          let ctorNames := getConstructorNames t
+          let (newSeenCtors, finalT) := ctorNames.foldl (fun (ctors, term) ctorName =>
+            if ctors.contains ctorName then
+              -- Conflict! Rename to AdtNameCtorName (no underscore for Rust compatibility)
+              let newCtorName := s!"{adtName}{ctorName}"
+              (ctors.insert newCtorName, renameConstructor term ctorName newCtorName)
+            else
+              (ctors.insert ctorName, term)
+          ) (seenCtors, t)
+          (seenAdts.insert adtName, newSeenCtors, seenRules, acc ++ [finalT])
+      | none => (seenAdts, seenCtors, seenRules, acc ++ [t])
+  ) init
+  result
 
-partial def termToLeanExpr (t : Term) : String :=
-  let cleaned := cleanLegoTerm t
-  go cleaned
-where
-  go : Term → String
-    | .var n =>
-      if n.startsWith "$" then sanitizeIdent .Lean (n.drop 1)
-      else sanitizeIdent .Lean n
-    | .con "ident" [.var n] => sanitizeIdent .Lean n
-    | .con "metavar" [.var n] => sanitizeIdent .Lean n
-    | .con name args =>
-      if args.isEmpty then s!".{lowercase name}"
-      else s!"(.{lowercase name} {" ".intercalate (args.map go)})"
-    | t => termToString t
+/-- Merge multiple ASTs into a single AST by combining their children -/
+def mergeAsts (asts : List Term) : Term :=
+  -- Combine all children from all ASTs into one seq
+  let allChildren := asts.flatMap (fun ast =>
+    match ast with
+    | .con _ args => args
+    | _ => [ast])
+  -- Deduplicate ADT definitions (common types like Term appear in multiple files)
+  let dedupedChildren := deduplicateAdts allChildren
+  .con "seq" dedupedChildren
 
-/-- Generate Lean 4 function from rewrite rule -/
-def genLeanFunction (name : String) (pat : Term) (tmpl : Term) : String :=
-  let patStr := termToLeanPattern pat
-  let tmplStr := termToLeanExpr tmpl
-  s!"def {name} : Expr → Option Expr" ++ nl ++
-  s!"  | {patStr} => some {tmplStr}" ++ nl ++
-  "  | _ => none" ++ nl
+/-- Extract module name from source path (e.g., "src/Lego/Algebra.rosetta" -> "Algebra") -/
+def extractModuleName (sourcePath : String) : String :=
+  let filename := sourcePath.splitOn "/" |>.getLast!
+  let basename := filename.splitOn "." |>.head!
+  basename
 
-/-- Generate complete Lean file -/
-def genLeanFile (moduleName : String) (ast : Term) : String :=
-  let header := "/-" ++ nl ++ "  Generated from Rosetta IR" ++ nl ++
-    s!"  Module: {moduleName}" ++ nl ++ "-/" ++ nl ++ nl
-  let adts := extractAdtDefs ast
-  let rules := extractRewriteRules ast
+/-- Get ADT names defined in a Term (for dependency analysis) -/
+def getDefinedAdtNames (t : Term) : List String :=
+  match t with
+  | .con "seq" children => children.flatMap getDefinedAdtNames
+  | .con "adtDef" args =>
+    if args.length >= 2 then
+      match args[1]! with
+      | .var n => [n]
+      | .lit s => [s]
+      | _ => []
+    else []
+  | .con _ children => children.flatMap getDefinedAdtNames
+  | _ => []
 
-  let adtCode := adts.map fun (name, ctors) => genLeanInductive name ctors
-  let ruleCode := rules.map fun (name, pat, tmpl) => genLeanFunction name pat tmpl
+/-- Check if string starts with uppercase -/
+def startsWithUpper (s : String) : Bool :=
+  match s.data.head? with
+  | some c => c.isUpper
+  | none => false
 
-  header ++ joinLines adtCode ++ nl ++ joinLines ruleCode
+/-- Get type references from type annotations only (not patterns) -/
+partial def getTypeRefs (t : Term) : List String :=
+  match t with
+  -- Type reference nodes
+  | .con "typeRef" [.var n] => [n]
+  | .con "typeRef" [.lit s] => [s]
+  -- Arrow types: a -> b
+  | .con "arrow" args => args.flatMap getTypeRefs
+  -- Type applications: List a, Option b
+  | .con "typeApp" args => args.flatMap getTypeRefs
+  | .con "listType" args => args.flatMap getTypeRefs
+  -- Constructor field types in ADT definitions
+  | .con "constr" args =>
+    -- Skip first arg (constructor name), process rest (types)
+    args.drop 1 |>.flatMap getTypeRefs
+  -- ADT definitions - extract from constructor types only
+  | .con "adtDef" args =>
+    -- args[0]=keyword, args[1]=name, args[2]=params, args[3..n-1]=constructors, args[n]=end
+    args.drop 3 |>.dropLast |>.flatMap getTypeRefs
+  -- Sequence of declarations
+  | .con "seq" args => args.flatMap getTypeRefs
+  -- Inductive (Lean)
+  | .con "inductiveDecl" args => args.flatMap getTypeRefs
+  -- Data (Haskell)
+  | .con "dataDecl" args => args.flatMap getTypeRefs
+  -- Sealed trait/case class (Scala)
+  | .con "sealedTrait" args => args.flatMap getTypeRefs
+  | .con "caseClass" args => args.flatMap getTypeRefs
+  -- Enum (Rust)
+  | .con "enumDecl" args => args.flatMap getTypeRefs
+  -- Type variable or type name in type position
+  | .var n => if startsWithUpper n then [n] else []
+  | .lit s => if startsWithUpper s then [s] else []
+  -- DON'T recurse into patterns, function definitions, etc.
+  | _ => []
 
-/-! ## Scala Code Generator -/
+/-- Get external type dependencies (types referenced but not defined in this module) -/
+def getExternalDeps (ast : Term) : List String :=
+  let defined := getDefinedAdtNames ast |> Std.HashSet.ofList
+  let refs := getTypeRefs ast
+  -- Filter: referenced but not defined, starts with uppercase
+  refs.filter (fun r => !defined.contains r && startsWithUpper r)
+    |>.eraseDups
 
-/-- Generate Scala 3 enum type -/
-def genScalaEnum (name : String) (ctors : List (String × String)) : String :=
-  let ctorLines := ctors.map fun (cname, cty) =>
-    let args := scalaTypeArgs cty
-    s!"  case {capitalize cname}({args})"
-  let body := joinLines ctorLines
-  s!"enum {name}:" ++ nl ++ body ++ nl
-where
-  scalaTypeArgs (ty : String) : String :=
-    let parts := ty.splitOn " → "
-    let indexed := parts.dropLast.mapIdx fun i p => s!"arg{i + 1}: {p}"
-    ", ".intercalate indexed
+/-- Get constructor names defined in an ADT -/
+def getDefinedConstructors (t : Term) : List String :=
+  match t with
+  | .con "seq" children => children.flatMap getDefinedConstructors
+  | .con "adtDef" args =>
+    let constrs := args.drop 3 |>.dropLast
+    constrs.flatMap (fun c =>
+      match c with
+      | .con "constr" cargs =>
+        match cargs with
+        | (.var name) :: _ => [name]
+        | (.lit name) :: _ => [name]
+        | _ => []
+      | .con "seq" inner => inner.flatMap (fun c' =>
+          match c' with
+          | .con "constr" [(.var name), _, _] => [name]
+          | .con "constr" [(.lit name), _, _] => [name]
+          | _ => [])
+      | _ => [])
+  | .con _ children => children.flatMap getDefinedConstructors
+  | _ => []
 
-/-- Generate Scala function from rewrite rule -/
-def genScalaFunction (name : String) (pat : Term) (tmpl : Term) : String :=
-  let patStr := goPattern (cleanLegoTerm pat)
-  let tmplStr := goExpr (cleanLegoTerm tmpl)
-  s!"def {name}(e: Expr): Option[Expr] = e match" ++ nl ++
-  s!"  case {patStr} => Some({tmplStr})" ++ nl ++
-  "  case _ => None" ++ nl
-where
-  goPattern : Term → String
-    | .var n =>
-      if n.startsWith "$" then sanitizeIdent .Scala (n.drop 1)
-      else sanitizeIdent .Scala n
-    | .con "ident" [.var n] => sanitizeIdent .Scala n
-    | .con "metavar" [.var n] => sanitizeIdent .Scala n
-    | .con nm args =>
-      if args.isEmpty then s!"{capitalize nm}()"
-      else s!"{capitalize nm}({", ".intercalate (args.map goPattern)})"
-    | t => termToString t
+/-- Get constructor references from patterns (e.g., .Con "x" [...]) -/
+partial def getConstructorRefs (t : Term) : List String :=
+  match t with
+  | .con "matchArm" args => args.flatMap getConstructorRefs
+  | .con "patternApp" ((.var n) :: rest) => n :: rest.flatMap getConstructorRefs
+  | .con "patternApp" ((.lit s) :: rest) =>
+    if startsWithUpper s then s :: rest.flatMap getConstructorRefs
+    else rest.flatMap getConstructorRefs
+  -- Detect .Constructor patterns in generated code
+  | .lit s => if s.startsWith "." && s.length > 1 && startsWithUpper (s.drop 1) then [s.drop 1] else []
+  | .con _ args => args.flatMap getConstructorRefs
+  | _ => []
 
-  goExpr : Term → String
-    | .var n =>
-      if n.startsWith "$" then sanitizeIdent .Scala (n.drop 1)
-      else sanitizeIdent .Scala n
-    | .con "ident" [.var n] => sanitizeIdent .Scala n
-    | .con "metavar" [.var n] => sanitizeIdent .Scala n
-    | .con nm args =>
-      if args.isEmpty then s!"{capitalize nm}()"
-      else s!"{capitalize nm}({", ".intercalate (args.map goExpr)})"
-    | t => termToString t
+/-- Get external constructor dependencies -/
+def getExternalConstructorDeps (ast : Term) : List String :=
+  let definedCtors := getDefinedConstructors ast |> Std.HashSet.ofList
+  let refs := getConstructorRefs ast
+  refs.filter (!definedCtors.contains ·) |>.eraseDups
 
-/-- Generate complete Scala file -/
-def genScalaFile (moduleName : String) (ast : Term) : String :=
-  let header := "// Generated from Rosetta IR" ++ nl ++
-    s!"// Module: {moduleName}" ++ nl ++ nl ++ "package generated" ++ nl ++ nl
-  let adts := extractAdtDefs ast
-  let rules := extractRewriteRules ast
+/-- Built-in types that don't need imports -/
+def builtinTypes : Std.HashSet String :=
+  Std.HashSet.emptyWithCapacity 32
+    |>.insert "Bool" |>.insert "Int" |>.insert "Nat" |>.insert "String" |>.insert "Char"
+    |>.insert "Float" |>.insert "List" |>.insert "Option" |>.insert "Unit" |>.insert "Type"
+    |>.insert "IO" |>.insert "Array"
 
-  let adtCode := adts.map fun (name, ctors) => genScalaEnum name ctors
-  let ruleCode := rules.map fun (name, pat, tmpl) => genScalaFunction name pat tmpl
-
-  header ++ joinLines adtCode ++ nl ++ joinLines ruleCode
-
-/-! ## Haskell Code Generator -/
-
-/-- Generate Haskell data type (GADT style) -/
-def genHaskellData (name : String) (ctors : List (String × String)) : String :=
-  let ctorLines := ctors.map fun (cname, cty) =>
-    let ty := haskellType cty
-    s!"  {capitalize cname} :: {ty}"
-  let body := joinLines ctorLines
-  s!"data {name} where" ++ nl ++ body ++ nl ++ "  deriving (Show, Eq)" ++ nl
-where
-  haskellType (ty : String) : String :=
-    ty.replace " → " " -> "
-
-/-- Generate Haskell function from rewrite rule -/
-def genHaskellFunction (name : String) (pat : Term) (tmpl : Term) : String :=
-  let patStr := goPattern (cleanLegoTerm pat)
-  let tmplStr := goExpr (cleanLegoTerm tmpl)
-  s!"{name} :: Expr -> Maybe Expr" ++ nl ++
-  s!"{name} ({patStr}) = Just ({tmplStr})" ++ nl ++
-  s!"{name} _ = Nothing" ++ nl
-where
-  goPatternArg : Term → String  -- Wrap nested constructors in parens
-    | .var n =>
-      if n.startsWith "$" then sanitizeIdent .Haskell (n.drop 1)
-      else sanitizeIdent .Haskell n
-    | .con "ident" [.var n] => sanitizeIdent .Haskell n
-    | .con "metavar" [.var n] => sanitizeIdent .Haskell n
-    | .con nm args =>
-      if args.isEmpty then capitalize nm
-      else s!"({capitalize nm} {" ".intercalate (args.map goPatternArg)})"
-    | t => termToString t
-
-  goPattern : Term → String  -- Top-level (no extra parens)
-    | .var n =>
-      if n.startsWith "$" then sanitizeIdent .Haskell (n.drop 1)
-      else sanitizeIdent .Haskell n
-    | .con "ident" [.var n] => sanitizeIdent .Haskell n
-    | .con "metavar" [.var n] => sanitizeIdent .Haskell n
-    | .con nm args =>
-      if args.isEmpty then capitalize nm
-      else s!"{capitalize nm} {" ".intercalate (args.map goPatternArg)}"
-    | t => termToString t
-
-  goExpr : Term → String
-    | .var n =>
-      if n.startsWith "$" then sanitizeIdent .Haskell (n.drop 1)
-      else sanitizeIdent .Haskell n
-    | .con "ident" [.var n] => sanitizeIdent .Haskell n
-    | .con "metavar" [.var n] => sanitizeIdent .Haskell n
-    | .con nm args =>
-      if args.isEmpty then capitalize nm
-      else s!"({capitalize nm} {" ".intercalate (args.map goExpr)})"
-    | t => termToString t
-
-/-- Generate complete Haskell file -/
-def genHaskellFile (moduleName : String) (ast : Term) : String :=
-  let pragma1 := "{-# LANGUAGE GADTs #-}"
-  let pragma2 := "{-# LANGUAGE StandaloneDeriving #-}"
-  let header := "{-" ++ nl ++ "  Generated from Rosetta IR" ++ nl ++
-    s!"  Module: {moduleName}" ++ nl ++ "-}" ++ nl ++ nl ++
-    pragma1 ++ nl ++ pragma2 ++ nl ++ nl ++
-    s!"module {moduleName} where" ++ nl ++ nl
-  let adts := extractAdtDefs ast
-  let rules := extractRewriteRules ast
-
-  let adtCode := adts.map fun (name, ctors) => genHaskellData name ctors
-  let ruleCode := rules.map fun (name, pat, tmpl) => genHaskellFunction name pat tmpl
-
-  header ++ joinLines adtCode ++ nl ++ joinLines ruleCode
-
-/-! ## Rust Code Generator -/
-
-/-- Generate Rust enum type -/
-def genRustEnum (name : String) (ctors : List (String × String)) : String :=
-  let ctorLines := ctors.map fun (cname, cty) =>
-    let fields := rustFields cty
-    if fields.isEmpty then s!"    {capitalize cname},"
-    else "    " ++ capitalize cname ++ " { " ++ fields ++ " },"
-  let body := joinLines ctorLines
-  "#[derive(Debug, Clone, PartialEq)]" ++ nl ++
-  "pub enum " ++ name ++ " {" ++ nl ++ body ++ nl ++ "}" ++ nl
-where
-  rustFields (ty : String) : String :=
-    let parts := ty.splitOn " → "
-    let indexed := parts.dropLast.mapIdx fun i p =>
-      let rustTy := if p == "Term" || p == "Expr" then "Box<Expr>" else p
-      s!"arg{i + 1}: {rustTy}"
-    ", ".intercalate indexed
-
-partial def termToRustPattern (t : Term) : String :=
-  go (cleanLegoTerm t)
-where
-  go : Term → String
-    | .var n =>
-      if n.startsWith "$" then sanitizeIdent .Rust (n.drop 1)
-      else sanitizeIdent .Rust n
-    | .con "ident" [.var n] => sanitizeIdent .Rust n
-    | .con "metavar" [.var n] => sanitizeIdent .Rust n
-    | .con nm args =>
-      if args.isEmpty then s!"Expr::{capitalize nm}"
-      else
-        let fields := args.mapIdx fun i a =>
-          s!"arg{i + 1}: {go a}"
-        "Expr::" ++ capitalize nm ++ " { " ++ ", ".intercalate fields ++ " }"
-    | t => termToString t
-
-partial def termToRustExpr (t : Term) : String :=
-  go (cleanLegoTerm t)
-where
-  go : Term → String
-    | .var n =>
-      let safe := if n.startsWith "$" then sanitizeIdent .Rust (n.drop 1)
-                  else sanitizeIdent .Rust n
-      s!"{safe}.clone()"
-    | .con "ident" [.var n] =>
-      let safe := sanitizeIdent .Rust n
-      s!"{safe}.clone()"
-    | .con "metavar" [.var n] =>
-      let safe := sanitizeIdent .Rust n
-      s!"{safe}.clone()"
-    | .con nm args =>
-      if args.isEmpty then s!"Expr::{capitalize nm}"
-      else
-        let fields := args.mapIdx fun i a =>
-          s!"arg{i + 1}: Box::new({go a})"
-        "Expr::" ++ capitalize nm ++ " { " ++ ", ".intercalate fields ++ " }"
-    | t => termToString t
-
-/-- Generate Rust function from rewrite rule -/
-def genRustFunction (name : String) (pat : Term) (tmpl : Term) : String :=
-  let patStr := termToRustPattern pat
-  let tmplStr := termToRustExpr tmpl
-  "pub fn " ++ name ++ "(e: &Expr) -> Option<Expr> {" ++ nl ++
-  "    match e {" ++ nl ++
-  "        " ++ patStr ++ " => Some(" ++ tmplStr ++ ")," ++ nl ++
-  "        _ => None," ++ nl ++
-  "    }" ++ nl ++
-  "}" ++ nl
-
-/-- Generate complete Rust file -/
-def genRustFile (moduleName : String) (ast : Term) : String :=
-  let header := "// Generated from Rosetta IR" ++ nl ++
-    s!"// Module: {moduleName}" ++ nl ++ nl
-  let adts := extractAdtDefs ast
-  let rules := extractRewriteRules ast
-
-  let adtCode := adts.map fun (name, ctors) => genRustEnum name ctors
-  let ruleCode := rules.map fun (name, pat, tmpl) => genRustFunction name pat tmpl
-
-  header ++ joinLines adtCode ++ nl ++ joinLines ruleCode
-
-/-! ## Unified Code Generator -/
-
-/-- Generate code for a specific target language -/
-def genCode (lang : TargetLang) (moduleName : String) (ast : Term) : String :=
+/-- Generate import statement for a target language -/
+def genImport (lang : TargetLang) (moduleName : String) (packagePrefix : String) : String :=
   match lang with
-  | .Lean => genLeanFile moduleName ast
-  | .Scala => genScalaFile moduleName ast
-  | .Haskell => genHaskellFile moduleName ast
-  | .Rust => genRustFile moduleName ast
+  | .Lean => s!"import {packagePrefix}.{moduleName}"
+  | .Scala => s!"import {packagePrefix.toLower}.{moduleName}._"
+  | .Haskell => s!"import {moduleName}"
+  | .Rust => s!"use super::{moduleName.toLower}::*;"
 
-/-! ## Multi-Target Pipeline -/
+/-- Generate module header with imports for separate file mode -/
+def genModuleHeader (lang : TargetLang) (moduleName : String) (imports : List String) (packagePrefix : String) : String :=
+  let importLines := imports.map (genImport lang · packagePrefix) |> "\n".intercalate
+  match lang with
+  | .Lean => importLines ++ (if imports.isEmpty then "" else "\n\n")
+  | .Scala =>
+    let pkg := s!"package {packagePrefix.toLower}\n\n"
+    pkg ++ importLines ++ (if imports.isEmpty then "" else "\n\n")
+  | .Haskell =>
+    let modDecl := s!"module {moduleName} where\n\n"
+    modDecl ++ importLines ++ (if imports.isEmpty then "" else "\n\n")
+  | .Rust =>
+    "#![allow(dead_code)]\n#![allow(unused_variables)]\n\n" ++
+    importLines ++ (if imports.isEmpty then "" else "\n\n")
 
-/-- Pipeline result for one target -/
-structure TargetResult where
+/-- Result for a single module generation -/
+structure ModuleResult where
+  moduleName : String
   lang : TargetLang
   code : String
   outPath : String
+  definedTypes : List String
+  definedConstructors : List String
+  externalDeps : List String
+  externalCtorDeps : List String
   deriving Repr
 
-/-- Run the complete pipeline for all targets -/
-def runMultiTargetPipeline (rt : Runtime) (sourcePath : String)
-    (targets : List TargetLang := [.Lean, .Scala, .Haskell, .Rust])
-    (outDir : String := "./generated/Rosetta")
-    : IO (Except String (List TargetResult)) := do
+/-- Run pipeline for a single source file, generating per-module output -/
+def runForModule (rt : Runtime) (sourceAst : Term) (sourcePath : String) (lang : TargetLang)
+    (outDir : String) (packagePrefix : String) (_quiet : Bool := false)
+    : IO (Except String ModuleResult) := do
+  let moduleName := extractModuleName sourcePath
 
-  -- Step 1: Parse source file (use Rosetta grammar for .rosetta files)
-  IO.println s!"[1] Parsing source: {sourcePath}"
+  -- 1. Load grammar file
+  let (grammarAst, _) ← match ← loadLanguage rt lang.grammarPath with
+    | .error e => return .error s!"Failed to load grammar: {e}"
+    | .ok grammarLang =>
+      let content ← IO.FS.readFile lang.grammarPath
+      match parseWithGrammarE grammarLang content with
+      | .error _ =>
+        match parseLegoFileE rt content with
+        | .error e2 => return .error s!"Failed to parse grammar file: {e2}"
+        | .ok ast => pure (ast, grammarLang.productions.length)
+      | .ok ast => pure (ast, grammarLang.productions.length)
 
-  let sourceAst ← do
-    if sourcePath.endsWith ".rosetta" then
-      -- Load Rosetta grammar for .rosetta files
-      IO.println s!"    Loading Rosetta grammar..."
-      match ← loadLanguage rt "./src/Rosetta/Rosetta.lego" with
-      | .error e => return .error s!"Failed to load Rosetta grammar: {e}"
-      | .ok rosettaGrammar =>
-        IO.println s!"    ✓ Rosetta grammar loaded ({rosettaGrammar.productions.length} productions)"
-        -- Parse with rosettaFile as start production
-        let grammar := { rosettaGrammar with startProd := "File.rosettaFile" }
-        let content ← IO.FS.readFile sourcePath
-        match parseWithGrammarE grammar content with
-        | .error e => return .error s!"Failed to parse source: {e}"
-        | .ok ast => pure ast
-    else
-      -- Use Bootstrap grammar for .lego files
-      match ← parseLegoFilePathE rt sourcePath with
-      | .error e => return .error s!"Failed to parse source: {e}"
-      | .ok ast => pure ast
-  IO.println s!"    ✓ Parsed AST"
+  let prods := extractProductions grammarAst
 
-  -- Step 2: Direct transformation to target code
-  -- (Skip Rosetta IR transformation since the rule files use pseudo-code)
-  IO.println s!"[2] Generating code for {targets.length} targets..."
-  let results ← targets.mapM fun lang => do
-    IO.println s!"    → {lang}..."
+  -- 2. Load transformation rules
+  let rules ← do
+    let content ← IO.FS.readFile lang.transformPath
+    match parseLegoFileE rt content with
+    | .error _ => pure ([] : List TransformRule)
+    | .ok ast => pure (extractTransformRules ast)
 
-    -- Generate code directly from source AST
-    let moduleName := sourcePath.splitOn "/" |>.getLast! |>.replace ".lego" "" |>.replace ".rosetta" "" |> capitalize
-    let code := genCode lang moduleName sourceAst
+  -- 3. Apply transformations
+  let entryFn := match lang with
+    | .Lean => "toLean"
+    | .Scala => "toScala"
+    | .Haskell => "toHaskell"
+    | .Rust => "toRust"
 
-    -- Determine output path
-    let outPath := s!"{outDir}/{moduleName}{lang.ext}"
+  let rosettaIR := legoToRosetta sourceAst
+  let wrappedAst := Term.con entryFn [rosettaIR]
+  let transformed := if rules.isEmpty then rosettaIR else applyTransforms rules wrappedAst true
+  let sorted := sortDeclarations transformed
 
-    IO.println s!"      ✓ Generated {code.length} chars"
-    pure { lang, code, outPath }
+  -- 4. Analyze dependencies (both types and constructors)
+  let definedTypes := getDefinedAdtNames sorted
+  let definedConstructors := getDefinedConstructors sorted
+  let externalDeps := getExternalDeps sorted |>.filter (!builtinTypes.contains ·)
+  let externalCtorDeps := getExternalConstructorDeps sorted
 
-  -- Step 3: Write output files
-  IO.println s!"[3] Writing output files..."
+  -- 5. Pretty-print
+  let code := prettyPrint prods sorted lang
+
+  -- 6. Build result (header will be added later when we know which modules exist)
+  let outPath := match lang with
+    | .Rust => s!"{outDir}/{moduleName.toLower}{lang.ext}"
+    | _ => s!"{outDir}/{moduleName}{lang.ext}"
+
+  return .ok { moduleName, lang, code, outPath, definedTypes, definedConstructors, externalDeps, externalCtorDeps }
+
+/-- Resolve which modules provide which types and constructors (first definition wins) -/
+def buildTypeToModuleMap (results : List ModuleResult) : Std.HashMap String String :=
+  let typeMap := results.foldl (fun m r =>
+    r.definedTypes.foldl (fun m' t =>
+      -- Only add if not already mapped (first wins)
+      if m'.contains t then m' else m'.insert t r.moduleName
+    ) m
+  ) (Std.HashMap.emptyWithCapacity 64)
+  -- Also add constructors to module map (first wins)
+  results.foldl (fun m r =>
+    r.definedConstructors.foldl (fun m' c =>
+      if m'.contains c then m' else m'.insert c r.moduleName
+    ) m
+  ) typeMap
+
+/-- Get the modules that a given module should import -/
+def getRequiredImports (result : ModuleResult) (typeToModule : Std.HashMap String String) : List String :=
+  -- Imports from type dependencies
+  let typeImports := result.externalDeps.filterMap (typeToModule.get? ·)
+  -- Imports from constructor dependencies, but only if we don't define that constructor ourselves
+  let ctorImports := result.externalCtorDeps.filterMap (fun ctor =>
+    -- Skip if this module also defines this constructor (avoid circular imports from duplicates)
+    if result.definedConstructors.contains ctor then none
+    else typeToModule.get? ctor
+  )
+  -- Combine and deduplicate
+  (typeImports ++ ctorImports)
+    |>.filter (· != result.moduleName)  -- Don't import self
+    |>.eraseDups
+
+/-- Run pipeline in separate files mode -/
+def runSeparate (rt : Runtime) (args : Args) : IO (Except String (List TargetResult)) := do
+  let { sourcePaths, outDir, targets, quiet, .. } := args
+
+  unless quiet do
+    IO.println "╔══════════════════════════════════════════════════════════════════╗"
+    IO.println "║  Rosetta Multi-Target Code Generator (Separate Files Mode)       ║"
+    IO.println "╚══════════════════════════════════════════════════════════════════╝"
+    IO.println ""
+    IO.println s!"  Sources: {sourcePaths.length} file(s)"
+    for p in sourcePaths do
+      IO.println s!"           - {p}"
+    IO.println s!"  Output:  {outDir}"
+    IO.println s!"  Targets: {targets.map toString |> ", ".intercalate}"
+    IO.println ""
+
+  -- Load Rosetta grammar if needed
+  let hasRosettaFiles := sourcePaths.any (·.endsWith ".rosetta")
+  let rosettaGrammar ← if hasRosettaFiles then do
+    unless quiet do IO.println "      Loading Rosetta grammar..."
+    match ← loadLanguage rt "./src/Rosetta/Rosetta.lego" with
+    | .error e => return .error s!"Failed to load Rosetta grammar: {e}"
+    | .ok grammar => pure (some grammar)
+  else pure none
+
+  -- Parse all source files
+  unless quiet do IO.println s!"[1/4] Parsing {sourcePaths.length} source file(s)..."
+  let mut sourceAsts : List (String × Term) := []
+
+  for sourcePath in sourcePaths do
+    let ast ← do
+      if sourcePath.endsWith ".rosetta" then
+        match rosettaGrammar with
+        | some grammar =>
+          let content ← IO.FS.readFile sourcePath
+          match Loader.parseWithGrammarE grammar content with
+          | .error e => return .error s!"Parse error in {sourcePath}: {e}"
+          | .ok ast =>
+            unless quiet do IO.println s!"      ✓ {sourcePath}"
+            pure ast
+        | none => return .error "Rosetta grammar not loaded"
+      else
+        match ← parseLegoFilePathE rt sourcePath with
+        | .error e => return .error s!"Parse error in {sourcePath}: {e}"
+        | .ok ast =>
+          unless quiet do IO.println s!"      ✓ {sourcePath}"
+          pure ast
+    sourceAsts := sourceAsts ++ [(sourcePath, ast)]
+
+  -- Generate for each target
+  unless quiet do IO.println s!"[2/4] Generating code for {targets.length} target(s) × {sourcePaths.length} module(s)..."
+
+  let mut allResults : List TargetResult := []
+  let packagePrefix := "Generated"
+
+  for lang in targets do
+    -- Generate all modules for this language
+    let mut moduleResults : List ModuleResult := []
+    for (sourcePath, ast) in sourceAsts do
+      match ← runForModule rt ast sourcePath lang outDir packagePrefix quiet with
+      | .error e =>
+        unless quiet do IO.println s!"      ✗ {lang}/{extractModuleName sourcePath}: {e}"
+      | .ok r =>
+        moduleResults := moduleResults ++ [r]
+
+    -- For now, generate standalone files without imports
+    -- Each file is self-contained with its own type definitions
+    for r in moduleResults do
+      let header := genModuleHeader lang r.moduleName [] packagePrefix
+
+      -- Add Rust helper if needed
+      let rustHelper := if lang == .Rust then
+        "// Helper function to extract argument from Term\n" ++
+        "fn get_arg(t: &Term, i: usize) -> &Term {\n" ++
+        "    match t {\n" ++
+        "        Term::Con(_, args) => &*args[i],\n" ++
+        "        _ => panic!(\"get_arg called on non-Con\")\n" ++
+        "    }\n}\n\n"
+      else ""
+
+      let finalCode := header ++ rustHelper ++ r.code
+      allResults := allResults ++ [{ lang := r.lang, code := finalCode, outPath := r.outPath }]
+      unless quiet do IO.println s!"      ✓ {lang}/{r.moduleName}"
+
+  -- Write outputs
+  unless quiet do IO.println s!"[3/4] Writing {allResults.length} file(s)..."
   IO.FS.createDirAll outDir
-  for result in results do
-    IO.FS.writeFile result.outPath result.code
-    IO.println s!"    ✓ {result.outPath}"
+  for r in allResults do
+    IO.FS.writeFile r.outPath r.code
+    unless quiet do IO.println s!"      ✓ {r.outPath}"
+
+  -- Generate mod.rs for Rust (required for multi-file modules)
+  if targets.contains .Rust then
+    let rustModules := allResults.filter (·.lang == .Rust) |>.map (·.outPath)
+    let modNames := rustModules.map (fun p =>
+      let filename := p.splitOn "/" |>.getLast!
+      filename.splitOn "." |>.head!)
+    let modRs := modNames.map (s!"pub mod {·};") |> "\n".intercalate
+    let modPath := s!"{outDir}/mod.rs"
+    IO.FS.writeFile modPath modRs
+    unless quiet do IO.println s!"      ✓ {modPath} (module index)"
+
+  unless quiet do IO.println "[4/4] Done!"
+
+  return .ok allResults
+
+/-- Run pipeline in combined mode (legacy) -/
+def runCombined (rt : Runtime) (args : Args) : IO (Except String (List TargetResult)) := do
+  let { sourcePaths, outDir, targets, quiet, .. } := args
+
+  unless quiet do
+    IO.println "╔══════════════════════════════════════════════════════════════════╗"
+    IO.println "║  Rosetta Multi-Target Code Generator (Combined Mode)             ║"
+    IO.println "╚══════════════════════════════════════════════════════════════════╝"
+    IO.println ""
+    IO.println s!"  Sources: {sourcePaths.length} file(s)"
+    for p in sourcePaths do
+      IO.println s!"           - {p}"
+    IO.println s!"  Output:  {outDir}"
+    IO.println s!"  Targets: {targets.map toString |> ", ".intercalate}"
+    IO.println ""
+
+  -- Parse all source files
+  unless quiet do IO.println s!"[1/3] Parsing {sourcePaths.length} source file(s)..."
+  let mut allAsts : List Term := []
+
+  -- For .rosetta files, we need to load the Rosetta grammar first
+  let hasRosettaFiles := sourcePaths.any (·.endsWith ".rosetta")
+  let rosettaGrammar ← if hasRosettaFiles then do
+    unless quiet do IO.println "      Loading Rosetta grammar..."
+    match ← loadLanguage rt "./src/Rosetta/Rosetta.lego" with
+    | .error e => return .error s!"Failed to load Rosetta grammar: {e}"
+    | .ok grammar => pure (some grammar)
+  else pure none
+
+  for sourcePath in sourcePaths do
+    let ast ← do
+      if sourcePath.endsWith ".rosetta" then
+        -- Use Rosetta grammar for .rosetta files
+        match rosettaGrammar with
+        | some grammar =>
+          let content ← IO.FS.readFile sourcePath
+          match Loader.parseWithGrammarE grammar content with
+          | .error e => return .error s!"Parse error in {sourcePath}: {e}"
+          | .ok ast =>
+            unless quiet do IO.println s!"      ✓ {sourcePath} (Rosetta)"
+            pure ast
+        | none => return .error "Rosetta grammar not loaded"
+      else
+        -- Use lego grammar for .lego files
+        match ← parseLegoFilePathE rt sourcePath with
+        | .error e => return .error s!"Parse error in {sourcePath}: {e}"
+        | .ok ast =>
+          unless quiet do IO.println s!"      ✓ {sourcePath}"
+          pure ast
+    allAsts := allAsts ++ [ast]
+
+  -- Merge all ASTs
+  let sourceAst := mergeAsts allAsts
+
+  -- Generate for each target
+  unless quiet do IO.println s!"[2/3] Generating code for {targets.length} target(s)..."
+
+  let mut results : List TargetResult := []
+  for lang in targets do
+    match ← runForTarget rt sourceAst lang outDir quiet with
+    | .error e =>
+      unless quiet do IO.println s!"      ✗ {lang}: {e}"
+    | .ok r =>
+      results := results ++ [r]
+      unless quiet do IO.println s!"      ✓ {lang}: {r.code.length} chars"
+
+  -- Write outputs
+  unless quiet do IO.println s!"[3/3] Writing {results.length} file(s)..."
+  IO.FS.createDirAll outDir
+  for r in results do
+    IO.FS.writeFile r.outPath r.code
+    unless quiet do IO.println s!"      ✓ {r.outPath}"
 
   return .ok results
 
-/-! ## Main Entry Point -/
+/-- Main entry point - dispatches to separate or combined mode -/
+def run (rt : Runtime) (args : Args) : IO (Except String (List TargetResult)) := do
+  match args.outputMode with
+  | .Separate => runSeparate rt args
+  | .Combined => runCombined rt args
+
+end MultiTargetPipeline
 
 def main (args : List String) : IO Unit := do
-  let sourcePath := args.getD 0 "./src/Rosetta/Rosetta.lego"
-  let outDir := args.getD 1 "./generated/Rosetta"
+  match ← MultiTargetPipeline.parseArgs args with
+  | none => return  -- Help was shown or error occurred
+  | some parsedArgs =>
+    let rt ← Lego.Runtime.init
 
-  IO.println "═══════════════════════════════════════════════════════════════"
-  IO.println "Multi-Target Rosetta Pipeline"
-  IO.println "═══════════════════════════════════════════════════════════════"
-  IO.println s!"Source: {sourcePath}"
-  IO.println s!"Output: {outDir}"
-  IO.println ""
-
-  -- Initialize runtime
-  let rt ← Lego.Runtime.init
-
-  -- Run pipeline
-  match ← runMultiTargetPipeline rt sourcePath [.Lean, .Scala, .Haskell, .Rust] outDir with
-  | .error e =>
-    IO.eprintln s!"✗ Pipeline failed: {e}"
-    return
-  | .ok results =>
-    IO.println ""
-    IO.println "═══════════════════════════════════════════════════════════════"
-    IO.println s!"✓ Generated {results.length} files:"
-    for r in results do
-      IO.println s!"  • {r.outPath}"
-    IO.println "═══════════════════════════════════════════════════════════════"
+    match ← MultiTargetPipeline.run rt parsedArgs with
+    | .error e =>
+      IO.eprintln s!"Error: {e}"
+      IO.Process.exit 1
+    | .ok results =>
+      unless parsedArgs.quiet do
+        IO.println ""
+        IO.println s!"✓ Generated {results.length} file(s) successfully"

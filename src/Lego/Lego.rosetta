@@ -26,10 +26,7 @@ adt Rule {
   MkRule : String -> Term -> Term -> Rule
 }
 
-adt Option {
-  None : Option Term,
-  Some : Term -> Option Term
-}
+-- Note: Using built-in Option type (Some/None)
 
 -----------------------------------------------------
 -- Pattern Matching
@@ -133,9 +130,9 @@ rewrite normalizeChildrenCon:
   (normalizeChildren $rules (Con $name $args)) ~>
     (Con $name (map (normalizeOnce $rules) $args)) ;
 
-=====================================================
+-----------------------------------------------------
 -- ROSETTA LAYER (builds on Lego)
-=====================================================
+-----------------------------------------------------
 -- Rosetta extends Lego with:
 --   1. Partial Isomorphisms (bidirectional transforms)
 --   2. Grammar representation (parsing/printing)
@@ -146,8 +143,9 @@ rewrite normalizeChildrenCon:
 -- Partial Isomorphisms
 -----------------------------------------------------
 
+-- Iso is a partial isomorphism (bidirectional partial function)
 adt Iso {
-  MkIso : (Term -> Option Term) -> (Term -> Option Term) -> Iso
+  MkIso : (a -> Option b) -> (b -> Option a) -> Iso a b
 }
 
 rewrite isoForward:
@@ -197,7 +195,7 @@ adt Printer {
 
 -- A language is a grammar + its parse/print iso
 adt Language {
-  MkLang : String -> Grammar -> Iso -> Language
+  MkLang : String -> Grammar -> (Iso String Term) -> Language
 }
 
 -- Rosetta composition: L1 <-> Universal <-> L2

@@ -12,7 +12,53 @@
 import Rosetta
 import Haskell
 
-lang RosettaToHaskell (Rosetta Haskell) :=
+lang RosettaToHaskell :=
+
+-----------------------------------------------------
+-- FileTransform
+-- Entry point: handle file-level (seq) wrapper
+-----------------------------------------------------
+piece FileTransform
+  -- File is a sequence of declarations - transform each
+  @file rule fileToHaskell: (toHaskell (seq $decls)) ~~>
+    (haskellModule (toHaskellDecls $decls)) ;
+  
+  -- Transform declaration list
+  rule declsToHaskell: (toHaskellDecls ($decl $rest)) ~~>
+    ((toHaskellDecl $decl) (toHaskellDecls $rest)) ;
+  rule declsToHaskellSingle: (toHaskellDecls $decl) ~~>
+    (toHaskellDecl $decl) ;
+  
+  -- Route declarations to appropriate transformers  
+  @decl rule declAdtToHaskell: (toHaskellDecl (adtDef $kw $name $lb $constrs $rb)) ~~>
+    (toHaskell (adtDef $kw $name $lb $constrs $rb)) ;
+
+-----------------------------------------------------
+-- ADTTransform (updated)
+-- Transform Rosetta ADT definitions to Haskell data declarations
+-- Structure: (adtDef "adt" Name "{" constr1 (seq "," constr2) ... "}")
+-----------------------------------------------------
+piece ADTTransformNew
+  -- adtDef → data declaration (with literal syntax tokens)
+  @decl rule adtToHaskellNew: (toHaskell (adtDef $kw $name $lb $constrs $rb)) ~~>
+    (dataDecl $name (toHaskellCtors $constrs)) ;
+  
+  -- Transform constructor sequence - handle (seq "," next)
+  rule ctorsToHaskellSeqComma: (toHaskellCtors (seq "," $next)) ~~>
+    (toHaskellCtors $next) ;
+  -- Handle multiple constructors: first constr followed by (seq "," ...)
+  rule ctorsToHaskellFirst: (toHaskellCtors ((constr $name ":" $ty) $rest)) ~~>
+    ((dataCon $name (toHaskellConType $ty)) (toHaskellCtors $rest)) ;
+  -- Single constructor
+  rule ctorsToHaskellSingle: (toHaskellCtors (constr $name ":" $ty)) ~~>
+    (dataCon $name (toHaskellConType $ty)) ;
+  rule ctorsToHaskellNil: (toHaskellCtors ()) ~~> () ;
+  
+  -- Transform constructor types (arrow types become multiple fields)
+  rule conTypeArrow: (toHaskellConType (typeExpr $left -> $right)) ~~>
+    ((toHaskellType $left) (toHaskellConType $right)) ;
+  rule conTypeBase: (toHaskellConType (typeExpr $t)) ~~> () ;
+  rule conTypeApp: (toHaskellConType (typeApp $t)) ~~> () ;
 
 -----------------------------------------------------
 -- CoreTransform
@@ -160,7 +206,7 @@ piece TestTransform
   rule testToHaskell: (toHaskell (testDecl $name: $lhs ~~> $rhs)) ~~>
     (funDecl $name
       (app (app (var assertEqual) (strLit $name))
-           (app (app (var (==)) (toHaskell $lhs)) (toHaskell $rhs)))) ;
+           (app (app (var eq) (toHaskell $lhs)) (toHaskell $rhs)))) ;
 
 -----------------------------------------------------
 -- ModuleTransform
@@ -235,10 +281,24 @@ piece ErrorTransform
 -- Transform Rosetta types to Haskell types
 -----------------------------------------------------
 piece TypeTransform
+  -- Source syntax: typeExpr with arrow
+  rule typeExprArrowToHaskell: (toHaskellType (typeExpr $left -> $right)) ~~>
+    (tyFun (toHaskellType $left) (toHaskellType $right)) ;
+  -- Source syntax: simple typeExpr
+  rule typeExprBaseToHaskell: (toHaskellType (typeExpr $t)) ~~>
+    (toHaskellType $t) ;
+  -- Source syntax: typeApp (type application)
+  rule typeAppSingleToHaskell: (toHaskellType (typeApp $t)) ~~>
+    (tyVar $t) ;
+  rule typeAppMultiToHaskell: (toHaskellType (typeApp $t $args)) ~~>
+    (tyApp (toHaskellType $t) (toHaskellType $args)) ;
+  -- IR syntax
   rule typeVarToHaskell: (toHaskellType (Var $x)) ~~> (tyVar $x) ;
   rule typeAppToHaskell: (toHaskellType (App $f $a)) ~~>
     (tyApp (toHaskellType $f) (toHaskellType $a)) ;
   rule typeUnivToHaskell: (toHaskellType Univ) ~~> (tyVar Type) ;
+  -- Fallback
+  rule typeIdentToHaskell: (toHaskellType $t) ~~> (tyVar $t) ;
 
 -----------------------------------------------------
 -- Entry Point
@@ -255,7 +315,7 @@ test "lamToHaskell": (toHaskell (Lam x . (Var x))) ~~>
 test "pairToHaskell": (toHaskell (Pair (Var a) (Var b))) ~~>
   (tuple (exprList (var a) (var b))) ;
 
-test "dataToHaskell": (toHaskell (adtDef Maybe { (Nothing : Maybe) (Just : Term → Maybe) })) ~~>
+test "dataToHaskell": (toHaskell (adtDef Maybe { (Nothing : Maybe) (Just : (arrowTy Term Maybe)) })) ~~>
   (dataDecl Maybe (dataCon Nothing) (dataCon Just (tyVar Term))) ;
 
 test "caseToHaskell": (toHaskell (rewriteRule fromJust: (Just $x) ~~> $x)) ~~>

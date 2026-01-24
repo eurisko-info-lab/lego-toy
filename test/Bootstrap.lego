@@ -101,6 +101,12 @@ token Token
       '<' '-',       -- <-
       '=' '>',       -- =>
       '@' '@',       -- @@
+      -- Layout annotations for pretty-printing
+      '@' 'n' 'l',            -- @nl
+      '@' 'i' 'n' 'd' 'e' 'n' 't',  -- @indent
+      '@' 'd' 'e' 'd' 'e' 'n' 't',  -- @dedent
+      '@' 's' 'p',            -- @sp
+      '@' 'n' 's' 'p',        -- @nsp
       symch          -- single symbol (fallback)
     ] ;
 
@@ -353,7 +359,13 @@ piece GrammarExpr
             | "(" expr ")" → group
             | "#longest" "[" exprList "]" → longest
             | <special> → special
-            | "ε" → empty ;
+            | "ε" → empty
+            -- Layout annotations for pretty-printing (ignored during parsing)
+            | "@nl" → layoutNl
+            | "@indent" → layoutIndent
+            | "@dedent" → layoutDedent
+            | "@sp" → layoutSpace
+            | "@nsp" → layoutNoSpace ;
   exprList ::= expr ("," expr)* ;
 
 -----------------------------------------------------

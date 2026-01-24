@@ -192,56 +192,56 @@ piece Tactics
 piece Declarations
   decl ::= 
     -- Inductive types
-    "inductive" <ident> param* whereCtors? derivingClause?
+    "inductive" <ident> param* whereCtors? derivingClause? @nl
       → inductiveDecl
     -- Structures
-    | "structure" <ident> param* extendsClause? "where" fieldDecl* derivingClause?
+    | "structure" <ident> param* extendsClause? "where" @nl @indent fieldDecl* @dedent derivingClause?
       → structureDecl
     -- Classes
-    | "class" <ident> param* extendsClause? "where" fieldDecl*
+    | "class" <ident> param* extendsClause? "where" @nl @indent fieldDecl* @dedent
       → classDecl
     -- Instances
-    | "instance" instName? ":" term "where" fieldDef*
+    | "instance" instName? ":" term "where" @nl @indent fieldDef* @dedent
       → instanceDecl
     -- Definitions
-    | "def" <ident> param* typeAnn? whereClause? ":=" term
+    | "def" <ident> param* typeAnn? whereClause? ":=" term @nl
       → defDecl
-    | "partial" "def" <ident> param* typeAnn? ":=" term
+    | "partial" "def" <ident> param* typeAnn? ":=" term @nl
       → partialDefDecl
-    | "abbrev" <ident> param* typeAnn? ":=" term
+    | "abbrev" <ident> param* typeAnn? ":=" term @nl
       → abbrevDecl
     -- Theorems
-    | "theorem" <ident> param* ":" term ":=" term
+    | "theorem" <ident> param* ":" term ":=" term @nl
       → theoremDecl
-    | "lemma" <ident> param* ":" term ":=" term
+    | "lemma" <ident> param* ":" term ":=" term @nl
       → lemmaDecl
-    | "example" ":" term ":=" term
+    | "example" ":" term ":=" term @nl
       → exampleDecl
     -- Namespaces
-    | "namespace" <ident> decl* "end" <ident>
+    | "namespace" <ident> @nl @indent decl* @dedent "end" <ident> @nl
       → namespaceDecl
-    | "section" <ident>? decl* "end" <ident>?
+    | "section" <ident>? @nl @indent decl* @dedent "end" <ident>? @nl
       → sectionDecl
     -- Imports and opens
-    | "import" modulePath
+    | "import" modulePath @nl
       → importDecl
-    | "open" modulePath inClause?
+    | "open" modulePath inClause? @nl
       → openDecl
     -- Variables
-    | "variable" varDecl+
+    | "variable" varDecl+ @nl
       → variableDecl
     -- Attributes
-    | "attribute" "[" <ident> "]" <ident>
+    | "attribute" "[" <ident> "]" <ident> @nl
       → attributeDecl
     ;
 
   param ::= <ident>                               → simpleParam
-          | "(" <ident> ":" term ")"              → explicitParam
-          | "{" <ident> ":" term "}"              → implicitParam
-          | "[" <ident> ":" term "]"              → instParam
+          | "(" @nsp <ident> ":" term ")" @sp     → explicitParam
+          | "{" @nsp <ident> ":" term "}" @sp     → implicitParam
+          | "[" @nsp <ident> ":" term "]" @sp     → instParam
           ;
-  whereCtors ::= "where" ctor*                    → whereCtors ;
-  ctor ::= "|" <ident> param* ":" term            → ctor ;
+  whereCtors ::= "where" @nl @indent ctor* @dedent → whereCtors ;
+  ctor ::= "|" <ident> param* ":" term @nl        → ctor ;
   derivingClause ::= "deriving" <ident> ("," <ident>)* → derivingClause ;
   fieldDecl ::= <ident> ":" term defaultVal?      → fieldDecl ;
   fieldDef ::= <ident> ":=" term                  → fieldDef ;

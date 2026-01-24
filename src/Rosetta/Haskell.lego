@@ -194,50 +194,50 @@ piece Records
 piece Declarations
   decl ::= 
     -- Data types
-    "data" <ident> tyVarList? "=" dataCon ("|" dataCon)* derivingClause?
+    "data" <ident> tyVarList? @nl @indent "=" dataCon @nl ("|" dataCon @nl)* @dedent derivingClause? @nl
       → dataDecl
-    | "data" <ident> tyVarList? "where" gadtCon* derivingClause?
+    | "data" <ident> tyVarList? "where" @nl @indent gadtCon* @dedent derivingClause? @nl
       → gadtDecl
     -- Newtype
-    | "newtype" <ident> tyVarList? "=" <ident> type derivingClause?
+    | "newtype" <ident> tyVarList? "=" <ident> type derivingClause? @nl
       → newtypeDecl
     -- Type synonym
-    | "type" <ident> tyVarList? "=" type
+    | "type" <ident> tyVarList? "=" type @nl
       → typeSynDecl
     -- Function definition
-    | <ident> "::" type
+    | <ident> "::" type @nl
       → typeSigDecl
-    | <ident> pattern* "=" expr whereClause?
+    | <ident> pattern* "=" expr whereClause? @nl
       → funDecl
-    | <ident> pattern* guards whereClause?
+    | <ident> pattern* guards whereClause? @nl
       → funDeclGuards
     -- Class/Instance
-    | "class" context? <ident> tyVarList "where" classMethod*
+    | "class" context? <ident> tyVarList "where" @nl @indent classMethod* @dedent
       → classDecl
-    | "instance" context? <ident> type+ "where" instMethod*
+    | "instance" context? <ident> type+ "where" @nl @indent instMethod* @dedent
       → instanceDecl
     -- Module
-    | "module" modulePath exports? "where"
+    | "module" modulePath exports? "where" @nl
       → moduleDecl
-    | "import" qualified? modulePath importSpec?
+    | "import" qualified? modulePath importSpec? @nl
       → importDecl
     -- Infix
-    | "infixl" <number> <ident>
+    | "infixl" <number> <ident> @nl
       → infixlDecl
-    | "infixr" <number> <ident>
+    | "infixr" <number> <ident> @nl
       → infixrDecl
-    | "infix" <number> <ident>
+    | "infix" <number> <ident> @nl
       → infixDecl
     ;
 
   dataCon ::= <ident> type*             → dataCon
             | <ident> "{" fieldDecl+ "}" → dataConRecord
             ;
-  gadtCon ::= <ident> "::" type         → gadtCon ;
+  gadtCon ::= <ident> "::" type @nl     → gadtCon ;
   fieldDecl ::= <ident> "::" type       → fieldDecl ;
   tyVarList ::= <ident>+                → tyVarList ;
-  derivingClause ::= "deriving" "(" <ident> ("," <ident>)* ")" → derivingClause
-                   | "deriving" <ident> → derivingClauseSimple
+  derivingClause ::= @indent "deriving" @nsp "(" <ident> ("," <ident>)* ")" @dedent → derivingClause
+                   | @indent "deriving" <ident> @dedent → derivingClauseSimple
                    ;
   context ::= "(" constraint ("," constraint)* ")" "=>" → context
             | constraint "=>"           → contextSimple

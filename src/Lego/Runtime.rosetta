@@ -11,9 +11,45 @@
 --   Hardcoded → Bootstrap.lego → Lego.lego → *.lego
 -----------------------------------------------------
 
-import Algebra ;
-import Interp ;
-import Loader ;
+-----------------------------------------------------
+-- Core Types (needed for runtime)
+-----------------------------------------------------
+
+adt Term {
+  Var : String -> Term,
+  Lit : String -> Term,
+  Con : String -> List Term -> Term
+}
+
+adt GrammarExpr {
+  GEmpty  : GrammarExpr,
+  GLit    : String -> GrammarExpr,
+  GRef    : String -> GrammarExpr,
+  GSeq    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GAlt    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GStar   : GrammarExpr -> GrammarExpr,
+  GPlus   : GrammarExpr -> GrammarExpr,
+  GOpt    : GrammarExpr -> GrammarExpr,
+  GNot    : GrammarExpr -> GrammarExpr,
+  GAnd    : GrammarExpr -> GrammarExpr,
+  GCon    : String -> GrammarExpr -> GrammarExpr
+}
+
+adt Production {
+  MkProd : String -> GrammarExpr -> String -> Production
+}
+
+adt LoadedGrammar {
+  MkGrammar : List Production 
+           -> List Production
+           -> List String
+           -> String
+           -> LoadedGrammar
+}
+
+adt Rule {
+  MkRule : String -> Term -> Term -> Rule
+}
 
 -----------------------------------------------------
 -- Runtime State

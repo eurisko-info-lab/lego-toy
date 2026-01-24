@@ -173,6 +173,105 @@ rewrite defaultAST:
   defaultAST ~> (MkAST Var Lit Con) ;
 
 -----------------------------------------------------
+-- Piece and Language: Core Language Composition
+-----------------------------------------------------
+
+-- Piece level: what stream does this piece operate on?
+adt PieceLevel {
+  TokenLevel  : PieceLevel,
+  SyntaxLevel : PieceLevel
+}
+
+-- Rule: pattern ~> template rewrite
+adt Rule {
+  MkRule : String -> Term -> Term -> Rule
+}
+
+-- Type rule: typing judgment
+adt TypeRule {
+  MkTypeRule : String -> Term -> Term -> TypeRule
+}
+
+-- Grammar expression: PEG-style grammar combinators
+-- (also defined in Interp for parsing, but needed here for types)
+adt GrammarExpr {
+  GEmpty  : GrammarExpr,
+  GLit    : String -> GrammarExpr,
+  GRef    : String -> GrammarExpr,
+  GSeq    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GAlt    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GStar   : GrammarExpr -> GrammarExpr,
+  GPlus   : GrammarExpr -> GrammarExpr,
+  GOpt    : GrammarExpr -> GrammarExpr,
+  GNot    : GrammarExpr -> GrammarExpr,
+  GAnd    : GrammarExpr -> GrammarExpr,
+  GCon    : String -> GrammarExpr -> GrammarExpr
+}
+
+-- Grammar production: name -> expr -> production name
+adt GrammarProduction {
+  MkGrammarProduction : String -> GrammarExpr -> String -> GrammarProduction
+}
+
+-- Piece: grammar fragment + rules + type rules
+adt Piece {
+  MkPiece : String                         -- name
+         -> PieceLevel                     -- level (token or syntax)
+         -> List GrammarProduction         -- grammar productions
+         -> List Rule                      -- rewrite rules
+         -> List TypeRule                  -- type rules
+         -> Piece
+}
+
+-- Language: composition of pieces via pushout
+adt Language {
+  MkLanguage : String -> List Piece -> Language
+}
+
+-- Language accessors
+rewrite languageName:
+  (languageName (MkLanguage $name $pieces)) ~> $name ;
+
+rewrite languagePieces:
+  (languagePieces (MkLanguage $name $pieces)) ~> $pieces ;
+
+-- Get all grammar from a language
+rewrite languageAllGrammar:
+  (languageAllGrammar (MkLanguage $name $pieces)) ~>
+    (flatMap pieceGrammar $pieces) ;
+
+-- Get all rules from a language
+rewrite languageAllRules:
+  (languageAllRules (MkLanguage $name $pieces)) ~>
+    (flatMap pieceRules $pieces) ;
+
+-- Piece accessors
+rewrite pieceName:
+  (pieceName (MkPiece $name $level $grammar $rules $typeRules)) ~> $name ;
+
+rewrite pieceLevel:
+  (pieceLevel (MkPiece $name $level $grammar $rules $typeRules)) ~> $level ;
+
+rewrite pieceGrammar:
+  (pieceGrammar (MkPiece $name $level $grammar $rules $typeRules)) ~> $grammar ;
+
+rewrite pieceRules:
+  (pieceRules (MkPiece $name $level $grammar $rules $typeRules)) ~> $rules ;
+
+rewrite pieceTypeRules:
+  (pieceTypeRules (MkPiece $name $level $grammar $rules $typeRules)) ~> $typeRules ;
+
+-- Rule accessors
+rewrite ruleName:
+  (ruleName (MkRule $name $pattern $template)) ~> $name ;
+
+rewrite rulePattern:
+  (rulePattern (MkRule $name $pattern $template)) ~> $pattern ;
+
+rewrite ruleTemplate:
+  (ruleTemplate (MkRule $name $pattern $template)) ~> $template ;
+
+-----------------------------------------------------
 -- Tests
 -----------------------------------------------------
 

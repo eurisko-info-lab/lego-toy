@@ -1,0 +1,403 @@
+-----------------------------------------------------
+-- Lego.Validation: Semantic Validation for .lego files
+--
+-- Detects errors that pass parsing but are semantically invalid:
+--   - Undefined production references
+--   - Duplicate production names  
+--   - Unbound variables in rule templates
+--   - Conflicting rules (same pattern, different result)
+--   - Left recursion (direct and indirect)
+--   - Unused productions
+--
+-- Optimization warnings:
+--   - Missing cut points
+--   - Unreachable alternatives
+--   - Redundant alternatives
+--   - Non-terminating rule cycles
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- Core Types (needed for validation)
+-----------------------------------------------------
+
+adt Term {
+  Var : String -> Term,
+  Lit : String -> Term,
+  Con : String -> List Term -> Term
+}
+
+-----------------------------------------------------
+-- Severity Levels
+-----------------------------------------------------
+
+adt ValidationSeverity {
+  ValError   : ValidationSeverity,
+  ValWarning : ValidationSeverity,
+  ValInfo    : ValidationSeverity
+}
+
+-----------------------------------------------------
+-- Validation Errors (block execution)
+-----------------------------------------------------
+
+adt ValidationError {
+  UndefinedProduction : String -> String -> ValidationError,
+  DuplicateProduction : String -> ValidationError,
+  UnboundVariable     : String -> String -> ValidationError,
+  CircularImport      : String -> ValidationError,
+  InvalidSyntax       : String -> String -> ValidationError
+}
+
+-- Format validation error
+rewrite valErrorFormat:
+  (valErrorFormat (UndefinedProduction $ref $source)) ~>
+    (concat (concat (concat "ERROR: Undefined production '" $ref) "' referenced from '") (concat $source "'")) ;
+
+rewrite valErrorFormatDup:
+  (valErrorFormat (DuplicateProduction $name)) ~>
+    (concat (concat "ERROR: Duplicate production '" $name) "'") ;
+
+rewrite valErrorFormatUnbound:
+  (valErrorFormat (UnboundVariable $var $rule)) ~>
+    (concat (concat (concat (concat "ERROR: Unbound variable '" $var) "' in rule '") $rule) "'") ;
+
+rewrite valErrorFormatCircular:
+  (valErrorFormat (CircularImport $mod)) ~>
+    (concat (concat "ERROR: Circular import of '" $mod) "'") ;
+
+rewrite valErrorFormatInvalid:
+  (valErrorFormat (InvalidSyntax $ctx $msg)) ~>
+    (concat (concat (concat "ERROR: Invalid syntax in " $ctx) ": ") $msg) ;
+
+-----------------------------------------------------
+-- Validation Warnings (execution continues)
+-----------------------------------------------------
+
+adt ValidationWarning {
+  ConflictingRules       : String -> String -> String -> ValidationWarning,
+  DirectLeftRecursion    : String -> ValidationWarning,
+  IndirectLeftRecursion  : List String -> ValidationWarning,
+  UnusedProduction       : String -> ValidationWarning,
+  ShadowedProduction     : String -> String -> ValidationWarning,
+  AmbiguousGrammar       : String -> String -> ValidationWarning,
+  MissingCut             : String -> String -> ValidationWarning,
+  RuleCycle              : List String -> ValidationWarning,
+  UnreachableAlt         : String -> Int -> ValidationWarning,
+  RedundantAlt           : String -> Int -> Int -> ValidationWarning
+}
+
+-- Format validation warning
+rewrite valWarnFormatConflict:
+  (valWarnFormat (ConflictingRules $r1 $r2 $reason)) ~>
+    (concat (concat (concat (concat (concat "WARNING: Conflicting rules '" $r1) "' and '") $r2) "': ") $reason) ;
+
+rewrite valWarnFormatDirectLR:
+  (valWarnFormat (DirectLeftRecursion $name)) ~>
+    (concat (concat "WARNING: Direct left recursion in production '" $name) "'") ;
+
+rewrite valWarnFormatIndirectLR:
+  (valWarnFormat (IndirectLeftRecursion $path)) ~>
+    (concat "WARNING: Indirect left recursion: " (intercalate " -> " $path)) ;
+
+rewrite valWarnFormatUnused:
+  (valWarnFormat (UnusedProduction $name)) ~>
+    (concat (concat "WARNING: Unused production '" $name) "'") ;
+
+rewrite valWarnFormatShadow:
+  (valWarnFormat (ShadowedProduction $name $shadowedBy)) ~>
+    (concat (concat (concat (concat "WARNING: Production '" $name) "' shadowed by '") $shadowedBy) "'") ;
+
+rewrite valWarnFormatAmbig:
+  (valWarnFormat (AmbiguousGrammar $name $reason)) ~>
+    (concat (concat (concat (concat "WARNING: Ambiguous grammar for '" $name) "': ") $reason) "") ;
+
+rewrite valWarnFormatMissingCut:
+  (valWarnFormat (MissingCut $prod $kw)) ~>
+    (concat (concat (concat (concat "OPTIMIZE: Production '" $prod) "' could add cut after '") $kw) "' for better errors") ;
+
+rewrite valWarnFormatCycle:
+  (valWarnFormat (RuleCycle $cycle)) ~>
+    (concat "WARNING: Potential non-terminating rule cycle: " (intercalate " -> " $cycle)) ;
+
+rewrite valWarnFormatUnreachable:
+  (valWarnFormat (UnreachableAlt $prod $idx)) ~>
+    (concat (concat (concat "WARNING: Alternative " (toString $idx)) " in '") (concat $prod "' is unreachable")) ;
+
+rewrite valWarnFormatRedundant:
+  (valWarnFormat (RedundantAlt $prod $i $j)) ~>
+    (concat (concat (concat (concat (concat "WARNING: Alternatives " (toString $i)) " and ") (toString $j)) " in '") (concat $prod "' are redundant")) ;
+
+-----------------------------------------------------
+-- Validation Result
+-----------------------------------------------------
+
+adt ValidationResult {
+  MkValidationResult : List ValidationError -> List ValidationWarning -> ValidationResult
+}
+
+-- Empty result
+rewrite valResultEmpty:
+  valResultEmpty ~> (MkValidationResult Nil Nil) ;
+
+-- Combine results
+rewrite valResultAppend:
+  (valResultAppend (MkValidationResult $e1 $w1) (MkValidationResult $e2 $w2)) ~>
+    (MkValidationResult (append $e1 $e2) (append $w1 $w2)) ;
+
+-- Add error
+rewrite valResultAddError:
+  (valResultAddError (MkValidationResult $errs $warns) $e) ~>
+    (MkValidationResult (Cons $e $errs) $warns) ;
+
+-- Add warning
+rewrite valResultAddWarning:
+  (valResultAddWarning (MkValidationResult $errs $warns) $w) ~>
+    (MkValidationResult $errs (Cons $w $warns)) ;
+
+-- Has errors?
+rewrite valResultHasErrors:
+  (valResultHasErrors (MkValidationResult $errs $warns)) ~>
+    (not (null $errs)) ;
+
+-- Format all messages
+rewrite valResultFormat:
+  (valResultFormat (MkValidationResult $errs $warns)) ~>
+    (append (map valErrorFormat $errs) (map valWarnFormat $warns)) ;
+
+-----------------------------------------------------
+-- Built-in Productions
+-----------------------------------------------------
+
+rewrite builtinProductions:
+  builtinProductions ~>
+    (Cons "nat" (Cons "int" (Cons "str" (Cons "string" 
+    (Cons "ident" (Cons "char" (Cons "float" (Cons "bool" Nil)))))))) ;
+
+-----------------------------------------------------
+-- Grammar Expression Analysis
+-----------------------------------------------------
+
+-- Extract all references from grammar expression
+rewrite extractRefsEmpty:
+  (extractRefs GEmpty) ~> Nil ;
+
+rewrite extractRefsLit:
+  (extractRefs (GLit $s)) ~> Nil ;
+
+rewrite extractRefsRef:
+  (extractRefs (GRef $name)) ~> (Cons $name Nil) ;
+
+rewrite extractRefsSeq:
+  (extractRefs (GSeq $g1 $g2)) ~> (append (extractRefs $g1) (extractRefs $g2)) ;
+
+rewrite extractRefsAlt:
+  (extractRefs (GAlt $g1 $g2)) ~> (append (extractRefs $g1) (extractRefs $g2)) ;
+
+rewrite extractRefsStar:
+  (extractRefs (GStar $g)) ~> (extractRefs $g) ;
+
+rewrite extractRefsPlus:
+  (extractRefs (GPlus $g)) ~> (extractRefs $g) ;
+
+rewrite extractRefsOpt:
+  (extractRefs (GOpt $g)) ~> (extractRefs $g) ;
+
+rewrite extractRefsNot:
+  (extractRefs (GNot $g)) ~> (extractRefs $g) ;
+
+rewrite extractRefsAnd:
+  (extractRefs (GAnd $g)) ~> (extractRefs $g) ;
+
+rewrite extractRefsCon:
+  (extractRefs (GCon $name $g)) ~> (extractRefs $g) ;
+
+-----------------------------------------------------
+-- Check for Undefined References
+-----------------------------------------------------
+
+rewrite checkUndefinedRefs:
+  (checkUndefinedRefs $grammar) ~>
+    (let $defined (grammarDefinedNames $grammar)
+     (let $builtins builtinProductions
+      (foldl (acc prod . 
+        (let $refs (extractRefs (grammarLookup $grammar $prod))
+         (foldl (acc2 ref .
+           (if (or (contains $defined $ref) (contains $builtins (baseName $ref)))
+               $acc2
+               (valResultAddError $acc2 (UndefinedProduction $ref $prod))))
+          $acc $refs)))
+       valResultEmpty (grammarProductions $grammar)))) ;
+
+-----------------------------------------------------
+-- Check for Left Recursion
+-----------------------------------------------------
+
+-- Direct left recursion check
+rewrite isDirectLeftRecEmpty:
+  (isDirectLeftRec $name GEmpty) ~> False ;
+
+rewrite isDirectLeftRecLit:
+  (isDirectLeftRec $name (GLit $s)) ~> False ;
+
+rewrite isDirectLeftRecRef:
+  (isDirectLeftRec $name (GRef $ref)) ~> (eq $ref $name) ;
+
+rewrite isDirectLeftRecSeq:
+  (isDirectLeftRec $name (GSeq $g1 $g2)) ~> (isDirectLeftRec $name $g1) ;
+
+rewrite isDirectLeftRecAlt:
+  (isDirectLeftRec $name (GAlt $g1 $g2)) ~>
+    (or (isDirectLeftRec $name $g1) (isDirectLeftRec $name $g2)) ;
+
+rewrite isDirectLeftRecStar:
+  (isDirectLeftRec $name (GStar $g)) ~> (isDirectLeftRec $name $g) ;
+
+rewrite isDirectLeftRecPlus:
+  (isDirectLeftRec $name (GPlus $g)) ~> (isDirectLeftRec $name $g) ;
+
+rewrite isDirectLeftRecOpt:
+  (isDirectLeftRec $name (GOpt $g)) ~> (isDirectLeftRec $name $g) ;
+
+rewrite isDirectLeftRecCon:
+  (isDirectLeftRec $name (GCon $c $g)) ~> (isDirectLeftRec $name $g) ;
+
+-- Check all productions for left recursion
+rewrite checkLeftRecursion:
+  (checkLeftRecursion $grammar) ~>
+    (foldl (acc prod .
+      (if (isDirectLeftRec $prod (grammarLookup $grammar $prod))
+          (valResultAddWarning $acc (DirectLeftRecursion $prod))
+          $acc))
+     valResultEmpty (grammarProductions $grammar)) ;
+
+-----------------------------------------------------
+-- Term Analysis
+-----------------------------------------------------
+
+-- Extract all variables from term
+rewrite varsInVar:
+  (varsIn (Var $v)) ~> (Cons $v Nil) ;
+
+rewrite varsInLit:
+  (varsIn (Lit $s)) ~> Nil ;
+
+rewrite varsInCon:
+  (varsIn (Con $c $args)) ~> (flatMap varsIn $args) ;
+
+-- Extract pattern variables (starting with $)
+rewrite patternVarsVar:
+  (patternVars (Var $v)) ~>
+    (if (startsWith $v "$") (Cons $v Nil) Nil) ;
+
+rewrite patternVarsLit:
+  (patternVars (Lit $s)) ~> Nil ;
+
+rewrite patternVarsCon:
+  (patternVars (Con $c $args)) ~> (flatMap patternVars $args) ;
+
+-----------------------------------------------------
+-- Check for Unbound Variables in Rules
+-----------------------------------------------------
+
+rewrite checkUnboundVars:
+  (checkUnboundVars $rules) ~>
+    (foldl (acc rule .
+      (let $patVars (patternVars (rulePattern $rule))
+       (let $tplVars (filter (v . (startsWith $v "$")) (varsIn (ruleTemplate $rule)))
+        (let $unbound (filter (v . (not (contains $patVars $v))) $tplVars)
+         (foldl (acc2 v . (valResultAddError $acc2 (UnboundVariable $v (ruleName $rule))))
+          $acc $unbound)))))
+     valResultEmpty $rules) ;
+
+-----------------------------------------------------
+-- Pattern Key for Grouping
+-----------------------------------------------------
+
+rewrite patternKeyVar:
+  (patternKey (Var $v)) ~> "_" ;
+
+rewrite patternKeyLit:
+  (patternKey (Lit $s)) ~> (concat (concat "\"" $s) "\"") ;
+
+rewrite patternKeyCon:
+  (patternKey (Con $name $args)) ~>
+    (concat (concat (concat "(" $name) (concat " " (intercalate " " (map patternKey $args)))) ")") ;
+
+-----------------------------------------------------
+-- Check for Conflicting Rules
+-----------------------------------------------------
+
+rewrite checkConflictingRules:
+  (checkConflictingRules $rules) ~>
+    (let $grouped (groupBy (r . (patternKey (rulePattern $r))) $rules)
+     (foldl (acc group .
+       (if (gt (length $group) 1)
+           (let $names (map ruleName $group)
+            (valResultAddWarning $acc 
+              (ConflictingRules (head $names) (head (tail $names)) "same pattern structure")))
+           $acc))
+      valResultEmpty (mapValues $grouped))) ;
+
+-----------------------------------------------------
+-- Full Validation
+-----------------------------------------------------
+
+rewrite validateGrammar:
+  (validateGrammar $grammar $rules) ~>
+    (valResultAppend 
+      (valResultAppend (checkUndefinedRefs $grammar) (checkLeftRecursion $grammar))
+      (valResultAppend (checkUnboundVars $rules) (checkConflictingRules $rules))) ;
+
+-----------------------------------------------------
+-- Format Validation Output
+-----------------------------------------------------
+
+rewrite formatValidationResult:
+  (formatValidationResult $result) ~>
+    (let $lines (valResultFormat $result)
+     (intercalate "\n" $lines)) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "undefined production format" :
+  (valErrorFormat (UndefinedProduction "expr" "stmt"))
+  ~~> "ERROR: Undefined production 'expr' referenced from 'stmt'" ;
+
+test "duplicate production format" :
+  (valErrorFormat (DuplicateProduction "term"))
+  ~~> "ERROR: Duplicate production 'term'" ;
+
+test "unbound variable format" :
+  (valErrorFormat (UnboundVariable "$x" "myRule"))
+  ~~> "ERROR: Unbound variable '$x' in rule 'myRule'" ;
+
+test "left recursion warning format" :
+  (valWarnFormat (DirectLeftRecursion "expr"))
+  ~~> "WARNING: Direct left recursion in production 'expr'" ;
+
+test "pattern key var" :
+  (patternKey (Var "x")) ~~> "_" ;
+
+test "pattern key lit" :
+  (patternKey (Lit "hello")) ~~> "\"hello\"" ;
+
+test "pattern key con" :
+  (patternKey (Con "Add" (Cons (Var "x") (Cons (Var "y") Nil))))
+  ~~> "(Add _ _)" ;
+
+test "vars in term" :
+  (varsIn (Con "Add" (Cons (Var "x") (Cons (Var "y") Nil))))
+  ~~> (Cons "x" (Cons "y" Nil)) ;
+
+test "pattern vars" :
+  (patternVars (Con "Add" (Cons (Var "$x") (Cons (Var "y") Nil))))
+  ~~> (Cons "$x" Nil) ;
+
+test "empty validation result" :
+  (valResultHasErrors valResultEmpty) ~~> False ;
+
+test "validation result with error" :
+  (valResultHasErrors (valResultAddError valResultEmpty (DuplicateProduction "x")))
+  ~~> True ;

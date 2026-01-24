@@ -6,7 +6,15 @@
 -- - Token level:     TokenStream ⇌ Term  (parseGrammar)
 -----------------------------------------------------
 
-import Algebra ;
+-----------------------------------------------------
+-- Core Types (needed for parsing)
+-----------------------------------------------------
+
+adt Term {
+  Var : String -> Term,
+  Lit : String -> Term,
+  Con : String -> List Term -> Term
+}
 
 -----------------------------------------------------
 -- Token: Lexical unit

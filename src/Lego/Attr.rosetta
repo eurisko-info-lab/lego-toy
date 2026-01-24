@@ -1,0 +1,310 @@
+-----------------------------------------------------
+-- Lego.Attr: Attribute Grammars as Catamorphisms + Paramorphisms
+--
+-- Mathematical Foundation:
+--   Synthesized (Syn) = Catamorphism: F-algebra A, cata alg : Fix F → A
+--   Inherited   (Inh) = Paramorphism: para coalg : (Fix F, A) → A
+--   Both        = Hylomorphism: ana ∘ cata
+--
+-- Pushout Compatibility:
+--   (L₁, A₁) ⊔ (L₂, A₂) = (L₁ ⊔ L₂, A₁ ⋈ A₂)
+--   where A₁ ⋈ A₂ is the coproduct of attribute algebras
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- Core Types (needed for attributes)
+-----------------------------------------------------
+
+adt Term {
+  Var : String -> Term,
+  Lit : String -> Term,
+  Con : String -> List Term -> Term
+}
+
+adt GrammarExpr {
+  GEmpty  : GrammarExpr,
+  GLit    : String -> GrammarExpr,
+  GRef    : String -> GrammarExpr,
+  GSeq    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GAlt    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GStar   : GrammarExpr -> GrammarExpr,
+  GPlus   : GrammarExpr -> GrammarExpr,
+  GOpt    : GrammarExpr -> GrammarExpr,
+  GNot    : GrammarExpr -> GrammarExpr,
+  GAnd    : GrammarExpr -> GrammarExpr,
+  GCon    : String -> GrammarExpr -> GrammarExpr
+}
+
+adt GrammarProduction {
+  MkGrammarProduction : String -> GrammarExpr -> String -> GrammarProduction
+}
+
+-----------------------------------------------------
+-- Attribute Flow Direction
+-----------------------------------------------------
+
+adt AttrFlow {
+  Syn    : AttrFlow,
+  Inh    : AttrFlow,
+  SynInh : AttrFlow
+}
+
+-----------------------------------------------------
+-- Attribute Paths and References
+-----------------------------------------------------
+
+-- Path to attribute: [] = this node, ["body"] = child body
+adt AttrPath {
+  Empty   : AttrPath,
+  PathCon : String -> AttrPath -> AttrPath
+}
+
+-- Reference to an attribute (local or child)
+adt AttrRef {
+  MkAttrRef : AttrPath -> String -> AttrRef
+}
+
+-- AttrRef constructors
+rewrite attrRefSelf:
+  (attrRefSelf $name) ~> (MkAttrRef Empty $name) ;
+
+rewrite attrRefChild:
+  (attrRefChild $child $name) ~> (MkAttrRef (PathCon $child Empty) $name) ;
+
+-----------------------------------------------------
+-- Attribute Definitions
+-----------------------------------------------------
+
+-- Attribute equation: Production.target = expr
+adt AttrRule {
+  MkAttrRule : String -> AttrPath -> Term -> AttrRule
+}
+
+-- Attribute definition: syn type : Type { rules... }
+adt AttrDef {
+  MkAttrDef : String -> AttrFlow -> Option Term -> List AttrRule -> AttrDef
+}
+
+-- AttrDef constructors
+rewrite emptyAttrDef:
+  (emptyAttrDef $name $flow) ~> (MkAttrDef $name $flow None Nil) ;
+
+rewrite addAttrRule:
+  (addAttrRule (MkAttrDef $name $flow $ty $rules) $rule) ~>
+    (MkAttrDef $name $flow $ty (append $rules (Cons $rule Nil))) ;
+
+-----------------------------------------------------
+-- Attribute Environment
+-----------------------------------------------------
+
+-- Maps (path, attr-name) to computed value
+adt AttrEnv {
+  EmptyAttrEnv : AttrEnv,
+  AttrEnvCons  : AttrPath -> String -> Term -> AttrEnv -> AttrEnv
+}
+
+-- Lookup in environment
+rewrite attrEnvLookupEmpty:
+  (attrEnvLookup Empty $path $name) ~> None ;
+
+rewrite attrEnvLookupFound:
+  (attrEnvLookup (AttrEnvCons $path $name $val $rest) $path $name) ~>
+    (Some $val) ;
+
+rewrite attrEnvLookupMiss:
+  (attrEnvLookup (AttrEnvCons $p1 $n1 $val $rest) $p2 $n2) ~>
+    (attrEnvLookup $rest $p2 $n2)
+  when (not (and (eq $p1 $p2) (eq $n1 $n2))) ;
+
+-- Insert into environment
+rewrite attrEnvInsert:
+  (attrEnvInsert $env $path $name $val) ~>
+    (AttrEnvCons $path $name $val $env) ;
+
+-- Get local attribute
+rewrite attrEnvGetLocal:
+  (attrEnvGetLocal $env $name) ~> (attrEnvLookup $env Empty $name) ;
+
+-- Get child attribute
+rewrite attrEnvGetChild:
+  (attrEnvGetChild $env $child $name) ~>
+    (attrEnvLookup $env (PathCon $child Empty) $name) ;
+
+-- Merge environments (second wins)
+rewrite attrEnvMergeEmpty:
+  (attrEnvMerge $env1 EmptyAttrEnv) ~> $env1 ;
+
+rewrite attrEnvMergeCons:
+  (attrEnvMerge $env1 (AttrEnvCons $path $name $val $rest)) ~>
+    (attrEnvMerge (AttrEnvCons $path $name $val $env1) $rest) ;
+
+-----------------------------------------------------
+-- Attribute Evaluation
+-----------------------------------------------------
+
+-- Evaluate attribute expression in environment
+rewrite evalAttrExprVar:
+  (evalAttrExpr (Var $name) $env) ~>
+    (if (startsWith $name "$")
+        (match (attrEnvLookup $env Empty (drop 1 $name))
+          (Some $v) $v
+          None (Con "error" (Cons (Lit (concat "undefined: " $name)) Nil)))
+        (Var $name)) ;
+
+rewrite evalAttrExprCon:
+  (evalAttrExpr (Con $c $args) $env) ~>
+    (Con $c (map (x . (evalAttrExpr $x $env)) $args)) ;
+
+rewrite evalAttrExprLit:
+  (evalAttrExpr (Lit $s) $env) ~> (Lit $s) ;
+
+-----------------------------------------------------
+-- Find Rule for Production
+-----------------------------------------------------
+
+rewrite findRuleEmpty:
+  (findRule $prod $target Nil) ~> None ;
+
+rewrite findRuleFound:
+  (findRule $prod $target (Cons (MkAttrRule $prod $target $expr) $rest)) ~>
+    (Some (MkAttrRule $prod $target $expr)) ;
+
+rewrite findRuleMiss:
+  (findRule $prod $target (Cons (MkAttrRule $p2 $t2 $e) $rest)) ~>
+    (findRule $prod $target $rest)
+  when (not (and (eq $prod $p2) (eq $target $t2))) ;
+
+-----------------------------------------------------
+-- Catamorphism: Synthesized Attribute Evaluation
+-----------------------------------------------------
+
+-- Bottom-up evaluation of synthesized attributes
+-- cata alg : Fix F → A where alg : F A → A
+
+rewrite evalSynVar:
+  (evalSyn $def (Var $x)) ~> EmptyAttrEnv ;
+
+rewrite evalSynLit:
+  (evalSyn $def (Lit $s)) ~> EmptyAttrEnv ;
+
+rewrite evalSynCon:
+  (evalSyn (MkAttrDef $attrName $flow $ty $rules) (Con $prod $children)) ~>
+    (evalSynConHelper $attrName $flow $ty $rules $prod $children 0) ;
+
+-- Helper to process children with index
+rewrite evalSynConHelper:
+  (evalSynConHelper $attrName $flow $ty $rules $prod $children $idx) ~>
+    (let $childEnvs (mapWithIndex (i child . 
+         (prefixEnv (concat "child" (toString $i)) 
+                    (evalSyn (MkAttrDef $attrName $flow $ty $rules) $child)))
+         $children)
+     (let $env (foldl attrEnvMerge EmptyAttrEnv $childEnvs)
+      (match (findRule $prod Empty $rules)
+        (Some (MkAttrRule $p $t $expr))
+          (attrEnvInsert $env Empty $attrName (evalAttrExpr $expr $env))
+        None $env))) ;
+
+-----------------------------------------------------
+-- Paramorphism: Inherited Attribute Evaluation
+-----------------------------------------------------
+
+-- Top-down evaluation of inherited attributes
+-- para coalg : (Fix F, A) → A
+
+rewrite evalInhVar:
+  (evalInh $def (Var $x) $parentEnv) ~> $parentEnv ;
+
+rewrite evalInhLit:
+  (evalInh $def (Lit $s) $parentEnv) ~> $parentEnv ;
+
+rewrite evalInhCon:
+  (evalInh (MkAttrDef $attrName $flow $ty $rules) (Con $prod $children) $parentEnv) ~>
+    (evalInhConHelper $attrName $flow $ty $rules $prod $children $parentEnv 0) ;
+
+-----------------------------------------------------
+-- Combined Evaluation
+-----------------------------------------------------
+
+-- Two-pass: inherited (top-down) then synthesized (bottom-up)
+rewrite evalAttrs:
+  (evalAttrs $defs $term) ~>
+    (let $synDefs (filter (d . (eq (attrDefFlow $d) Syn)) $defs)
+     (let $inhDefs (filter (d . (eq (attrDefFlow $d) Inh)) $defs)
+      (let $inhEnv (foldl (env def . (evalInh $def $term $env)) EmptyAttrEnv $inhDefs)
+       (foldl (env def . (attrEnvMerge $env (evalSyn $def $term))) $inhEnv $synDefs)))) ;
+
+-----------------------------------------------------
+-- Generic Catamorphism over Term
+-----------------------------------------------------
+
+-- cata alg t = alg (fmap (cata alg) (unTerm t))
+rewrite cataTermVar:
+  (cataTerm $alg (Var $x)) ~> ($alg $x Nil) ;
+
+rewrite cataTermLit:
+  (cataTerm $alg (Lit $s)) ~> ($alg $s Nil) ;
+
+rewrite cataTermCon:
+  (cataTerm $alg (Con $c $args)) ~>
+    ($alg $c (map (a . (cataTerm $alg $a)) $args)) ;
+
+-----------------------------------------------------
+-- Generic Paramorphism over Term
+-----------------------------------------------------
+
+-- para coalg t = coalg (fmap (λx. (x, para coalg x)) (unTerm t))
+rewrite paraTermVar:
+  (paraTerm $coalg (Var $x)) ~> ($coalg $x Nil) ;
+
+rewrite paraTermLit:
+  (paraTerm $coalg (Lit $s)) ~> ($coalg $s Nil) ;
+
+rewrite paraTermCon:
+  (paraTerm $coalg (Con $c $args)) ~>
+    ($coalg $c (map (a . (Pair $a (paraTerm $coalg $a))) $args)) ;
+
+-----------------------------------------------------
+-- Attributed Language
+-----------------------------------------------------
+
+-- Language with attribute definitions
+adt AttrLanguage {
+  MkAttrLanguage : String -> List GrammarProduction -> List AttrDef -> AttrLanguage
+}
+
+-- Get synthesized attributes
+rewrite attrLangSynAttrs:
+  (attrLangSynAttrs (MkAttrLanguage $name $pieces $attrs)) ~>
+    (filter (d . (eq (attrDefFlow $d) Syn)) $attrs) ;
+
+-- Get inherited attributes
+rewrite attrLangInhAttrs:
+  (attrLangInhAttrs (MkAttrLanguage $name $pieces $attrs)) ~>
+    (filter (d . (eq (attrDefFlow $d) Inh)) $attrs) ;
+
+-- Evaluate all attributes
+rewrite attrLangEval:
+  (attrLangEval (MkAttrLanguage $name $pieces $attrs) $term) ~>
+    (evalAttrs $attrs $term) ;
+
+-- Pushout of attributed languages
+rewrite attrLangPushout:
+  (attrLangPushout (MkAttrLanguage $n1 $p1 $a1) (MkAttrLanguage $n2 $p2 $a2)) ~>
+    (MkAttrLanguage (concat (concat $n1 "_") $n2) (append $p1 $p2) (append $a1 $a2)) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "empty attr env lookup" :
+  (attrEnvLookup EmptyAttrEnv Empty "x") ~~> None ;
+
+test "attr env insert and lookup" :
+  (attrEnvLookup (AttrEnvCons Empty "x" (Lit "42") EmptyAttrEnv) Empty "x")
+  ~~> (Some (Lit "42")) ;
+
+test "attr ref self" :
+  (attrRefSelf "type") ~~> (MkAttrRef Empty "type") ;
+
+test "attr ref child" :
+  (attrRefChild "body" "type") ~~> (MkAttrRef (PathCon "body" Empty) "type") ;

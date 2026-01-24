@@ -1,95 +1,143 @@
 -----------------------------------------------------
 -- prelude.rosetta: Rosetta Prelude/Foundationals
 --
--- This file provides the foundational constructs in Rosetta syntax,
--- imported by all generated Rosetta specs. It includes abstract primitives
--- for universe, variables, substitution, binders, lists (for systems),
--- and basic meta-ops. This ensures generated code has access to dependencies
--- like Univ, Var, Subst, List, etc., without redefining them.
--- Composed from Rosetta's core pieces (CorePrimitives, Binders, etc.).
--- No specific cubical features—pure abstractions for implementation.
+-- Provides the core constructs in Rosetta notation.
+-- Imported by all generated Rosetta specs.
+--
+-- Uses the new piece-based syntax:
+--   piece Name
+--     term ::= ... → node ;
+--     rule name: pattern ~~> replacement ;
+--     type name: term : type when premises ;
+--
+-- No cubical features - pure abstractions.
 -----------------------------------------------------
-lang PreludeRosetta :=
+
+lang Prelude :=
 
 -----------------------------------------------------
 -- UnivAndTypes
--- Abstract universe and type judgments.
+-- Abstract universe and type formation
 -----------------------------------------------------
-module UnivAndTypes {
-  adt Type { Univ : Type } ;
-  judge univForm: Univ : Univ ;
-}
+
+piece UnivAndTypes
+  term ::= "Univ"                      → univ ;   -- Universe type
+
+  type univForm: Univ : Univ ;
 
 -----------------------------------------------------
--- VariablesAndSubst
--- Abstract vars and substitution primitive.
+-- Variables
+-- Abstract variables with binding
 -----------------------------------------------------
-module VariablesAndSubst {
-  import UnivAndTypes ;
-  adt Ident { StringLit : String → Ident } ;  -- Abstract ident (impl: String).
-  adt Term { Var : Ident → Term ;
-             Subst : Ident → Term → Term → Term } ;  -- subst x t body
-  judge varType: (Var $x) : $T when bound $x : $T ;
-  test "substId": (Subst x (Var x) (Var x)) ~~> (Var x) ;
-}
+
+piece Variables
+  term ::= "Var" <ident>               → var ;    -- Variable reference
+
+  type varType: (Var $x) : $T when bound $x : $T ;
 
 -----------------------------------------------------
--- ApplicationsAndPairs
--- Abstract app, pair, fst/snd.
+-- Substitution
+-- Abstract capture-avoiding substitution
 -----------------------------------------------------
-module ApplicationsAndPairs {
-  import VariablesAndSubst ;
-  adt Term { App : Term → Term → Term ;
-             Pair : Term → Term → Term ;
-             Fst : Term → Term ;
-             Snd : Term → Term } ;
-  rewrite fstPair: (Fst (Pair $a $b)) ~> $a ;
-  rewrite sndPair: (Snd (Pair $a $b)) ~> $b ;
-}
+
+piece Substitution
+  term ::= "Subst" <ident> term term   → subst ;  -- subst x t body
+
+  rule substVar: (Subst $x $s (Var $x)) ~~> $s ;
+  rule substVarNeq: (Subst $x $s (Var $y)) ~~> (Var $y) ;  -- when x ≠ y
 
 -----------------------------------------------------
--- BindersAbstract
--- Abstract lam/dlam, app/dapp, beta/dbeta.
+-- Application
+-- Function application
 -----------------------------------------------------
-module BindersAbstract {
-  import ApplicationsAndPairs ;
-  adt Term { Lam : Ident → Term → Term ;  -- Lam x . body
-             DLam : Ident → Term → Term ;
-             DApp : Term → Term → Term } ;
-  rewrite beta: (App (Lam $x . $body) $arg) ~> (Subst $x $arg $body) ;
-  rewrite dbeta: (DApp (DLam $i . $body) $r) ~> (Subst $i $r $body) ;
-  judge lamForm: (Lam $x . $body) : (Pi $x : $A $B)
-    when $A : Univ, ctx [$x : $A] $body : $B ;
-}
+
+piece Application
+  term ::= "App" term term             → app ;    -- f a
+
+  rule appSubst: (App (Subst $x $s $f) $a) ~~> (Subst $x $s (App $f $a)) ;
 
 -----------------------------------------------------
--- ListsAndConstants
--- Abstract lists (for systems, branches, constrs) and constants.
+-- Binders
+-- Lambda abstraction (term binders only)
 -----------------------------------------------------
-module ListsAndConstants {
-  import BindersAbstract ;
-  adt Term { Const : Lit → Term ;  -- Const 0, Const "⊥"
-             List : List Term → Term ;  -- Abstract list
-             Cons : Term → Term → Term ;
-             Nil : Term } ;
-  adt Lit { IntLit : Int → Lit ; StrLit : String → Lit ; BoolLit : Bool → Lit } ;
-  -- Ops like map can be meta in impl.
-}
+
+piece Binders
+  term ::= "Lam" <ident> "." term      → lam ;    -- λx. body
+
+  rule beta: (App (Lam $x . $body) $arg) ~~> (Subst $x $arg $body) ;
+
+  type lamForm: (Lam $x . $body) : (Arrow $A $B)
+    when [$x : $A] $body : $B ;
 
 -----------------------------------------------------
--- MetaOps
--- Abstract helpers like capitalize, concat (impl-defined).
+-- Products
+-- Non-dependent pairs
 -----------------------------------------------------
-module MetaOps {
-  import ListsAndConstants ;
-  rewrite capitalize: (Capitalize $str) ~> $upper ;  -- Meta.
-  rewrite concat: (Concat $a $b) ~> $combined ;
-}
 
--- Full prelude: All modules imported for use in generated specs.
-import UnivAndTypes ;
-import VariablesAndSubst ;
-import ApplicationsAndPairs ;
-import BindersAbstract ;
-import ListsAndConstants ;
-import MetaOps ;
+piece Products
+  term ::= "Pair" term term            → pair
+         | "Fst" term                  → fst
+         | "Snd" term                  → snd ;
+
+  rule fstPair: (Fst (Pair $a $b)) ~~> $a ;
+  rule sndPair: (Snd (Pair $a $b)) ~~> $b ;
+  rule pairEta: (Pair (Fst $p) (Snd $p)) ~~> $p ;
+
+  type pairType: (Pair $a $b) : (Prod $A $B)
+    when $a : $A, $b : $B ;
+  type fstType: (Fst $p) : $A when $p : (Prod $A $B) ;
+  type sndType: (Snd $p) : $B when $p : (Prod $A $B) ;
+
+-----------------------------------------------------
+-- DimensionBinders (for cubical, but abstract)
+-- Dimension lambda and application
+-----------------------------------------------------
+
+piece DimensionBinders
+  term ::= "DLam" <ident> "." term     → dlam     -- λⁱ. body (dimension)
+         | "DApp" term term            → dapp ;   -- f @ r
+
+  rule dbeta: (DApp (DLam $i . $body) $r) ~~> (Subst $i $r $body) ;
+
+-----------------------------------------------------
+-- Lists
+-- Abstract list operations
+-----------------------------------------------------
+
+piece Lists
+  term ::= "Nil"                       → nil
+         | "Cons" term term            → cons ;
+
+  rule consNilEta: (Cons $h Nil) ~~> (Cons $h Nil) ;  -- identity
+
+-----------------------------------------------------
+-- Constants
+-- Literal values
+-----------------------------------------------------
+
+piece Constants
+  term ::= "IntLit" <number>           → intLit
+         | "StrLit" <string>           → strLit
+         | "BoolLit" <ident>           → boolLit ;  -- true/false
+
+-----------------------------------------------------
+-- Errors
+-- Error handling
+-----------------------------------------------------
+
+piece Errors
+  term ::= "Error" <string>            → error
+         | "Stuck" term                → stuck ;
+
+  rule appError: (App (Error $msg) $a) ~~> (Error $msg) ;
+  rule fstError: (Fst (Error $msg)) ~~> (Error $msg) ;
+  rule sndError: (Snd (Error $msg)) ~~> (Error $msg) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "substId": (Subst x (Var y) (Var x)) ~~> (Var y) ;
+test "beta": (App (Lam x . (Var x)) (Var y)) ~~> (Var y) ;
+test "fstPair": (Fst (Pair (Var a) (Var b))) ~~> (Var a) ;
+test "sndPair": (Snd (Pair (Var a) (Var b))) ~~> (Var b) ;

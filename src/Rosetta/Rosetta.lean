@@ -89,15 +89,6 @@ partial def countCaptures : Term → Nat
   | .lit _ => 0
   | _ => 0
 
-/-- Extract constructor name and arity from production (legacy) -/
-def extractConstr (prod : Term) : Option ConstrInfo := do
-  -- Production shape: (proddecl name (seq ... → conName))
-  match prod with
-  | .con "proddecl" [.var name, _grammar] =>
-    -- Just count as arity 0 for now - would need grammar analysis
-    some { name := name, arity := 0 }
-  | _ => none
-
 /-- Extract rule info -/
 def extractRule (rule : Term) : Option RuleInfo := do
   match rule with

@@ -99,14 +99,10 @@ def parseBootstrapFile (path : String) : IO (Option Term) := do
   let content ← IO.FS.readFile path
   return parseBootstrapContent content
 
-/-- DEPRECATED: Use parseBootstrapFile instead.
-    This exists only for backward compatibility during transition. -/
+/-- Parse bootstrap-format lego content (used by Runtime.loadBootstrap).
+    Note: This exists for backward compatibility - prefer parseBootstrapFile for IO. -/
 def parseLegoFile (content : String) : Option Term :=
-  -- This should only be called from Runtime.loadBootstrap
   parseBootstrapContent content
-
-/-- Alias for parseLegoFile - DEPRECATED -/
-def parseBootstrapOnly := parseLegoFile
 
 /-- The tokenize function - only exposed for Runtime.loadBootstrap compatibility -/
 def tokenize := tokenizeRaw

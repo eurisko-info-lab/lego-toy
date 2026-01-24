@@ -69,12 +69,6 @@ def String.findSubstrFromBytes (s : String) (sub : String) (startByte : Nat := 0
           else go (i + 1) fuel'
     go startByte (bytes.size - startByte + 1)
 
-/-- Find substring position in string starting at offset (DEPRECATED - use findSubstrFromBytes).
-    Note: This has inconsistent offset semantics. -/
-def String.findSubstrFrom (s : String) (sub : String) (start : Nat := 0) : Option Nat :=
-  -- Delegate to byte-based version for consistency
-  String.findSubstrFromBytes s sub start
-
 /-- Find character offset by counting tokens from the beginning.
     Walks through the input counting tokens until reaching tokenPos. -/
 def findCharOffsetByTokenCount (input : String) (tokenPos : Nat) : Nat :=

@@ -1,0 +1,294 @@
+-----------------------------------------------------
+-- Runtime.rosetta: True Runtime Bootstrap
+--
+-- Implements the proper bootstrap chain:
+-- 1. Hardcoded minimal grammar parses Bootstrap.lego ONLY
+-- 2. Bootstrap.lego provides the grammar for Lego.lego
+-- 3. Lego.lego provides the full grammar
+-- 4. Full grammar parses all other .lego files
+--
+-- Architecture:
+--   Hardcoded → Bootstrap.lego → Lego.lego → *.lego
+-----------------------------------------------------
+
+import Algebra ;
+import Interp ;
+import Loader ;
+
+-----------------------------------------------------
+-- Runtime State
+-----------------------------------------------------
+
+adt Runtime {
+  MkRuntime : LoadedGrammar -> List Rule -> Runtime
+}
+
+-- Get grammar from runtime
+rewrite rtGrammar:
+  (rtGrammar (MkRuntime $grammar $rules)) ~> $grammar ;
+
+-- Get rules from runtime
+rewrite rtRules:
+  (rtRules (MkRuntime $grammar $rules)) ~> $rules ;
+
+-----------------------------------------------------
+-- Bootstrap Loading
+-----------------------------------------------------
+
+-- Load Bootstrap.lego using hardcoded grammar
+rewrite loadBootstrap:
+  (loadBootstrap $content) ~>
+    (case (parseBootstrap $content)
+      (Some $ast) 
+        (let $prods (extractProductions $ast)
+          (let $rules (extractRules $ast)
+            (Some (MkRuntime 
+                    (MkGrammar $prods Nil Nil "File.legoFile")
+                    $rules))))
+      None None) ;
+
+-- Parse Bootstrap.lego with hardcoded grammar (built-in)
+-- This is the ONLY file the hardcoded grammar accepts
+rewrite parseBootstrap:
+  (parseBootstrap $content) ~> (hardcodedParse $content) ;
+
+-----------------------------------------------------
+-- Load Lego.lego (after bootstrap)
+-----------------------------------------------------
+
+rewrite loadLego:
+  (loadLego $bootstrapRt $content) ~>
+    (case (parseLegoFile $bootstrapRt $content)
+      (Some $ast)
+        (let $prods (extractProductions $ast)
+          (let $rules (extractRules $ast)
+            (let $bootstrapProds (rtGrammar $bootstrapRt)
+              (Some (MkRuntime
+                      (MkGrammar (append $prods (grammarProds $bootstrapProds)) Nil Nil "File.legoFile")
+                      (append $rules (rtRules $bootstrapRt)))))))
+      None None) ;
+
+-----------------------------------------------------
+-- Parsing with Runtime Grammar
+-----------------------------------------------------
+
+rewrite parseLegoFile:
+  (parseLegoFile $rt $content) ~>
+    (parseWithGrammar (rtGrammar $rt) $content) ;
+
+-- Parse with error handling
+rewrite parseLegoFileE:
+  (parseLegoFileE $rt $content) ~>
+    (case (parseWithGrammar (rtGrammar $rt) $content)
+      (ParseOk $t $s) (Ok $t)
+      (ParseFail $msg $s) (Err $msg)) ;
+
+-----------------------------------------------------
+-- Load a Language from .lego file with Inheritance
+--
+-- When a language declares `lang X (Parent) :=`:
+-- 1. Load the parent grammar(s) recursively
+-- 2. Merge parent productions into child grammar
+-- This way token definitions flow through the inheritance chain.
+-----------------------------------------------------
+
+rewrite loadLanguage:
+  (loadLanguage $rt $path) ~>
+    (loadLanguageWithParents $rt $path Nil) ;
+
+-- Load language with parent inheritance tracking (to prevent cycles)
+rewrite loadLanguageWithParents:
+  (loadLanguageWithParents $rt $path $visited) ~>
+    (if (elem $path $visited)
+      (Err (concat "Circular language inheritance: " $path))
+      (case (readFile $path)
+        (Some $content) (loadLanguageContent $rt $path $content (Cons $path $visited))
+        None (Err (concat "Cannot read file: " $path)))) ;
+
+rewrite loadLanguageContent:
+  (loadLanguageContent $rt $path $content $visited) ~>
+    (case (parseLegoFile $rt $content)
+      (Some $ast)
+        (let $parentNames (extractParentNames $ast)
+          (loadWithParents $rt $path $ast $parentNames $visited))
+      None (Err "parse failed")) ;
+
+-- Load parent grammars and merge
+rewrite loadWithParents:
+  (loadWithParents $rt $path $ast $parentNames $visited) ~>
+    (case (loadParentGrammars $rt $path $parentNames $visited)
+      (Ok $inheritedProds $inheritedTokProds)
+        (let $childProds (extractProductions $ast)
+          (let $childTokProds (extractTokenProductions $ast)
+            (let $mergedProds (append $inheritedProds $childProds)
+              (let $mergedTokProds (append $inheritedTokProds $childTokProds)
+                (let $syms (extractSymbols $mergedProds)
+                  (let $start (findStartProd $childProds)
+                    (Ok (MkGrammar $mergedProds $mergedTokProds $syms $start))))))))
+      (Err $e) (Err $e)) ;
+
+-- Load all parent grammars recursively
+rewrite loadParentGrammars:
+  (loadParentGrammars $rt $childPath Nil $visited) ~>
+    (Ok Nil Nil) ;
+
+rewrite loadParentGrammarsNonEmpty:
+  (loadParentGrammars $rt $childPath (Cons $parent $rest) $visited) ~>
+    (case (resolveParentPath $parent $childPath)
+      (Some $parentPath)
+        (case (loadLanguageWithParents $rt $parentPath $visited)
+          (Ok $parentGrammar)
+            (case (loadParentGrammars $rt $childPath $rest $visited)
+              (Ok $restProds $restTokProds)
+                (Ok (append (grammarProds $parentGrammar) $restProds)
+                    (append (grammarTokProds $parentGrammar) $restTokProds))
+              (Err $e) (Err $e))
+          (Err $e) (Err (concat "Failed to load parent " (concat $parent (concat ": " $e)))))
+      None 
+        (if (eq $parent "Bootstrap")
+          -- Bootstrap is special - its tokens are in runtime
+          (case (loadParentGrammars $rt $childPath $rest $visited)
+            (Ok $restProds $restTokProds)
+              (Ok (append (grammarProds (rtGrammar $rt)) $restProds)
+                  (append (grammarTokProds (rtGrammar $rt)) $restTokProds))
+            (Err $e) (Err $e))
+          (Err (concat "Cannot find parent language: " $parent)))) ;
+
+-- Resolve parent path - search standard locations
+rewrite resolveParentPath:
+  (resolveParentPath $parentName $childPath) ~>
+    (findFirst fileExists
+      (Cons (concat (dirname $childPath) (concat "/" (concat $parentName ".lego")))
+        (Cons (concat "test/" (concat $parentName ".lego"))
+          (Cons (concat "src/Lego/" (concat $parentName ".lego"))
+            (Cons (concat "src/Rosetta/" (concat $parentName ".lego"))
+              Nil))))) ;
+
+-- Get productions from grammar
+rewrite grammarProds:
+  (grammarProds (MkGrammar $prods $tokProds $syms $start)) ~> $prods ;
+
+-- Get token productions from grammar
+rewrite grammarTokProds:
+  (grammarTokProds (MkGrammar $prods $tokProds $syms $start)) ~> $tokProds ;
+
+-----------------------------------------------------
+-- Extract token productions
+-----------------------------------------------------
+
+-- Extract token productions
+rewrite extractTokenProductions:
+  (extractTokenProductions $ast) ~>
+    (filter isTokenProd (extractProductions $ast)) ;
+
+rewrite isTokenProd:
+  (isTokenProd (MkProd $name $g $c)) ~> (startsWith $name "TOKEN.") ;
+
+-- Extract all symbols used in grammar
+rewrite extractSymbols:
+  (extractSymbols $prods) ~>
+    (nub (concatMap prodSymbols $prods)) ;
+
+rewrite prodSymbols:
+  (prodSymbols (MkProd $name $g $c)) ~> (grammarSymbols $g) ;
+
+rewrite grammarSymbolsRef:
+  (grammarSymbols (GRef $name)) ~> (Cons $name Nil) ;
+
+rewrite grammarSymbolsSeq:
+  (grammarSymbols (GSeq $g1 $g2)) ~> (append (grammarSymbols $g1) (grammarSymbols $g2)) ;
+
+rewrite grammarSymbolsAlt:
+  (grammarSymbols (GAlt $g1 $g2)) ~> (append (grammarSymbols $g1) (grammarSymbols $g2)) ;
+
+rewrite grammarSymbolsStar:
+  (grammarSymbols (GStar $g)) ~> (grammarSymbols $g) ;
+
+rewrite grammarSymbolsOther:
+  (grammarSymbols $g) ~> Nil ;
+
+-- Find start production
+rewrite findStartProd:
+  (findStartProd (Cons (MkProd $name $g $c) $rest)) ~> $name ;
+
+rewrite findStartProdEmpty:
+  (findStartProd Nil) ~> "File.legoFile" ;
+
+-----------------------------------------------------
+-- Normalization with Runtime Rules
+-----------------------------------------------------
+
+rewrite normalize:
+  (normalize $rt $term) ~> (normalizeWith 1000 (rtRules $rt) $term) ;
+
+rewrite normalizeWith:
+  (normalizeWith 0 $rules $t) ~> $t ;
+
+rewrite normalizeWithFuel:
+  (normalizeWith $n $rules $t) ~>
+    (case (tryApplyRules $rules $t)
+      (Some $t') (normalizeWith (sub $n 1) $rules $t')
+      None (normalizeChildren $n $rules $t)) ;
+
+rewrite tryApplyRules:
+  (tryApplyRules (Cons (MkRule $name $pat $tmpl) $rest) $t) ~>
+    (case (matchPat $pat $t)
+      (Some $bindings) (Some (subst $tmpl $bindings))
+      None (tryApplyRules $rest $t)) ;
+
+rewrite tryApplyRulesEmpty:
+  (tryApplyRules Nil $t) ~> None ;
+
+rewrite normalizeChildren:
+  (normalizeChildren $n $rules (Var $x)) ~> (Var $x) ;
+
+rewrite normalizeChildrenLit:
+  (normalizeChildren $n $rules (Lit $s)) ~> (Lit $s) ;
+
+rewrite normalizeChildrenCon:
+  (normalizeChildren $n $rules (Con $name $args)) ~>
+    (Con $name (map (normalizeWith $n $rules) $args)) ;
+
+-----------------------------------------------------
+-- Pretty Printing
+-----------------------------------------------------
+
+rewrite printTerm:
+  (printTerm $rt $term $prodName) ~>
+    (case (printWithGrammar (rtGrammar $rt) $prodName $term)
+      (PrintOk $tokens) (Some (joinTokens $tokens))
+      (PrintFail $msg) None) ;
+
+rewrite joinTokens:
+  (joinTokens $tokens) ~> (intercalate " " (map tokenToString $tokens)) ;
+
+rewrite tokenToString:
+  (tokenToString (TokIdent $s)) ~> $s ;
+
+rewrite tokenToStringStr:
+  (tokenToString (TokString $s)) ~> (concat "\"" (concat $s "\"")) ;
+
+rewrite tokenToStringSym:
+  (tokenToString (TokSym $s)) ~> $s ;
+
+-----------------------------------------------------
+-- Full Bootstrap Chain
+-----------------------------------------------------
+
+-- Initialize runtime: load Bootstrap.lego then Lego.lego
+rewrite initRuntime:
+  (initRuntime $bootstrapContent $legoContent) ~>
+    (case (loadBootstrap $bootstrapContent)
+      (Some $bootstrapRt)
+        (case (loadLego $bootstrapRt $legoContent)
+          (Some $legoRt) (Ok $legoRt)
+          None (Err "failed to load Lego.lego"))
+      None (Err "failed to load Bootstrap.lego")) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "normalize_id": (normalizeWith 10 Nil (Var "x")) ~~> (Var "x") ;
+
+test "tryApplyRules_empty": (tryApplyRules Nil (Var "x")) ~~> None ;

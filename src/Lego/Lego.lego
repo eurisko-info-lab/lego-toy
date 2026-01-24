@@ -1,0 +1,163 @@
+-----------------------------------------------------
+-- Lego.lego: Core Language Semantics
+--
+-- Extends Bootstrap with semantic constructs.
+-- Bootstrap provides: lang, piece, token, rule, type, test syntax
+-- Lego adds: CorePrimitives, Binders, Products, ADT, Errors, Builtins
+--
+-- Layers:
+--   Built-in (Lean) → Bootstrap.lego → Lego.lego → *.lego
+--
+-- Bootstrap = syntax (how to write .lego files)
+-- Lego = semantics (what the language can express)
+-----------------------------------------------------
+
+lang Lego (Bootstrap) :=
+
+-----------------------------------------------------
+-- Core Primitives
+-- Universe, variables, application, substitution
+-----------------------------------------------------
+
+piece CorePrimitives
+  term ::= "Univ"                      → univ
+         | "Var" <ident>               → var
+         | "App" term term             → app
+         | "Subst" <ident> term term   → subst ;
+
+  rule appSubst: (App (Subst $x $s $f) $a) ~~> (Subst $x $s (App $f $a)) ;
+  
+  type univForm: Univ : Univ ;
+  type varType: (Var $x) : $T when bound $x : $T ;
+
+-----------------------------------------------------
+-- Binders
+-- Lambda abstraction
+-----------------------------------------------------
+
+piece Binders
+  term ::= "Lam" <ident> "." term      → lam ;
+
+  rule beta: (App (Lam $x . $body) $arg) ~~> (Subst $x $arg $body) ;
+
+  type lamForm: (Lam $x . $body) : (Arrow $A $B)
+    when [$x : $A] $body : $B ;
+
+-----------------------------------------------------
+-- Products
+-- Non-dependent pairs
+-----------------------------------------------------
+
+piece Products
+  term ::= "Pair" term term            → pair
+         | "Fst" term                  → fst
+         | "Snd" term                  → snd ;
+
+  rule fstPair: (Fst (Pair $a $b)) ~~> $a ;
+  rule sndPair: (Snd (Pair $a $b)) ~~> $b ;
+  rule pairEta: (Pair (Fst $p) (Snd $p)) ~~> $p ;
+
+  type pairType: (Pair $a $b) : (Prod $A $B)
+    when $a : $A, $b : $B ;
+  type fstType: (Fst $p) : $A when $p : (Prod $A $B) ;
+  type sndType: (Snd $p) : $B when $p : (Prod $A $B) ;
+
+-----------------------------------------------------
+-- ADT Definition
+-- Meta-construct for algebraic data types
+-----------------------------------------------------
+
+piece ADTDef
+  decl ::= "adt" <ident> "{" constr* "}" → adtDef ;
+  constr ::= <ident> ":" type            → constr ;
+
+  type adtForm: (adtDef $name $constrs) : Univ ;
+
+-----------------------------------------------------
+-- Rewrite Rules
+-- Pattern → template transformations
+-----------------------------------------------------
+
+piece RewriteRules
+  decl ::= "rewrite" <ident> ":" pattern "~>" term → rewriteRule ;
+  pattern ::= term                       → termPat
+            | "_"                        → wildcard ;
+
+-----------------------------------------------------
+-- Judgment Forms
+-- Typing judgments with premises
+-----------------------------------------------------
+
+piece Judgments
+  decl ::= "type" <ident> ":" term ":" term conds? → typeDecl ;
+  conds ::= "when" cond ("," cond)*     → conds ;
+  cond ::= term ":" term                → cond
+         | "[" bind* "]" term ":" term  → ctxCond ;
+  bind ::= <ident> ":" term             → bind ;
+
+-----------------------------------------------------
+-- Tests
+-- Equivalence assertions
+-----------------------------------------------------
+
+piece Tests
+  decl ::= "test" <string> ":" term "~~>" term → testDecl ;
+
+-----------------------------------------------------
+-- Modules
+-- Namespacing and imports
+-----------------------------------------------------
+
+piece Modules
+  decl ::= "module" <ident> "{" decl* "}" → moduleDecl
+         | "import" <ident>               → importDecl ;
+
+-- Note: File structure (lang, piece, token, rule, type, test)
+-- is inherited from Bootstrap
+
+-----------------------------------------------------
+-- Errors
+-- Error handling
+-----------------------------------------------------
+
+piece Errors
+  term ::= "Error" <string>            → error
+         | "Stuck" term                → stuck ;
+
+  rule appError: (App (Error $msg) $a) ~~> (Error $msg) ;
+  rule fstError: (Fst (Error $msg)) ~~> (Error $msg) ;
+
+-----------------------------------------------------
+-- Annotations
+-- Source location and metadata
+-----------------------------------------------------
+
+piece Annotations
+  term ::= "Ann" term term             → ann
+         | "Loc" <int> <int> term      → loc ;
+
+  rule annErase: (Ann $t $T) ~~> $t ;
+
+-----------------------------------------------------
+-- Builtins
+-- Common primitives
+-----------------------------------------------------
+
+piece Builtins
+  term ::= "Bool"                      → boolTy
+         | "true"                      → true
+         | "false"                     → false
+         | "if" term term term         → ifThenElse
+         | "Nat"                       → natTy
+         | "zero"                      → zero
+         | "succ" term                 → succ ;
+
+  rule ifTrue: (if true $t $f) ~~> $t ;
+  rule ifFalse: (if false $t $f) ~~> $f ;
+
+  type boolForm: Bool : Univ ;
+  type trueType: true : Bool ;
+  type falseType: false : Bool ;
+  type natForm: Nat : Univ ;
+  type zeroType: zero : Nat ;
+  type succType: (succ $n) : Nat when $n : Nat ;

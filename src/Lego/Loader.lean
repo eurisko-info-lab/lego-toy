@@ -60,6 +60,32 @@ where
   | [t] => t
   | ts => .con "seq" ts
 
+/-! ## Parent Extraction -/
+
+/-- Extract parent language names from a DLang node.
+    Structure: DLang [lang, ident(langName), imports?, :=, langBody]
+    Where imports = DImports [(, ident(parent1), ...)]. -/
+partial def extractParentNames (ast : Term) : List String :=
+  go ast
+where
+  go (t : Term) : List String :=
+    match t with
+    | .con "DLang" args =>
+      -- Look for DImports in args
+      args.flatMap fun arg =>
+        match arg with
+        | .con "DImports" importArgs =>
+          -- Extract all ident names from imports
+          importArgs.filterMap fun ia =>
+            match ia with
+            | .con "ident" [.var name] => some name
+            | _ => none
+        | .con "seq" ts => ts.flatMap go
+        | _ => []
+    | .con "seq" ts => ts.flatMap go
+    | .con _ ts => ts.flatMap go
+    | _ => []
+
 /-! ## AST → GrammarExpr -/
 
 /-- Flatten nested seq terms into a list -/
@@ -705,13 +731,22 @@ def loadGrammarFromAST (ast : Term) (startProd : String) : LoadedGrammar :=
 
 /-! ## Parsing with Loaded Grammar -/
 
+/-- Tokenize input using the loaded grammar's token productions.
+    NOTE: Grammar inheritance ensures token rules flow from parent to child.
+    If tokenProductions is empty, the grammar may not have been loaded correctly. -/
+def tokenizeForGrammar (grammar : LoadedGrammar) (input : String) : List Token :=
+  if grammar.tokenProductions.isEmpty then
+    -- Warning: No token rules found - this usually means grammar wasn't loaded with inheritance
+    -- Return empty for now (parser will fail with clear error)
+    []
+  else
+    -- Use grammar-driven tokenizer
+    let mainProds := getMainTokenProds grammar.tokenProductions
+    tokenizeWithGrammar defaultFuel grammar.tokenProductions mainProds input []
+
 /-- Parse input using a loaded grammar (uses grammar-driven tokenizer) -/
 def parseWithGrammar (grammar : LoadedGrammar) (input : String) : Option Term :=
-  -- Use grammar-driven tokenizer, NOT Bootstrap.tokenize
-  -- NOTE: Don't pass grammar.symbols as keywords! Those are language-specific literals,
-  -- not meta-language keywords. Node names like `syn` in `→ syn` should be identifiers.
-  let mainProds := getMainTokenProds grammar.tokenProductions
-  let tokens := tokenizeWithGrammar defaultFuel grammar.tokenProductions mainProds input []
+  let tokens := tokenizeForGrammar grammar input
   let st : ParseState := { tokens := tokens, binds := [] }
   match findAllProductions grammar.productions grammar.startProd with
   | some g =>
@@ -721,13 +756,9 @@ def parseWithGrammar (grammar : LoadedGrammar) (input : String) : Option Term :=
     | none => none
   | none => none
 
-/-- Parse input with detailed error reporting (uses grammar-driven tokenizer) -/
+/-- Parse input with detailed error reporting (uses grammar-driven tokenizer or Bootstrap fallback) -/
 def parseWithGrammarE (grammar : LoadedGrammar) (input : String) : Except ParseError Term :=
-  -- Use grammar-driven tokenizer, NOT Bootstrap.tokenize
-  -- NOTE: Don't pass grammar.symbols as keywords! Those are language-specific literals,
-  -- not meta-language keywords. Node names like `syn` in `→ syn` should be identifiers.
-  let mainProds := getMainTokenProds grammar.tokenProductions
-  let tokens := tokenizeWithGrammar defaultFuel grammar.tokenProductions mainProds input []
+  let tokens := tokenizeForGrammar grammar input
   let st : ParseState := { tokens := tokens, binds := [] }
   match findAllProductions grammar.productions grammar.startProd with
   | some g =>

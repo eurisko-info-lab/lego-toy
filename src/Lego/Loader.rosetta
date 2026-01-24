@@ -1,0 +1,243 @@
+-----------------------------------------------------
+-- Loader.rosetta: Load grammars from parsed .lego files
+--
+-- Converts parsed AST (DGrammar, DPiece nodes) back into
+-- executable Productions that can parse arbitrary input files.
+--
+-- Key insight: The grammar is just data - we can interpret it at runtime.
+-----------------------------------------------------
+
+import Algebra ;
+import Interp ;
+
+-----------------------------------------------------
+-- Production: A grammar rule
+-----------------------------------------------------
+
+adt Production {
+  MkProd : String -> GrammarExpr -> String -> Production
+}
+
+-- Get production name
+rewrite prodName:
+  (prodName (MkProd $name $expr $con)) ~> $name ;
+
+-- Get production grammar
+rewrite prodGrammar:
+  (prodGrammar (MkProd $name $expr $con)) ~> $expr ;
+
+-- Get production constructor
+rewrite prodCon:
+  (prodCon (MkProd $name $expr $con)) ~> $con ;
+
+-----------------------------------------------------
+-- LoadedGrammar: A complete loaded grammar
+-----------------------------------------------------
+
+adt LoadedGrammar {
+  MkGrammar : List Production 
+           -> List Production   -- token productions
+           -> List String       -- symbols
+           -> String            -- start production
+           -> LoadedGrammar
+}
+
+-----------------------------------------------------
+-- AST → GrammarExpr conversion
+-----------------------------------------------------
+
+-- Convert literal: (lit (string "..."))
+rewrite astToGrammarLit:
+  (astToGrammar (Con "lit" (Cons (Con "string" (Cons (Lit $s) Nil)) Nil))) ~>
+    (GLit (stripQuotes $s)) ;
+
+-- Convert reference: (ref (ident name))
+rewrite astToGrammarRef:
+  (astToGrammar (Con "ref" (Cons (Con "ident" (Cons (Var $name) Nil)) Nil))) ~>
+    (GRef $name) ;
+
+-- Convert special: <ident>, <string>, etc.
+rewrite astToGrammarSpecial:
+  (astToGrammar (Con "special" (Cons (Var $s) Nil))) ~>
+    (GRef (concat "TOKEN." (stripAngleBrackets $s))) ;
+
+-- Convert sequence
+rewrite astToGrammarSeq:
+  (astToGrammar (Con "seq" $args)) ~>
+    (foldr GSeq GEmpty (map astToGrammar $args)) ;
+
+-- Convert alternative
+rewrite astToGrammarAlt:
+  (astToGrammar (Con "alt" $args)) ~>
+    (let $parts (splitByPipe $args)
+      (foldr1 GAlt (map astToGrammar $parts))) ;
+
+-- Convert star
+rewrite astToGrammarStar:
+  (astToGrammar (Con "star" (Cons $g Nil))) ~> (GStar (astToGrammar $g)) ;
+
+-- Convert plus
+rewrite astToGrammarPlus:
+  (astToGrammar (Con "plus" (Cons $g Nil))) ~> (GPlus (astToGrammar $g)) ;
+
+-- Convert optional
+rewrite astToGrammarOpt:
+  (astToGrammar (Con "opt" (Cons $g Nil))) ~> (GOpt (astToGrammar $g)) ;
+
+-- Convert not predicate
+rewrite astToGrammarNot:
+  (astToGrammar (Con "not" (Cons $g Nil))) ~> (GNot (astToGrammar $g)) ;
+
+-- Convert and predicate
+rewrite astToGrammarAnd:
+  (astToGrammar (Con "and" (Cons $g Nil))) ~> (GAnd (astToGrammar $g)) ;
+
+-----------------------------------------------------
+-- Extract productions from parsed .lego file
+-----------------------------------------------------
+
+-- Extract parent language names from AST
+-- DLang structure: (DLang $lang (DImports $parent1 ...) $body)
+rewrite extractParentNames:
+  (extractParentNames (Con "DLang" $args)) ~>
+    (filterMap extractParentFromArg $args) ;
+
+rewrite extractParentNamesOther:
+  (extractParentNames $other) ~> Nil ;
+
+rewrite extractParentFromArg:
+  (extractParentFromArg (Con "DImports" $imports)) ~>
+    (Some (filterMap extractIdentName $imports)) ;
+
+rewrite extractParentFromArgOther:
+  (extractParentFromArg $other) ~> None ;
+
+rewrite extractIdentName:
+  (extractIdentName (Con "ident" (Cons (Var $name) Nil))) ~> (Some $name) ;
+
+rewrite extractIdentNameOther:
+  (extractIdentName $other) ~> None ;
+
+-- Extract from DGrammar node
+rewrite extractProductions:
+  (extractProductions (Con "DGrammar" (Cons (Con "ident" (Cons (Var $lang) Nil)) (Cons $pieces Nil)))) ~>
+    (concatMap extractPieceProductions (getList $pieces)) ;
+
+-- Extract from piece
+rewrite extractPieceProductions:
+  (extractPieceProductions (Con "DPiece" (Cons (Con "ident" (Cons (Var $pieceName) Nil)) (Cons $members Nil)))) ~>
+    (concatMap (extractMemberProd $pieceName) (getList $members)) ;
+
+-- Extract from syntax definition
+rewrite extractMemberProdSyntax:
+  (extractMemberProd $piece (Con "DSyntax" (Cons (Con "ident" (Cons (Var $cat) Nil)) (Cons $alts Nil)))) ~>
+    (map (mkProduction $piece $cat) (splitByPipe (getList $alts))) ;
+
+-- Make a production from an alternative
+rewrite mkProduction:
+  (mkProduction $piece $cat $alt) ~>
+    (let $conName (extractConName $alt)
+      (MkProd (concat $piece (concat "." $cat)) (astToGrammar $alt) $conName)) ;
+
+-- Extract constructor name from → annotation
+rewrite extractConName:
+  (extractConName $alt) ~>
+    (case (findArrow $alt)
+      (Some $name) $name
+      None "node") ;
+
+-----------------------------------------------------
+-- Extract rules from parsed .lego file
+-----------------------------------------------------
+
+adt Rule {
+  MkRule : String -> Term -> Term -> Rule
+}
+
+rewrite extractRules:
+  (extractRules (Con "DGrammar" (Cons $lang (Cons $pieces Nil)))) ~>
+    (concatMap extractPieceRules (getList $pieces)) ;
+
+rewrite extractPieceRules:
+  (extractPieceRules (Con "DPiece" (Cons $name (Cons $members Nil)))) ~>
+    (filterMap extractRule (getList $members)) ;
+
+rewrite extractRule:
+  (extractRule (Con "DRule" (Cons (Con "ident" (Cons (Var $name) Nil)) 
+                            (Cons $pat (Cons $template Nil))))) ~>
+    (Some (MkRule $name $pat $template)) ;
+
+rewrite extractRuleNone:
+  (extractRule $other) ~> None ;
+
+-----------------------------------------------------
+-- Parse with loaded grammar
+-----------------------------------------------------
+
+rewrite parseWithGrammar:
+  (parseWithGrammar (MkGrammar $prods $tokProds $syms $start) $input) ~>
+    (let $tokens (tokenize $input)
+      (let $state (MkState $tokens 0)
+        (parseProduction $start $prods $state))) ;
+
+-- Parse a named production
+rewrite parseProduction:
+  (parseProduction $name $prods $state) ~>
+    (case (findProd $name $prods)
+      (Some (MkProd $n $g $c)) (parse $g $state)
+      None (ParseFail (concat "unknown production: " $name) $state)) ;
+
+-- Find production by name
+rewrite findProdHit:
+  (findProd $name (Cons (MkProd $name $g $c) $rest)) ~> (Some (MkProd $name $g $c)) ;
+
+rewrite findProdMiss:
+  (findProd $name (Cons (MkProd $other $g $c) $rest)) ~> (findProd $name $rest) ;
+
+rewrite findProdEmpty:
+  (findProd $name Nil) ~> None ;
+
+-----------------------------------------------------
+-- Print with loaded grammar
+-----------------------------------------------------
+
+rewrite printWithGrammar:
+  (printWithGrammar (MkGrammar $prods $tokProds $syms $start) $prodName $term) ~>
+    (case (findProd $prodName $prods)
+      (Some (MkProd $n $g $c)) (print $g $term)
+      None (PrintFail (concat "unknown production: " $prodName))) ;
+
+-----------------------------------------------------
+-- Helper functions
+-----------------------------------------------------
+
+rewrite stripQuotes:
+  (stripQuotes $s) ~>
+    (if (and (startsWith $s "\"") (endsWith $s "\""))
+      (drop 1 (dropRight 1 $s))
+      $s) ;
+
+rewrite stripAngleBrackets:
+  (stripAngleBrackets $s) ~>
+    (if (and (startsWith $s "<") (endsWith $s ">"))
+      (drop 1 (dropRight 1 $s))
+      $s) ;
+
+rewrite splitByPipe:
+  (splitByPipe $ts) ~> (splitBy (Lit "|") $ts) ;
+
+rewrite getList:
+  (getList (Con "list" $xs)) ~> $xs ;
+
+rewrite getListOther:
+  (getList $t) ~> (Cons $t Nil) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "astToGrammar_lit": (astToGrammar (Con "lit" (Cons (Con "string" (Cons (Lit "\"foo\"") Nil)) Nil))) ~~> (GLit "foo") ;
+
+test "astToGrammar_ref": (astToGrammar (Con "ref" (Cons (Con "ident" (Cons (Var "expr") Nil)) Nil))) ~~> (GRef "expr") ;
+
+test "findProd": (findProd "test" (Cons (MkProd "test" GEmpty "node") Nil)) ~~> (Some (MkProd "test" GEmpty "node")) ;

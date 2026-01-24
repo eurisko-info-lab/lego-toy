@@ -1,0 +1,183 @@
+-----------------------------------------------------
+-- Algebra.rosetta: Core Algebraic Structures
+--
+-- The fundamental insight: everything is an Iso.
+-- - Grammar: Token ↔ Term (representation ↔ structure)
+-- - Rules:   Term ↔ Term  (structure ↔ structure)
+-- - Types:   Term → Prop  (structure → validity)
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- Partial Isomorphism: The atomic unit of computation
+-----------------------------------------------------
+
+adt Iso {
+  MkIso : (a -> Option b) -> (b -> Option a) -> Iso a b
+}
+
+-- Identity iso
+rewrite isoId:
+  isoId ~> (MkIso (Lam x . (Some x)) (Lam x . (Some x))) ;
+
+-- Composition: (A ⇌ B) → (B ⇌ C) → (A ⇌ C)
+rewrite isoComp:
+  (comp (MkIso $f1 $b1) (MkIso $f2 $b2)) ~>
+    (MkIso 
+      (Lam a . (bind (App $f1 a) b (App $f2 b)))
+      (Lam c . (bind (App $b2 c) b (App $b1 b)))) ;
+
+-- Symmetric: flip forward and backward
+rewrite isoSym:
+  (sym (MkIso $fwd $bwd)) ~> (MkIso $bwd $fwd) ;
+
+-- Forward application
+rewrite isoForward:
+  (forward (MkIso $fwd $bwd) $x) ~> (App $fwd $x) ;
+
+-- Backward application
+rewrite isoBackward:
+  (backward (MkIso $fwd $bwd) $x) ~> (App $bwd $x) ;
+
+-- Parallel composition: (A ⇌ B) × (C ⇌ D) → (A × C ⇌ B × D)
+rewrite isoPar:
+  (par (MkIso $f1 $b1) (MkIso $f2 $b2)) ~>
+    (MkIso
+      (Lam p . (bind (App $f1 (Fst p)) x
+               (bind (App $f2 (Snd p)) y
+               (Some (Pair x y)))))
+      (Lam p . (bind (App $b1 (Fst p)) x
+               (bind (App $b2 (Snd p)) y
+               (Some (Pair x y)))))) ;
+
+-- Alternative: try first, fallback to second
+rewrite isoOrElse:
+  (orElse (MkIso $f1 $b1) (MkIso $f2 $b2)) ~>
+    (MkIso
+      (Lam a . (case (App $f1 a) (Some $x) (Some $x) None (App $f2 a)))
+      (Lam b . (case (App $b1 b) (Some $x) (Some $x) None (App $b2 b)))) ;
+
+-----------------------------------------------------
+-- Term: The Universal AST
+-----------------------------------------------------
+
+adt Term {
+  Var : String -> Term,
+  Lit : String -> Term,
+  Con : String -> List Term -> Term
+}
+
+-- Convenience constructors
+rewrite termAtom:
+  (atom $s) ~> (Con $s Nil) ;
+
+rewrite termApp:
+  (app $f $args) ~> (Con $f $args) ;
+
+-----------------------------------------------------
+-- Pattern Matching on Terms
+-----------------------------------------------------
+
+-- Match metavariable (starts with $)
+rewrite matchMeta:
+  (matchPat (Var $name) $t) ~> (Some (Cons (Pair $name $t) Nil))
+  when (startsWith $name "$") ;
+
+-- Match same variable
+rewrite matchVarSame:
+  (matchPat (Var $name) (Var $name)) ~> (Some Nil) ;
+
+-- Match different variable
+rewrite matchVarDiff:
+  (matchPat (Var $a) (Var $b)) ~> None ;
+
+-- Match same literal
+rewrite matchLitSame:
+  (matchPat (Lit $s) (Lit $s)) ~> (Some Nil) ;
+
+-- Match different literal
+rewrite matchLitDiff:
+  (matchPat (Lit $a) (Lit $b)) ~> None ;
+
+-- Match constructor with same name
+rewrite matchConSame:
+  (matchPat (Con $n $pats) (Con $n $args)) ~> (matchArgs $pats $args) ;
+
+-- Match constructor with different name
+rewrite matchConDiff:
+  (matchPat (Con $n1 $pats) (Con $n2 $args)) ~> None ;
+
+-- Match argument lists
+rewrite matchArgsNil:
+  (matchArgs Nil Nil) ~> (Some Nil) ;
+
+rewrite matchArgsCons:
+  (matchArgs (Cons $p $ps) (Cons $a $as)) ~>
+    (merge (matchPat $p $a) (matchArgs $ps $as)) ;
+
+rewrite matchArgsMismatch:
+  (matchArgs $ps $as) ~> None ;
+
+-- Merge bindings
+rewrite mergeBindings:
+  (merge (Some $bs1) (Some $bs2)) ~> (Some (append $bs1 $bs2)) ;
+
+rewrite mergeFail:
+  (merge None $x) ~> None ;
+
+-----------------------------------------------------
+-- Substitution
+-----------------------------------------------------
+
+rewrite substVar:
+  (subst (Var $name) $bindings) ~> (lookup $name $bindings) ;
+
+rewrite substLit:
+  (subst (Lit $s) $bindings) ~> (Lit $s) ;
+
+rewrite substCon:
+  (subst (Con $n $args) $bindings) ~> 
+    (Con $n (map (Lam t . (subst t $bindings)) $args)) ;
+
+-- Lookup in bindings
+rewrite lookupHit:
+  (lookup $name (Cons (Pair $name $val) $rest)) ~> $val ;
+
+rewrite lookupMiss:
+  (lookup $name (Cons (Pair $other $val) $rest)) ~> (lookup $name $rest) ;
+
+rewrite lookupEmpty:
+  (lookup $name Nil) ~> (Var $name) ;
+
+-----------------------------------------------------
+-- AST Typeclass (for generic AST construction)
+-----------------------------------------------------
+
+adt AST {
+  MkAST : (String -> a)           -- var
+       -> (String -> a)           -- lit  
+       -> (String -> List a -> a) -- con
+       -> AST a
+}
+
+rewrite astVar:
+  (astVar (MkAST $var $lit $con) $s) ~> (App $var $s) ;
+
+rewrite astLit:
+  (astLit (MkAST $var $lit $con) $s) ~> (App $lit $s) ;
+
+rewrite astCon:
+  (astCon (MkAST $var $lit $con) $name $args) ~> (App (App $con $name) $args) ;
+
+-- Default AST instance for Term
+rewrite defaultAST:
+  defaultAST ~> (MkAST Var Lit Con) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "iso_forward": (forward (MkIso (Lam x . (Some x)) (Lam x . (Some x))) (Lit "a")) ~~> (Some (Lit "a")) ;
+
+test "match_meta": (matchPat (Var "$x") (Lit "hello")) ~~> (Some (Cons (Pair "$x" (Lit "hello")) Nil)) ;
+
+test "subst_simple": (subst (Con "f" (Cons (Var "$x") Nil)) (Cons (Pair "$x" (Lit "a")) Nil)) ~~> (Con "f" (Cons (Lit "a") Nil)) ;

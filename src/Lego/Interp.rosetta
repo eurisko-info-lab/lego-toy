@@ -1,0 +1,224 @@
+-----------------------------------------------------
+-- Interp.rosetta: Bidirectional Grammar Interpretation
+--
+-- Two grammar engines using the same GrammarExpr algebra:
+-- - Character level: CharStream ⇌ String (lexGrammar)
+-- - Token level:     TokenStream ⇌ Term  (parseGrammar)
+-----------------------------------------------------
+
+import Algebra ;
+
+-----------------------------------------------------
+-- Token: Lexical unit
+-----------------------------------------------------
+
+adt Token {
+  TokIdent  : String -> Token,
+  TokString : String -> Token,
+  TokInt    : Int -> Token,
+  TokSym    : String -> Token,
+  TokEOF    : Token
+}
+
+-- Token equality
+rewrite tokEq:
+  (tokEq (TokIdent $a) (TokIdent $b)) ~> (strEq $a $b) ;
+
+rewrite tokEqString:
+  (tokEq (TokString $a) (TokString $b)) ~> (strEq $a $b) ;
+
+rewrite tokEqSym:
+  (tokEq (TokSym $a) (TokSym $b)) ~> (strEq $a $b) ;
+
+rewrite tokEqMismatch:
+  (tokEq $a $b) ~> false ;
+
+-----------------------------------------------------
+-- GrammarExpr: Grammar expression algebra
+-----------------------------------------------------
+
+adt GrammarExpr {
+  GEmpty  : GrammarExpr,
+  GLit    : String -> GrammarExpr,
+  GRef    : String -> GrammarExpr,
+  GSeq    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GAlt    : GrammarExpr -> GrammarExpr -> GrammarExpr,
+  GStar   : GrammarExpr -> GrammarExpr,
+  GPlus   : GrammarExpr -> GrammarExpr,
+  GOpt    : GrammarExpr -> GrammarExpr,
+  GNot    : GrammarExpr -> GrammarExpr,
+  GAnd    : GrammarExpr -> GrammarExpr,
+  GCon    : String -> GrammarExpr -> GrammarExpr
+}
+
+-----------------------------------------------------
+-- ParseState: Parser state
+-----------------------------------------------------
+
+adt ParseState {
+  MkState : List Token -> Int -> ParseState
+}
+
+-- Get tokens from state
+rewrite stateTokens:
+  (stateTokens (MkState $toks $pos)) ~> $toks ;
+
+-- Get position from state
+rewrite statePos:
+  (statePos (MkState $toks $pos)) ~> $pos ;
+
+-- Advance state by consuming tokens
+rewrite stateAdvance:
+  (stateAdvance (MkState (Cons $t $ts) $pos)) ~> (MkState $ts (add $pos 1)) ;
+
+-----------------------------------------------------
+-- Parser Combinators
+-----------------------------------------------------
+
+adt ParseResult {
+  ParseOk    : Term -> ParseState -> ParseResult,
+  ParseFail  : String -> ParseState -> ParseResult
+}
+
+-- Parse literal
+rewrite parseLit:
+  (parseLit $s (MkState (Cons (TokSym $s) $rest) $pos)) ~>
+    (ParseOk (Lit $s) (MkState $rest (add $pos 1))) ;
+
+rewrite parseLitFail:
+  (parseLit $s (MkState (Cons $t $rest) $pos)) ~>
+    (ParseFail (concat "expected " $s) (MkState (Cons $t $rest) $pos)) ;
+
+-- Parse identifier
+rewrite parseIdent:
+  (parseIdent (MkState (Cons (TokIdent $name) $rest) $pos)) ~>
+    (ParseOk (Var $name) (MkState $rest (add $pos 1))) ;
+
+rewrite parseIdentFail:
+  (parseIdent (MkState (Cons $t $rest) $pos)) ~>
+    (ParseFail "expected identifier" (MkState (Cons $t $rest) $pos)) ;
+
+-- Sequence combinator
+rewrite parseSeq:
+  (parseSeq $p1 $p2 $state) ~>
+    (case (parse $p1 $state)
+      (ParseOk $t1 $s1) 
+        (case (parse $p2 $s1)
+          (ParseOk $t2 $s2) (ParseOk (Con "seq" (Cons $t1 (Cons $t2 Nil))) $s2)
+          (ParseFail $msg $s) (ParseFail $msg $s))
+      (ParseFail $msg $s) (ParseFail $msg $s)) ;
+
+-- Alternative combinator
+rewrite parseAlt:
+  (parseAlt $p1 $p2 $state) ~>
+    (case (parse $p1 $state)
+      (ParseOk $t $s) (ParseOk $t $s)
+      (ParseFail $msg1 $s1)
+        (case (parse $p2 $state)
+          (ParseOk $t $s) (ParseOk $t $s)
+          (ParseFail $msg2 $s2) (ParseFail (concat $msg1 (concat " or " $msg2)) $state))) ;
+
+-- Kleene star
+rewrite parseStar:
+  (parseStar $p $state) ~>
+    (case (parse $p $state)
+      (ParseOk $t $s) 
+        (case (parseStar $p $s)
+          (ParseOk (Con "list" $ts) $s2) (ParseOk (Con "list" (Cons $t $ts)) $s2)
+          (ParseFail $msg $s2) (ParseOk (Con "list" (Cons $t Nil)) $s))
+      (ParseFail $msg $s) (ParseOk (Con "list" Nil) $state)) ;
+
+-- Optional
+rewrite parseOpt:
+  (parseOpt $p $state) ~>
+    (case (parse $p $state)
+      (ParseOk $t $s) (ParseOk (Con "some" (Cons $t Nil)) $s)
+      (ParseFail $msg $s) (ParseOk (Con "none" Nil) $state)) ;
+
+-- Constructor wrapper
+rewrite parseCon:
+  (parseCon $name $p $state) ~>
+    (case (parse $p $state)
+      (ParseOk $t $s) (ParseOk (Con $name (Cons $t Nil)) $s)
+      (ParseFail $msg $s) (ParseFail $msg $s)) ;
+
+-----------------------------------------------------
+-- Main parse dispatcher
+-----------------------------------------------------
+
+rewrite parseGEmpty:
+  (parse GEmpty $state) ~> (ParseOk (Con "unit" Nil) $state) ;
+
+rewrite parseGLit:
+  (parse (GLit $s) $state) ~> (parseLit $s $state) ;
+
+rewrite parseGRef:
+  (parse (GRef "ident") $state) ~> (parseIdent $state) ;
+
+rewrite parseGSeq:
+  (parse (GSeq $g1 $g2) $state) ~> (parseSeq $g1 $g2 $state) ;
+
+rewrite parseGAlt:
+  (parse (GAlt $g1 $g2) $state) ~> (parseAlt $g1 $g2 $state) ;
+
+rewrite parseGStar:
+  (parse (GStar $g) $state) ~> (parseStar $g $state) ;
+
+rewrite parseGOpt:
+  (parse (GOpt $g) $state) ~> (parseOpt $g $state) ;
+
+rewrite parseGCon:
+  (parse (GCon $name $g) $state) ~> (parseCon $name $g $state) ;
+
+-----------------------------------------------------
+-- Printer (backward direction of grammar iso)
+-----------------------------------------------------
+
+adt PrintResult {
+  PrintOk   : List Token -> PrintResult,
+  PrintFail : String -> PrintResult
+}
+
+-- Print literal
+rewrite printLit:
+  (print (GLit $s) (Lit $s)) ~> (PrintOk (Cons (TokSym $s) Nil)) ;
+
+-- Print identifier
+rewrite printIdent:
+  (print (GRef "ident") (Var $name)) ~> (PrintOk (Cons (TokIdent $name) Nil)) ;
+
+-- Print sequence
+rewrite printSeq:
+  (print (GSeq $g1 $g2) (Con "seq" (Cons $t1 (Cons $t2 Nil)))) ~>
+    (case (print $g1 $t1)
+      (PrintOk $toks1)
+        (case (print $g2 $t2)
+          (PrintOk $toks2) (PrintOk (append $toks1 $toks2))
+          (PrintFail $msg) (PrintFail $msg))
+      (PrintFail $msg) (PrintFail $msg)) ;
+
+-- Print constructor
+rewrite printCon:
+  (print (GCon $name $g) (Con $name (Cons $t Nil))) ~> (print $g $t) ;
+
+-----------------------------------------------------
+-- Grammar as Iso
+-----------------------------------------------------
+
+rewrite grammarIso:
+  (grammarIso $g) ~>
+    (MkIso
+      (Lam input . (case (parse $g (tokenize input))
+                     (ParseOk $t $s) (Some $t)
+                     (ParseFail $msg $s) None))
+      (Lam term . (case (print $g $term)
+                    (PrintOk $toks) (Some (detokenize $toks))
+                    (PrintFail $msg) None))) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "parse_lit": (parseLit "(" (MkState (Cons (TokSym "(") Nil) 0)) ~~> (ParseOk (Lit "(") (MkState Nil 1)) ;
+
+test "parse_ident": (parseIdent (MkState (Cons (TokIdent "foo") Nil) 0)) ~~> (ParseOk (Var "foo") (MkState Nil 1)) ;

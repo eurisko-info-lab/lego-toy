@@ -97,6 +97,9 @@ partial def exprToAntlr : GrammarExpr → String
   | .mk (.cut g) =>
     -- ANTLR doesn't have cut; just emit the inner expression
     exprToAntlr g
+  | .mk (.layout _) =>
+    -- Layout annotations are for pretty-printing only, ignored in parsing
+    ""
 
 /-- Convert a single production to ANTLR rule -/
 def prodToAntlr (name : String) (expr : GrammarExpr) : String :=

@@ -109,6 +109,9 @@ partial def exprToTs : GrammarExpr → String
   | .mk (.cut g) =>
     -- Tree-sitter doesn't have cut; just emit the inner expression
     exprToTs g
+  | .mk (.layout _) =>
+    -- Layout annotations are for pretty-printing only, ignored in parsing
+    "blank()"
 where
   collectAlts : GrammarExpr → List GrammarExpr
     | .mk (.alt g1 g2) => collectAlts g1 ++ collectAlts g2

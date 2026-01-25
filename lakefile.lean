@@ -39,6 +39,20 @@ lean_lib «Rosetta» where
   srcDir := "src"
   roots := #[`Rosetta.Rosetta, `Rosetta.CodeGen, `Rosetta.UnifiedCodeGen]
 
+-- Generated Cubical files (from cubical-pipeline)
+-- Uses CubicalGen to avoid module conflicts with examples/Cubical
+lean_lib «CubicalGen» where
+  srcDir := "generated"
+  roots := #[`CubicalGen.Cofibration, `CubicalGen.Conversion, `CubicalGen.Core,
+             `CubicalGen.CubicalTT, `CubicalGen.Datatype, `CubicalGen.Domain,
+             `CubicalGen.Elaborate, `CubicalGen.ExtType, `CubicalGen.FHCom,
+             `CubicalGen.GlobalEnv, `CubicalGen.HIT, `CubicalGen.Kan,
+             `CubicalGen.Module, `CubicalGen.Quote, `CubicalGen.Red,
+             `CubicalGen.Redtt, `CubicalGen.RefineMonad, `CubicalGen.Semantics,
+             `CubicalGen.Signature, `CubicalGen.Splice, `CubicalGen.SubType,
+             `CubicalGen.Tactic, `CubicalGen.TermBuilder, `CubicalGen.TypeAttrs,
+             `CubicalGen.Unify, `CubicalGen.Visitor, `CubicalGen.VType]
+
 lean_exe «rosetta» where
   root := `RosettaMain
 
@@ -81,6 +95,10 @@ lean_exe «lego-test-runtime» where
   root := `test.lean.TestRuntime
   moreLinkArgs := #["-lInit"]
 
+lean_exe «lego-test-cubical-gen» where
+  root := `test.lean.TestCubicalGen
+  moreLinkArgs := #["-lInit"]
+
 lean_exe «lego-test-minimal» where
   root := `test.lean.TestMinimalBootstrap
   moreLinkArgs := #["-lInit"]
@@ -107,7 +125,7 @@ lean_exe «lego-gen» where
   root := `tools.LegoGen
 
 -- Pipeline: CubicalTT → cubical2rosetta → rosetta2lean
-lean_exe «pipeline» where
+lean_exe «cubical-pipeline» where
   root := `tools.Pipeline
 
 -- Rosetta Pipeline: .rosetta → Rosetta.lego → rosetta2lean → Lean
@@ -118,8 +136,7 @@ lean_exe «rosetta-pipeline» where
 lean_exe «multi-target» where
   root := `tools.MultiTargetPipeline
 
--- TODO: Re-enable when hand-written Cubical implementation is restored
 -- Comparison test: hand-written vs generated Cubical
--- @[default_target]
--- lean_exe «cubical-compare» where
---   root := `test.lean.TestCubicalComparison
+lean_exe «cubical-compare» where
+  root := `test.lean.TestCubicalComparison
+  moreLinkArgs := #["-lInit"]

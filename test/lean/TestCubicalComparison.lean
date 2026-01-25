@@ -15,11 +15,12 @@
 
 import Lego.Algebra
 
--- Hand-written Cubical
-import Lego.Cubical.Core
+-- Hand-written Cubical (from examples/Cubical/)
+-- Imported via LegoCubical library as Cubical.*
+import Cubical.Core
 
--- Generated Cubical (Term-based interpreter) - namespace is Core, Cofibration, etc.
--- Files are in generated/CubicalGen/ which is exposed as CubicalGenerated lib
+-- Generated Cubical (Term-based interpreter)
+-- Imported via CubicalGen library as CubicalGen.*
 import CubicalGen.Core
 import CubicalGen.Cofibration
 import CubicalGen.HIT

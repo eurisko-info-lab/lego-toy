@@ -713,7 +713,7 @@ partial def templateToLean (t : Term) (boundVars : List String := []) : String :
 end -- close mutual
 
 /-- Pretty-print a transformed Term to Lean 4 code -/
-partial def termToLean (t : Term) (indent : Nat := 0) : String :=
+partial def termToLean (t : Term) (indent : Nat := 0) (moduleName : String := "Unknown") : String :=
   let pad := String.mk (List.replicate (indent * 2) ' ')
   match t with
   | .var name => name
@@ -722,18 +722,18 @@ partial def termToLean (t : Term) (indent : Nat := 0) : String :=
     -- Filter out DImport nodes
     let filtered := children.filter fun c =>
       match c with | .con "DImport" _ => false | _ => true
-    filtered.map (termToLean · indent) |> String.intercalate "\n\n"
+    filtered.map (termToLean · indent moduleName) |> String.intercalate "\n\n"
   | .con "DImport" _ => ""  -- Skip imports (handled separately)
   | .con "DLang" args =>
-    -- Extract lang name and body
-    let name := args.find? Term.isVar |>.bind Term.getVarName |>.getD "Unknown"
+    -- Extract lang name and body, using moduleName as fallback
+    let name := args.find? Term.isVar |>.bind Term.getVarName |>.getD moduleName
     let body := args.filterMap fun t =>
       match t with
       | .con "DToken" _ => some t
       | .con "DPiece" _ => some t
       | .con "DDerive" _ => some t  -- Include derive declarations
       | _ => none
-    s!"{pad}namespace {name}\n\n{body.map (termToLean · (indent + 1)) |> String.intercalate "\n\n"}\n\n{pad}end {name}"
+    s!"{pad}namespace {name}\n\n{body.map (termToLean · (indent + 1) moduleName) |> String.intercalate "\n\n"}\n\n{pad}end {name}"
   | .con "DToken" args =>
     -- Comment out token definitions (not valid Lean code)
     let name := args.find? Term.isVar |>.bind Term.getVarName |>.getD "Token"
@@ -747,7 +747,7 @@ partial def termToLean (t : Term) (indent : Nat := 0) : String :=
       | .con "DTest" _ => true  -- Include tests
       | .con "DDerive" _ => true  -- Include derive declarations
       | _ => false  -- Comment out grammar/inductive definitions
-    s!"{pad}section {name}\n\n{contents.map (termToLean · (indent + 1)) |> String.intercalate "\n\n"}\n\n{pad}end {name}"
+    s!"{pad}section {name}\n\n{contents.map (termToLean · (indent + 1) moduleName) |> String.intercalate "\n\n"}\n\n{pad}end {name}"
   | .con "DRule" args =>
     -- Transform DRule to Lean 4
     -- Structure: [lit "rule", ident name, lit ":", pat (idx 3), lit "~>", tmpl (idx 5), unit, lit ";"]
@@ -773,7 +773,7 @@ partial def termToLean (t : Term) (indent : Nat := 0) : String :=
     -- Transform DTest directly in printer
     let name := args.find? (fun t => match t with | .lit s => s.startsWith "\"" | _ => false) |>.map (fun t => match t with | .lit s => s | _ => "") |>.getD "test"
     let body := args.find? (fun t => match t with | .con "con" _ => true | _ => false) |>.getD (.con "unit" [])
-    s!"{pad}-- Test: {name}\n{pad}-- {termToLean body 0}"
+    s!"{pad}-- Test: {name}\n{pad}-- {termToLean body 0 moduleName}"
   | .con "DDerive" args =>
     -- Derive traversal operations from grammar
     -- Structure: [lit "derive", deriveKind, lit "for", ident grammarName, deriveWith?, lit ";"]
@@ -1294,7 +1294,7 @@ def main : IO Unit := do
   let rt ← Lego.Runtime.init
 
   -- Load transformation rules
-  let c2rContent ← IO.FS.readFile "./src/Rosetta/cubical2rosetta.lego"
+  let c2rContent ← IO.FS.readFile "./examples/Cubical/cubical2rosetta.lego"
   let c2rAst ← match parseLegoFileE rt c2rContent with
     | .error e => IO.eprintln s!"parse cubical2rosetta failed: {e}"; return
     | .ok ast => pure ast
@@ -1307,40 +1307,41 @@ def main : IO Unit := do
   let rules2 := extractRules r2lAst
 
   -- Process multiple .lego files
+  -- Output to generated/CubicalGen/ to avoid module conflicts with examples/Cubical/
   let files := [
     -- Core cubical files
-    ("./examples/Cubical/test/Redtt.lego", "./generated/Cubical/Redtt.lean"),
-    ("./src/Lego/Cubical/CubicalTT.lego", "./generated/Cubical/CubicalTT.lean"),
-    ("./src/Lego/Cubical/Red.lego", "./generated/Cubical/Red.lean"),
+    ("./examples/Cubical/test/Redtt.lego", "./generated/CubicalGen/Redtt.lean"),
+    ("./examples/Cubical/CubicalTT.lego", "./generated/CubicalGen/CubicalTT.lean"),
+    ("./examples/Cubical/Red.lego", "./generated/CubicalGen/Red.lean"),
     -- Generated cubical modules (~6800 lines)
-    ("./src/Lego/Cubical/generated/Cofibration.lego", "./generated/Cubical/Cofibration.lean"),
-    ("./src/Lego/Cubical/generated/Conversion.lego", "./generated/Cubical/Conversion.lean"),
-    ("./src/Lego/Cubical/generated/Core.lego", "./generated/Cubical/Core.lean"),
-    ("./src/Lego/Cubical/generated/Datatype.lego", "./generated/Cubical/Datatype.lean"),
-    ("./src/Lego/Cubical/generated/Domain.lego", "./generated/Cubical/Domain.lean"),
-    ("./src/Lego/Cubical/generated/Elaborate.lego", "./generated/Cubical/Elaborate.lean"),
-    ("./src/Lego/Cubical/generated/ExtType.lego", "./generated/Cubical/ExtType.lean"),
-    ("./src/Lego/Cubical/generated/FHCom.lego", "./generated/Cubical/FHCom.lean"),
-    ("./src/Lego/Cubical/generated/GlobalEnv.lego", "./generated/Cubical/GlobalEnv.lean"),
-    ("./src/Lego/Cubical/generated/HIT.lego", "./generated/Cubical/HIT.lean"),
-    ("./src/Lego/Cubical/generated/Kan.lego", "./generated/Cubical/Kan.lean"),
-    ("./src/Lego/Cubical/generated/Module.lego", "./generated/Cubical/Module.lean"),
-    ("./src/Lego/Cubical/generated/Quote.lego", "./generated/Cubical/Quote.lean"),
-    ("./src/Lego/Cubical/generated/RefineMonad.lego", "./generated/Cubical/RefineMonad.lean"),
-    ("./src/Lego/Cubical/generated/Semantics.lego", "./generated/Cubical/Semantics.lean"),
-    ("./src/Lego/Cubical/generated/Signature.lego", "./generated/Cubical/Signature.lean"),
-    ("./src/Lego/Cubical/generated/Splice.lego", "./generated/Cubical/Splice.lean"),
-    ("./src/Lego/Cubical/generated/SubType.lego", "./generated/Cubical/SubType.lean"),
-    ("./src/Lego/Cubical/generated/Tactic.lego", "./generated/Cubical/Tactic.lean"),
-    ("./src/Lego/Cubical/generated/TermBuilder.lego", "./generated/Cubical/TermBuilder.lean"),
-    ("./src/Lego/Cubical/generated/TypeAttrs.lego", "./generated/Cubical/TypeAttrs.lean"),
-    ("./src/Lego/Cubical/generated/Unify.lego", "./generated/Cubical/Unify.lean"),
-    ("./src/Lego/Cubical/generated/VType.lego", "./generated/Cubical/VType.lean"),
-    ("./src/Lego/Cubical/generated/Visitor.lego", "./generated/Cubical/Visitor.lean")
+    ("./examples/Cubical/generated/Cofibration.lego", "./generated/CubicalGen/Cofibration.lean"),
+    ("./examples/Cubical/generated/Conversion.lego", "./generated/CubicalGen/Conversion.lean"),
+    ("./examples/Cubical/generated/Core.lego", "./generated/CubicalGen/Core.lean"),
+    ("./examples/Cubical/generated/Datatype.lego", "./generated/CubicalGen/Datatype.lean"),
+    ("./examples/Cubical/generated/Domain.lego", "./generated/CubicalGen/Domain.lean"),
+    ("./examples/Cubical/generated/Elaborate.lego", "./generated/CubicalGen/Elaborate.lean"),
+    ("./examples/Cubical/generated/ExtType.lego", "./generated/CubicalGen/ExtType.lean"),
+    ("./examples/Cubical/generated/FHCom.lego", "./generated/CubicalGen/FHCom.lean"),
+    ("./examples/Cubical/generated/GlobalEnv.lego", "./generated/CubicalGen/GlobalEnv.lean"),
+    ("./examples/Cubical/generated/HIT.lego", "./generated/CubicalGen/HIT.lean"),
+    ("./examples/Cubical/generated/Kan.lego", "./generated/CubicalGen/Kan.lean"),
+    ("./examples/Cubical/generated/Module.lego", "./generated/CubicalGen/Module.lean"),
+    ("./examples/Cubical/generated/Quote.lego", "./generated/CubicalGen/Quote.lean"),
+    ("./examples/Cubical/generated/RefineMonad.lego", "./generated/CubicalGen/RefineMonad.lean"),
+    ("./examples/Cubical/generated/Semantics.lego", "./generated/CubicalGen/Semantics.lean"),
+    ("./examples/Cubical/generated/Signature.lego", "./generated/CubicalGen/Signature.lean"),
+    ("./examples/Cubical/generated/Splice.lego", "./generated/CubicalGen/Splice.lean"),
+    ("./examples/Cubical/generated/SubType.lego", "./generated/CubicalGen/SubType.lean"),
+    ("./examples/Cubical/generated/Tactic.lego", "./generated/CubicalGen/Tactic.lean"),
+    ("./examples/Cubical/generated/TermBuilder.lego", "./generated/CubicalGen/TermBuilder.lean"),
+    ("./examples/Cubical/generated/TypeAttrs.lego", "./generated/CubicalGen/TypeAttrs.lean"),
+    ("./examples/Cubical/generated/Unify.lego", "./generated/CubicalGen/Unify.lean"),
+    ("./examples/Cubical/generated/VType.lego", "./generated/CubicalGen/VType.lean"),
+    ("./examples/Cubical/generated/Visitor.lego", "./generated/CubicalGen/Visitor.lean")
     -- Cool.lego has unsupported 'for' syntax in type constraints, skipped for now
   ]
 
-  IO.FS.createDirAll "./generated/Cubical"
+  IO.FS.createDirAll "./generated/CubicalGen"
 
   -- Header for generated files depends on generation mode
   -- Disable linter for generated code (lots of unused variables are normal)
@@ -1352,11 +1353,18 @@ def main : IO Unit := do
 
   for (input, output) in files do
     let content ← IO.FS.readFile input
+    -- Extract module name from output path (e.g., "./generated/CubicalGen/Core.lean" -> "Core")
+    let basename := output.dropRightWhile (· ≠ '.') |>.dropRight 1  -- remove .lean
+    let moduleName := basename.dropWhile (· ≠ '/') |>.dropWhile (· == '/') 
+                               |>.dropWhile (· ≠ '/') |>.dropWhile (· == '/')
+                               |>.dropWhile (· ≠ '/') |>.dropWhile (· == '/')
+    let moduleName := if moduleName.isEmpty then basename.takeRightWhile (· ≠ '/') else moduleName.takeRightWhile (· ≠ '/')
+    let moduleName := if moduleName.isEmpty then "Unknown" else moduleName
     match parseLegoFileE rt content with
     | .error e => IO.eprintln s!"parse {input} failed: {e}"
     | .ok ast =>
       let lifted := transform rules1 ast
       let lean := transform rules2 lifted
-      let leanCode := header ++ termToLean lean
+      let leanCode := header ++ termToLean lean 0 moduleName
       IO.FS.writeFile output leanCode
       IO.println s!"Wrote {output}"

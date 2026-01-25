@@ -1,0 +1,236 @@
+-----------------------------------------------------
+-- Splice.lego: Splicing Values into Terms under Binders
+--
+-- Mathematical Structure:
+-- - Splicing is a form of metaprogramming
+-- - Avoids de Bruijn arithmetic when working with binders
+-- - Based on cooltt's Splice module design
+--
+-- Key insight:
+-- "Constructing values in the semantic domain that go underneath
+--  binders is very difficult! An alternative is to create a term
+--  in an extended context, and then evaluate that in an environment
+--  that contains the values you want to splice into it."
+-----------------------------------------------------
+
+import Core ;
+import Cofibration ;
+import Visitor ;
+
+lang Splice (Core, Cofibration, Visitor) :=
+
+-----------------------------------------------------
+-- SpliceEnv
+-- Environment for splice operations
+-----------------------------------------------------
+piece SpliceEnv
+  spliceEnv ::= "spliceEnv" "conEnv:" term* "tpEnv:" term* → spliceEnv ;
+  
+  rule spliceEnvEmpty: spliceEnvEmpty ~> (spliceEnv conEnv: () tpEnv: ()) ;
+  
+  rule spliceEnvAddCon: (spliceEnvAddCon $e (spliceEnv conEnv: $cs tpEnv: $ts)) ~>
+    (spliceEnv conEnv: ($e $cs) tpEnv: $ts) ;
+  
+  rule spliceEnvAddTp: (spliceEnvAddTp $e (spliceEnv conEnv: $cs tpEnv: $ts)) ~>
+    (spliceEnv conEnv: $cs tpEnv: ($e $ts)) ;
+  
+  rule spliceEnvConLevel: (spliceEnvConLevel (spliceEnv conEnv: $cs tpEnv: $ts)) ~>
+    (length $cs) ;
+  
+  rule spliceEnvTpLevel: (spliceEnvTpLevel (spliceEnv conEnv: $cs tpEnv: $ts)) ~>
+    (length $ts) ;
+
+-----------------------------------------------------
+-- Splice Monad
+-- State monad for building terms with spliced values
+-----------------------------------------------------
+piece SpliceM
+  rule spliceRun: (spliceRun $s) ~> ($s spliceEnvEmpty) ;
+  rule spliceEval: (spliceEval $s) ~> (fst (spliceRun $s)) ;
+  rule spliceGetEnv: (spliceGetEnv $s) ~> (snd (spliceRun $s)) ;
+  
+  rule splicePure: (splicePure $a $env) ~> ($a , $env) ;
+  
+  rule spliceBind: (spliceBind $m $f $env) ~>
+    (let ($a , $env') = ($m $env)
+     in (($f $a) $env')) ;
+  
+  rule spliceRead: (spliceRead $env) ~> ($env , $env) ;
+  
+  rule spliceModify: (spliceModify $f $env) ~> (() , ($f $env)) ;
+
+-----------------------------------------------------
+-- Foreign Value Binding
+-- Bring semantic values into term context
+-----------------------------------------------------
+piece Foreign
+  -- Splice a term-level value, returning a variable reference
+  rule foreign: (foreign $con $k $env) ~>
+    (let $lvl = (spliceEnvConLevel $env)
+     in (let $env' = (spliceEnvAddCon $con $env)
+         in (let $var = (ix $lvl)
+             in (($k $var) $env')))) ;
+  
+  -- Splice multiple term-level values
+  rule foreignList: (foreignList () $k $env) ~> (($k ()) $env) ;
+  rule foreignListCons: (foreignList ($c $cs) $k $env) ~>
+    (foreign $c (lam (foreignList $cs (lam (($k ((ix 1) (ix 0))))) $env')) $env) ;
+  
+  -- Splice a dimension value
+  rule foreignDim: (foreignDim $d $k $env) ~>
+    (foreign $d $k $env) ;
+  
+  -- Splice a cofibration value
+  rule foreignCof: (foreignCof $φ $k $env) ~>
+    (foreign $φ $k $env) ;
+  
+  -- Splice a closure as a lambda body
+  rule foreignClo: (foreignClo $clo $k $env) ~>
+    (foreign (lam $clo) $k $env) ;
+  
+  -- Splice a type-level value
+  rule foreignTp: (foreignTp $tp $k $env) ~>
+    (let $lvl = (spliceEnvTpLevel $env)
+     in (let $env' = (spliceEnvAddTp $tp $env)
+         in (let $var = (ix $lvl)
+             in (($k $var) $env')))) ;
+
+-----------------------------------------------------
+-- SpliceBuilders
+-- Build terms with spliced values
+-----------------------------------------------------
+piece SpliceBuilders
+  -- Build lambda: λx. body where body can use spliced values
+  rule spliceLam: (spliceLam $name $bodyBuilder $env) ~>
+    (let ($body , $env') = ($bodyBuilder (spliceEnvAddCon (ix (spliceEnvConLevel $env)) $env))
+     in ((lam $body) , $env')) ;
+  
+  -- Build pi: Π(x:A). B where A and B can use spliced values
+  rule splicePi: (splicePi $name $domBuilder $codBuilder $env) ~>
+    (let ($dom , $env1) = ($domBuilder $env)
+     in (let ($cod , $env2) = ($codBuilder (spliceEnvAddCon (ix (spliceEnvConLevel $env1)) $env1))
+         in ((pi $dom $cod) , $env2))) ;
+  
+  -- Build sigma: Σ(x:A). B
+  rule spliceSigma: (spliceSigma $name $fstTyBuilder $sndTyBuilder $env) ~>
+    (let ($fstTy , $env1) = ($fstTyBuilder $env)
+     in (let ($sndTy , $env2) = ($sndTyBuilder (spliceEnvAddCon (ix (spliceEnvConLevel $env1)) $env1))
+         in ((sigma $fstTy $sndTy) , $env2))) ;
+  
+  -- Build path lambda: λ(i:𝕀). body
+  rule splicePlam: (splicePlam $bodyBuilder $env) ~>
+    (let ($body , $env') = ($bodyBuilder (spliceEnvAddCon (ix (spliceEnvConLevel $env)) $env))
+     in ((plam $body) , $env')) ;
+  
+  -- Build path type: Path A a b
+  rule splicePath: (splicePath $aBuilder $lBuilder $rBuilder $env) ~>
+    (let ($a , $env1) = ($aBuilder $env)
+     in (let ($l , $env2) = ($lBuilder $env1)
+         in (let ($r , $env3) = ($rBuilder $env2)
+             in ((path $a $l $r) , $env3)))) ;
+
+-----------------------------------------------------
+-- SpliceDim
+-- Splice dimension values
+-----------------------------------------------------
+piece SpliceDim
+  rule spliceDim0: (spliceDim0 $env) ~> (dim0 , $env) ;
+  rule spliceDim1: (spliceDim1 $env) ~> (dim1 , $env) ;
+  rule spliceDimVar: (spliceDimVar $i $env) ~> ((ix $i) , $env) ;
+  
+  rule spliceDimMeet: (spliceDimMeet $d1Builder $d2Builder $env) ~>
+    (let ($d1 , $env1) = ($d1Builder $env)
+     in (let ($d2 , $env2) = ($d2Builder $env1)
+         in ((dim_and $d1 $d2) , $env2))) ;
+  
+  rule spliceDimJoin: (spliceDimJoin $d1Builder $d2Builder $env) ~>
+    (let ($d1 , $env1) = ($d1Builder $env)
+     in (let ($d2 , $env2) = ($d2Builder $env1)
+         in ((dim_or $d1 $d2) , $env2))) ;
+  
+  rule spliceDimNeg: (spliceDimNeg $dBuilder $env) ~>
+    (let ($d , $env') = ($dBuilder $env)
+     in ((dim_neg $d) , $env')) ;
+
+-----------------------------------------------------
+-- SpliceCof
+-- Splice cofibration values
+-----------------------------------------------------
+piece SpliceCof
+  rule spliceCofTop: (spliceCofTop $env) ~> (cof_top , $env) ;
+  rule spliceCofBot: (spliceCofBot $env) ~> (cof_bot , $env) ;
+  
+  rule spliceCofEq: (spliceCofEq $d1Builder $d2Builder $env) ~>
+    (let ($d1 , $env1) = ($d1Builder $env)
+     in (let ($d2 , $env2) = ($d2Builder $env1)
+         in ((cof_eq $d1 $d2) , $env2))) ;
+  
+  rule spliceCofAnd: (spliceCofAnd $φ1Builder $φ2Builder $env) ~>
+    (let ($φ1 , $env1) = ($φ1Builder $env)
+     in (let ($φ2 , $env2) = ($φ2Builder $env1)
+         in ((cof_and $φ1 $φ2) , $env2))) ;
+  
+  rule spliceCofOr: (spliceCofOr $φ1Builder $φ2Builder $env) ~>
+    (let ($φ1 , $env1) = ($φ1Builder $env)
+     in (let ($φ2 , $env2) = ($φ2Builder $env1)
+         in ((cof_disj $φ1 $φ2) , $env2))) ;
+
+-----------------------------------------------------
+-- SpliceKan
+-- Splice Kan operations
+-----------------------------------------------------
+piece SpliceKan
+  rule spliceCoe: (spliceCoe $rBuilder $r'Builder $tyLineBuilder $elBuilder $env) ~>
+    (let ($r , $env1) = ($rBuilder $env)
+     in (let ($r' , $env2) = ($r'Builder $env1)
+         in (let ($tyLine , $env3) = ($tyLineBuilder $env2)
+             in (let ($el , $env4) = ($elBuilder $env3)
+                 in ((coe $r $r' $tyLine $el) , $env4))))) ;
+  
+  rule spliceHcom: (spliceHcom $rBuilder $r'Builder $tyBuilder $φBuilder $tubesBuilder $capBuilder $env) ~>
+    (let ($r , $env1) = ($rBuilder $env)
+     in (let ($r' , $env2) = ($r'Builder $env1)
+         in (let ($ty , $env3) = ($tyBuilder $env2)
+             in (let ($φ , $env4) = ($φBuilder $env3)
+                 in (let ($tubes , $env5) = ($tubesBuilder $env4)
+                     in (let ($cap , $env6) = ($capBuilder $env5)
+                         in ((hcom $ty $r $r' $φ $tubes $cap) , $env6))))))) ;
+  
+  rule spliceCom: (spliceCom $rBuilder $r'Builder $tyLineBuilder $φBuilder $tubesBuilder $capBuilder $env) ~>
+    (let ($r , $env1) = ($rBuilder $env)
+     in (let ($r' , $env2) = ($r'Builder $env1)
+         in (let ($tyLine , $env3) = ($tyLineBuilder $env2)
+             in (let ($φ , $env4) = ($φBuilder $env3)
+                 in (let ($tubes , $env5) = ($tubesBuilder $env4)
+                     in (let ($cap , $env6) = ($capBuilder $env5)
+                         in ((com $tyLine $r $r' $φ $tubes $cap) , $env6))))))) ;
+
+-----------------------------------------------------
+-- Compile
+-- Extract result from splice computation
+-----------------------------------------------------
+piece Compile
+  rule compile: (compile $splice) ~> (spliceRun $splice) ;
+  rule compileResult: (compileResult $splice) ~> (spliceEval $splice) ;
+  rule compileEnv: (compileEnv $splice) ~> (spliceGetEnv $splice) ;
+
+-----------------------------------------------------
+-- SpliceEval
+-- Evaluate a term with a splice environment
+-----------------------------------------------------
+piece SpliceEval
+  rule spliceEvalTerm: (spliceEvalTerm $term (spliceEnv conEnv: $cs tpEnv: $ts)) ~>
+    (substMany $term $cs) ;
+  
+  rule substMany: (substMany $term ()) ~> $term ;
+  rule substManyCons: (substMany $term ($v $rest)) ~>
+    (substMany (subst 0 $v $term) $rest) ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

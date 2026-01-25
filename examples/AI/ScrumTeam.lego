@@ -1564,7 +1564,7 @@ piece APIBindings
   
   jsonVal ::= "jvString" <string> → jvString
             | "jvNumber" <number> → jvNumber
-            | "jvBool" <bool> → jvBool
+            | "jvBool" ("true" | "false") → jvBool
             | "jvNull" → jvNull
             | "jvArray" jsonArray → jvArray
             | "jvObject" jsonValue → jvObject ;

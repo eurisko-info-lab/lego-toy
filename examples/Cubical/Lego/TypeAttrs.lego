@@ -1,0 +1,282 @@
+-----------------------------------------------------
+-- TypeAttrs.lego: Cubical Type Theory as Attribute Grammar
+--
+-- Mathematical Structure:
+-- Type checking via attribute grammars:
+-- - syn type : synthesized (bottom-up) type inference
+-- - inh ctx  : inherited (top-down) typing context
+-- - syn elab : elaborated Core IR term
+--
+-- Type inference = catamorphism (F-algebra)
+-- Context propagation = paramorphism (F-coalgebra)
+-- Bidirectional = ana ∘ cata (hylomorphism)
+-----------------------------------------------------
+
+import Core ;
+
+lang TypeAttrs (Core) :=
+
+-----------------------------------------------------
+-- ASTtoIR
+-- Rewrite rules: AST (named vars) → IR (de Bruijn)
+-----------------------------------------------------
+piece ASTtoIR
+  -- Universes
+  rule astType: (ast (type)) ~> (univ 0) ;
+  rule astTypeLevel: (ast (typeLevel $n)) ~> (univ $n) ;
+  rule astInterval: (ast (interval)) ~> (lit "𝕀") ;
+  
+  -- Lambda
+  rule astLamTyped: (ast (lam (binders (typedBinder $x $A)) $body)) ~>
+    (lam $x $A (ast $body)) ;
+  rule astLamSimple: (ast (lam (binders (simpleBinder $x)) $body)) ~>
+    (lam $x (hole) (ast $body)) ;
+  
+  -- Pi / Arrow
+  rule astArrow: (ast (Arrow $A $B)) ~> (pi "_" (ast $A) (ast $B)) ;
+  rule astPi: (ast (Pi (cell $x $A) $B)) ~> (pi $x (ast $A) (ast $B)) ;
+  
+  -- Application
+  rule astApp: (ast (app $f (arg $x))) ~> (app (ast $f) (ast $x)) ;
+  rule astAppNoArg: (ast (app $f)) ~> (ast $f) ;
+  
+  -- Sigma / Product
+  rule astProd: (ast (Prod $A $B)) ~> (sigma "_" (ast $A) (ast $B)) ;
+  rule astSigma: (ast (Sigma $x $A $B)) ~> (sigma $x (ast $A) (ast $B)) ;
+  
+  -- Pairs
+  rule astPair: (ast (pair $a $b)) ~> (pair (ast $a) (ast $b)) ;
+  
+  -- Path types
+  rule astPath: (ast (path $A $a $b)) ~> (path (ast $A) (ast $a) (ast $b)) ;
+  rule astRefl: (ast (refl)) ~> (refl (hole)) ;
+  rule astPathAbs: (ast (pathAbs (dims $i) $body $sys)) ~> (plam $i (ast $body) (ast $sys)) ;
+  rule astPathAbsNoSys: (ast (pathAbs (dims $i) $body)) ~> (plam $i (ast $body) (sys)) ;
+  
+  -- Coercion
+  rule astCoe: (ast (coe $r $r' $A $a)) ~> (coe (ast $r) (ast $r') (ast $A) (ast $a)) ;
+  
+  -- Composition
+  rule astHcom: (ast (hcom $r $r' $A $cap $sys)) ~> 
+    (hcom (ast $A) (ast $r) (ast $r') cof_top (ast $sys) (ast $cap)) ;
+  rule astComp: (ast (comp $r $r' $A $cap $sys)) ~> 
+    (com (ast $A) (ast $r) (ast $r') cof_top (ast $sys) (ast $cap)) ;
+  
+  -- Let
+  rule astLet: (ast (let $x $A $v $body)) ~>
+    (let $x (ast $A) (ast $v) (ast $body)) ;
+  
+  -- Projections
+  rule astProjFst: (ast (proj $e (field "fst"))) ~> (fst (ast $e)) ;
+  rule astProjSnd: (ast (proj $e (field "snd"))) ~> (snd (ast $e)) ;
+  
+  -- Circle
+  rule astCircle: (ast (circle)) ~> S1 ;
+  rule astBase: (ast (base)) ~> base ;
+  rule astLoop: (ast (loop $i)) ~> (loop (ast $i)) ;
+  
+  -- Nat
+  rule astNat: (ast (nat)) ~> nat ;
+  rule astZero: (ast (zero)) ~> zero ;
+  rule astSuc: (ast (suc $n)) ~> (suc (ast $n)) ;
+  
+  -- V-types
+  rule astVtype: (ast (Vtype $r $A $B $e)) ~> (vtype (ast $r) (ast $A) (ast $B) (ast $e)) ;
+  rule astVin: (ast (Vin $r $a $b)) ~> (vin (ast $r) (ast $a) (ast $b)) ;
+  rule astVproj: (ast (Vproj $r $v $A $B $e)) ~> (vproj (ast $r) (ast $A) (ast $B) (ast $e) (ast $v)) ;
+  
+  -- Glue types
+  rule astGlue: (ast (Glue $A $phi $T $e)) ~> (glue (ast $A) (ast $phi) (ast $T) (ast $e)) ;
+  rule astGlueEl: (ast (glue $t $a)) ~> (glueEl (ast $t) (ast $a)) ;
+  rule astUnglue: (ast (unglue $g)) ~> (unglue (ast $g)) ;
+  
+  -- Definition
+  rule astDef: (ast (def $name $args $type $body)) ~> 
+    (def $name (ast $args) (ast $type) (ast $body)) ;
+  rule astDefInfer: (ast (defInfer $name $args $body)) ~>
+    (def $name (ast $args) (hole) (ast $body)) ;
+
+-----------------------------------------------------
+-- IRtoAST
+-- Inverse: IR (de Bruijn) → AST (named vars)
+-----------------------------------------------------
+piece IRtoAST
+  -- Universes
+  rule irUniv0: (unast (univ 0)) ~> (type) ;
+  rule irUnivN: (unast (univ $n)) ~> (typeLevel $n) ;
+  
+  -- Pi: non-dependent → Arrow
+  rule irPiArrow: (unast (pi "_" $A $B)) ~> (Arrow (unast $A) (unast $B)) ;
+  rule irPiDep: (unast (pi $x $A $B)) ~> (Pi (cell $x (unast $A)) (unast $B)) ;
+  
+  -- Sigma: non-dependent → Prod
+  rule irSigmaProd: (unast (sigma "_" $A $B)) ~> (Prod (unast $A) (unast $B)) ;
+  rule irSigmaDep: (unast (sigma $x $A $B)) ~> (Sigma $x (unast $A) (unast $B)) ;
+  
+  -- Lambda
+  rule irLam: (unast (lam $body)) ~> (lam (binders (simpleBinder "_")) (unast $body)) ;
+  
+  -- Application
+  rule irApp: (unast (app $f $x)) ~> (app (unast $f) (arg (unast $x))) ;
+  
+  -- Pairs
+  rule irPair: (unast (pair $a $b)) ~> (pair (unast $a) (unast $b)) ;
+  rule irFst: (unast (fst $e)) ~> (proj (unast $e) (field "fst")) ;
+  rule irSnd: (unast (snd $e)) ~> (proj (unast $e) (field "snd")) ;
+  
+  -- Path
+  rule irPlam: (unast (plam $body)) ~> (pathAbs (dims "_") (unast $body)) ;
+  rule irPapp: (unast (papp $p $i)) ~> (app (unast $p) (arg (unast $i))) ;
+  
+  -- Nat
+  rule irNat: (unast nat) ~> (nat) ;
+  rule irZero: (unast zero) ~> (zero) ;
+  rule irSuc: (unast (suc $n)) ~> (suc (unast $n)) ;
+  
+  -- Circle
+  rule irCircle: (unast S1) ~> (circle) ;
+  rule irBase: (unast base) ~> (base) ;
+  rule irLoop: (unast (loop $i)) ~> (loop (unast $i)) ;
+  
+  -- Dimensions
+  rule irDim0: (unast dim0) ~> (lit "0") ;
+  rule irDim1: (unast dim1) ~> (lit "1") ;
+  
+  -- Default: keep as is
+  rule irDefault: (unast $e) ~> $e ;
+
+-----------------------------------------------------
+-- TypeAttr
+-- Synthesized type attribute
+-----------------------------------------------------
+piece TypeAttr
+  -- Type synthesis rules (catamorphism)
+  
+  rule synTypeUniv: (synType (univ $n) $ctx) ~> (tacOk (univ (succ $n))) ;
+  rule synTypeNat: (synType nat $ctx) ~> (tacOk (univ 0)) ;
+  rule synTypeCircle: (synType S1 $ctx) ~> (tacOk (univ 0)) ;
+  
+  rule synTypeVar: (synType (ix $n) $ctx) ~> (tpCtxLookup $ctx $n) ;
+  
+  rule synTypePi: (synType (pi $dom $cod) $ctx) ~>
+    (tacResultBind (synType $dom $ctx) (lam
+      (let $l1 = (univLevel (ix 0))
+       in (tacResultBind (synType $cod (tpCtxExtend $ctx $dom)) (lam
+            (let $l2 = (univLevel (ix 0))
+             in (tacOk (univ (max $l1 $l2))))))))) ;
+  
+  rule synTypeSigma: (synType (sigma $base $fam) $ctx) ~>
+    (tacResultBind (synType $base $ctx) (lam
+      (let $l1 = (univLevel (ix 0))
+       in (tacResultBind (synType $fam (tpCtxExtend $ctx $base)) (lam
+            (let $l2 = (univLevel (ix 0))
+             in (tacOk (univ (max $l1 $l2))))))))) ;
+  
+  rule synTypeLam: (synType (lam $body) $ctx) ~>
+    (tacError "cannot synthesize type of lambda") ;
+  
+  rule synTypeApp: (synType (app $f $x) $ctx) ~>
+    (tacResultBind (synType $f $ctx) (lam
+      (case (ix 0)
+        (pi $dom $cod) => (tacOk (subst 0 $x $cod))
+        _ => (tacError "expected function type")))) ;
+  
+  rule synTypeFst: (synType (fst $e) $ctx) ~>
+    (tacResultBind (synType $e $ctx) (lam
+      (case (ix 0)
+        (sigma $base $fam) => (tacOk $base)
+        _ => (tacError "expected sigma type")))) ;
+  
+  rule synTypeSnd: (synType (snd $e) $ctx) ~>
+    (tacResultBind (synType $e $ctx) (lam
+      (case (ix 0)
+        (sigma $base $fam) => (tacOk (subst 0 (fst $e) $fam))
+        _ => (tacError "expected sigma type")))) ;
+  
+  rule synTypeZero: (synType zero $ctx) ~> (tacOk nat) ;
+  rule synTypeSuc: (synType (suc $n) $ctx) ~>
+    (tacResultBind (synType $n $ctx) (lam
+      (case (ix 0)
+        nat => (tacOk nat)
+        _ => (tacError "expected nat")))) ;
+  
+  rule synTypeBase: (synType base $ctx) ~> (tacOk S1) ;
+  rule synTypeLoop: (synType (loop $i) $ctx) ~> (tacOk S1) ;
+  
+  rule univLevel: (univLevel (univ $n)) ~> $n ;
+  rule univLevelDefault: (univLevel $e) ~> 0 ;
+
+-----------------------------------------------------
+-- CtxAttr
+-- Inherited context attribute
+-----------------------------------------------------
+piece CtxAttr
+  -- Context propagation rules (paramorphism)
+  
+  rule inhCtxLam: (inhCtx (lam $body) (tpCtx types: $ts cofs: $cs) $expectedTy) ~>
+    (case $expectedTy
+      (pi $dom $cod) => (inhCtx $body (tpCtx types: ($dom $ts) cofs: $cs) $cod)
+      _ => (tacError "expected pi type for lambda")) ;
+  
+  rule inhCtxPlam: (inhCtx (plam $body) (tpCtx types: $ts cofs: $cs) $expectedTy) ~>
+    (inhCtx $body (tpCtx types: ((lit "𝕀") $ts) cofs: $cs) $expectedTy) ;
+  
+  rule inhCtxPair: (inhCtx (pair $a $b) $ctx $expectedTy) ~>
+    (case $expectedTy
+      (sigma $base $fam) =>
+        (let $ctxA = (inhCtx $a $ctx $base)
+         in (let $famSubst = (subst 0 $a $fam)
+             in (inhCtx $b $ctx $famSubst)))
+      _ => (tacError "expected sigma type for pair")) ;
+
+-----------------------------------------------------
+-- ElabAttr
+-- Synthesized elaboration attribute
+-----------------------------------------------------
+piece ElabAttr
+  rule elabTerm: (elab $term $ctx) ~>
+    (tacResultBind (synType $term $ctx) (lam
+      (tacOk ($term , (ix 0))))) ;
+  
+  rule elabCheck: (elabCheck $term $ctx $expectedTy) ~>
+    (tacOk $term) ;  -- Simplified: just return term
+  
+  rule elabInfer: (elabInfer $term $ctx) ~>
+    (synType $term $ctx) ;
+
+-----------------------------------------------------
+-- BiDirect
+-- Bidirectional type checking composition
+-----------------------------------------------------
+piece BiDirect
+  -- Bidirectional = check ∘ infer (hylomorphism)
+  
+  rule biCheck: (biCheck $term $ctx $expectedTy) ~>
+    (tacResultBind (synType $term $ctx) (lam
+      (if (conv (ix 0) $expectedTy)
+        then (tacOk $term)
+        else (tacError "type mismatch")))) ;
+  
+  rule biInfer: (biInfer $term $ctx) ~>
+    (tacResultBind (synType $term $ctx) (lam
+      (tacOk ($term , (ix 0))))) ;
+  
+  rule biSynth: (biSynth (lam $body) $ctx) ~>
+    (tacError "cannot synthesize lambda") ;
+  
+  rule biSynthApp: (biSynth (app $f $x) $ctx) ~>
+    (tacResultBind (biInfer $f $ctx) (lam
+      (case (snd (ix 0))
+        (pi $dom $cod) =>
+          (tacResultBind (biCheck $x $ctx $dom) (lam
+            (tacOk ((app (fst (ix 1)) (ix 0)) , (subst 0 $x $cod)))))
+        _ => (tacError "expected function type")))) ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

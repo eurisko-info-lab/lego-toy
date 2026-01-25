@@ -1,0 +1,242 @@
+-----------------------------------------------------
+-- TermBuilder.lego: De Bruijn-Free Term Construction
+--
+-- Mathematical Structure:
+-- - HOAS-style term building
+-- - Automatic de Bruijn index management
+-- - Combinators for common patterns
+--
+-- Key insight:
+-- TermBuilder provides a HOAS-style interface for building terms without
+-- manually managing de Bruijn indices. Functions like `lam` and `pi` take
+-- continuation functions and convert them to de Bruijn-indexed terms.
+-----------------------------------------------------
+
+import Core ;
+
+lang TermBuilder (Core) :=
+
+-----------------------------------------------------
+-- BuildCtx
+-- Context tracking the current de Bruijn level
+-----------------------------------------------------
+piece BuildCtx
+  bctx ::= "bctx" <number> → bctx ;
+  
+  rule bctxEmpty: bctxEmpty ~> (bctx 0) ;
+  rule bctxLevel: (bctxLevel (bctx $l)) ~> $l ;
+  rule bctxNext: (bctxNext (bctx $l)) ~> (bctx (suc $l)) ;
+  
+  -- Create a fresh variable at the current level
+  rule bctxFreshVar: (bctxFreshVar (bctx $l)) ~> (ix $l) ;
+
+-----------------------------------------------------
+-- BuildM
+-- Build monad: reader over context
+-----------------------------------------------------
+piece BuildM
+  -- run: execute build in empty context
+  rule runBuild: (runBuild $ma) ~> ($ma bctxEmpty) ;
+  
+  -- getCtx: get current context
+  rule getCtx: (getCtx $ctx) ~> $ctx ;
+  
+  -- getLevel: get current level
+  rule getLevel: (getLevel $ctx) ~> (bctxLevel $ctx) ;
+  
+  -- withBinder: execute with extended context
+  rule withBinder: (withBinder $k $ctx) ~> ($k (bctxFreshVar $ctx) (bctxNext $ctx)) ;
+
+-----------------------------------------------------
+-- LamBuilder
+-- Build lambda abstractions
+-----------------------------------------------------
+piece LamBuilder
+  -- lam: build lambda with HOAS-style body
+  rule buildLam: (buildLam $k $ctx) ~> (lam ($k (bctxFreshVar $ctx) (bctxNext $ctx))) ;
+  
+  test "build-lam": (runBuild (buildLam (fun x ctx => x))) ~~> (lam (ix 0)) ;
+
+-----------------------------------------------------
+-- PiBuilder
+-- Build pi types
+-----------------------------------------------------
+piece PiBuilder
+  -- pi: build pi type with HOAS-style codomain
+  rule buildPi: (buildPi $dom $k $ctx) ~> (pi ($dom $ctx) ($k (bctxFreshVar $ctx) (bctxNext $ctx))) ;
+  
+  -- arrow: non-dependent function type
+  rule buildArrow: (buildArrow $dom $cod $ctx) ~> (pi ($dom $ctx) (shift 0 1 ($cod $ctx))) ;
+
+-----------------------------------------------------
+-- SigmaBuilder
+-- Build sigma types
+-----------------------------------------------------
+piece SigmaBuilder
+  -- sigma: build sigma type with HOAS-style second component
+  rule buildSigma: (buildSigma $fst $k $ctx) ~> (sigma ($fst $ctx) ($k (bctxFreshVar $ctx) (bctxNext $ctx))) ;
+  
+  -- prod: non-dependent product
+  rule buildProd: (buildProd $A $B $ctx) ~> (sigma ($A $ctx) (shift 0 1 ($B $ctx))) ;
+
+-----------------------------------------------------
+-- PairBuilder
+-- Build pairs
+-----------------------------------------------------
+piece PairBuilder
+  rule buildPair: (buildPair $a $b $ctx) ~> (pair ($a $ctx) ($b $ctx)) ;
+  rule buildFst: (buildFst $p $ctx) ~> (fst ($p $ctx)) ;
+  rule buildSnd: (buildSnd $p $ctx) ~> (snd ($p $ctx)) ;
+
+-----------------------------------------------------
+-- PathBuilder
+-- Build path types and path lambdas
+-----------------------------------------------------
+piece PathBuilder
+  -- path: build path type
+  rule buildPath: (buildPath $tp $l $r $ctx) ~> (path ($tp $ctx) ($l $ctx) ($r $ctx)) ;
+  
+  -- plam: build path lambda (over the interval)
+  rule buildPlam: (buildPlam $k $ctx) ~> (plam ($k (bctxFreshVar $ctx) (bctxNext $ctx))) ;
+  
+  -- papp: build path application
+  rule buildPapp: (buildPapp $p $dim $ctx) ~> (papp ($p $ctx) $dim) ;
+  
+  -- refl: build reflexivity path
+  rule buildRefl: (buildRefl $a $ctx) ~> (refl ($a $ctx)) ;
+
+-----------------------------------------------------
+-- SubBuilder
+-- Build sub types
+-----------------------------------------------------
+piece SubBuilder
+  -- sub: build sub type
+  rule buildSub: (buildSub $tp $φ $k $ctx) ~> (sub ($tp $ctx) ($φ $ctx) ($k (bctxFreshVar $ctx) (bctxNext $ctx))) ;
+  
+  -- subIn: build subIn
+  rule buildSubIn: (buildSubIn $e $ctx) ~> (subIn ($e $ctx)) ;
+  
+  -- subOut: build subOut
+  rule buildSubOut: (buildSubOut $e $ctx) ~> (subOut ($e $ctx)) ;
+
+-----------------------------------------------------
+-- CoeBuilder
+-- Build coercion
+-----------------------------------------------------
+piece CoeBuilder
+  -- coe: build coe r r' (λi.A) a
+  rule buildCoe: (buildCoe $r $r' $line $a $ctx) ~>
+    (coe $r $r' (plam ($line (bctxFreshVar $ctx) (bctxNext $ctx))) ($a $ctx)) ;
+  
+  -- Simple coe without builder for line
+  rule buildCoeSimple: (buildCoeSimple $r $r' $line $a $ctx) ~>
+    (coe $r $r' ($line $ctx) ($a $ctx)) ;
+
+-----------------------------------------------------
+-- HComBuilder
+-- Build homogeneous composition
+-----------------------------------------------------
+piece HComBuilder
+  -- hcom: build hcom r r' A φ tube cap
+  rule buildHCom: (buildHCom $r $r' $A $φ $tube $cap $ctx) ~>
+    (hcom $r $r' ($A $ctx) ($φ $ctx) ($tube $ctx) ($cap $ctx)) ;
+
+-----------------------------------------------------
+-- ComBuilder
+-- Build heterogeneous composition
+-----------------------------------------------------
+piece ComBuilder
+  -- com: build com r r' (λi.A) φ tube cap
+  rule buildCom: (buildCom $r $r' $line $φ $tube $cap $ctx) ~>
+    (com $r $r' (plam ($line (bctxFreshVar $ctx) (bctxNext $ctx))) ($φ $ctx) ($tube $ctx) ($cap $ctx)) ;
+
+-----------------------------------------------------
+-- ExtBuilder
+-- Build extension types
+-----------------------------------------------------
+piece ExtBuilder
+  -- ext: build extension type ext n fam cof bdry
+  rule buildExt: (buildExt $n $fam $cof $bdry $ctx) ~>
+    (ext $n ($fam $ctx) ($cof $ctx) ($bdry $ctx)) ;
+  
+  -- extLam: build extension lambda
+  rule buildExtLam: (buildExtLam $n $body $ctx) ~>
+    (extLam $n ($body $ctx)) ;
+  
+  -- extApp: build extension application
+  rule buildExtApp: (buildExtApp $e $dims $ctx) ~>
+    (extApp ($e $ctx) $dims) ;
+
+-----------------------------------------------------
+-- NatBuilder
+-- Build natural number expressions
+-----------------------------------------------------
+piece NatBuilder
+  rule buildNat: (buildNat $ctx) ~> nat ;
+  rule buildZero: (buildZero $ctx) ~> zero ;
+  rule buildSuc: (buildSuc $n $ctx) ~> (suc ($n $ctx)) ;
+  rule buildNatElim: (buildNatElim $P $z $s $n $ctx) ~>
+    (natElim ($P $ctx) ($z $ctx) ($s $ctx) ($n $ctx)) ;
+
+-----------------------------------------------------
+-- CircleBuilder
+-- Build circle expressions
+-----------------------------------------------------
+piece CircleBuilder
+  rule buildCircle: (buildCircle $ctx) ~> circle ;
+  rule buildBase: (buildBase $ctx) ~> base ;
+  rule buildLoop: (buildLoop $r $ctx) ~> (loop $r) ;
+  rule buildCircleElim: (buildCircleElim $P $b $l $x $ctx) ~>
+    (circleElim ($P $ctx) ($b $ctx) ($l $ctx) ($x $ctx)) ;
+
+-----------------------------------------------------
+-- UnivBuilder
+-- Build universes
+-----------------------------------------------------
+piece UnivBuilder
+  rule buildUniv: (buildUniv $l $ctx) ~> (univ $l) ;
+  rule buildType: (buildType $ctx) ~> (univ lzero) ;
+  rule buildTypeAt: (buildTypeAt $n $ctx) ~> (univ (levelOfNat $n)) ;
+  
+  rule levelOfNat0: (levelOfNat 0) ~> lzero ;
+  rule levelOfNatS: (levelOfNat (suc $n)) ~> (lsuc (levelOfNat $n)) ;
+
+-----------------------------------------------------
+-- VTypeBuilder
+-- Build V-types (Glue types)
+-----------------------------------------------------
+piece VTypeBuilder
+  rule buildVType: (buildVType $r $A $B $equiv $ctx) ~>
+    (vtype $r ($A $ctx) ($B $ctx) ($equiv $ctx)) ;
+  rule buildVIn: (buildVIn $r $a $b $ctx) ~>
+    (vin $r ($a $ctx) ($b $ctx)) ;
+  rule buildVProj: (buildVProj $r $A $B $equiv $v $ctx) ~>
+    (vproj $r ($A $ctx) ($B $ctx) ($equiv $ctx) ($v $ctx)) ;
+
+-----------------------------------------------------
+-- AppBuilder
+-- Build applications
+-----------------------------------------------------
+piece AppBuilder
+  rule buildApp: (buildApp $f $a $ctx) ~> (app ($f $ctx) ($a $ctx)) ;
+  
+  -- Multi-argument application
+  rule buildApps0: (buildApps $f () $ctx) ~> ($f $ctx) ;
+  rule buildApps1: (buildApps $f ($a $rest) $ctx) ~> (buildApps (fun c => (app ($f c) ($a c))) $rest $ctx) ;
+
+-----------------------------------------------------
+-- LetBuilder
+-- Build let expressions
+-----------------------------------------------------
+piece LetBuilder
+  rule buildLet: (buildLet $ty $val $k $ctx) ~>
+    (letE ($ty $ctx) ($val $ctx) ($k (bctxFreshVar $ctx) (bctxNext $ctx))) ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

@@ -101,9 +101,12 @@ piece Judgments
 -----------------------------------------------------
 -- Tests
 -- Equivalence assertions with optional guards
--- Supports both:
+-- Supports:
 --   test[grammar] "name": <surface syntax> ~~> <expected> ;  (parametric)
 --   test "name": <s-expr> ~~> <s-expr> ;                     (s-expr)
+--   tests                                                    (test block in piece)
+--     "input" ~> expected
+--     ...
 -----------------------------------------------------
 
 piece Tests
@@ -112,6 +115,29 @@ piece Tests
              | "test" <string> ":" term "~~>" term testGuard? ";" → DTest ;
   testGuard ::= "when" testCond ("," testCond)* → guard ;
   testCond ::= term → cond ;
+  
+  -- Test case for test blocks
+  testCase ::= <string> "~>" template → testCase ;
+
+-- Extend File piece to add tests block as pieceItem
+-- Uses simpleTemplate which is a restricted version that doesn't
+-- consume trailing identifiers (avoiding ambiguity with following declarations)
+piece File
+  pieceItem ::= "tests" testsCase+ "end" → DTestsBlock
+              | "tests" testsCase+ → DTestsBlock ;
+  testsCase ::= <string> "~>" simpleTemplate → testCase ;
+  -- Simple template for test expected values - no trailing ident consumption
+  -- Supports: variables ($x), function application foo(a,b), brackets [a,b], nested
+  simpleTemplate ::= "$" <ident> → var
+                   | "(" simpleTemplate ")" → paren
+                   | "(" simpleTemplate "," simpleTemplate ("," simpleTemplate)* ")" → tuple
+                   | "[" simpleTemplateList "]" → bracket
+                   | <ident> "(" simpleTemplateList ")" → con
+                   | <ident> → con
+                   | <string> → lit
+                   | <number> → num ;
+  simpleTemplateList ::= simpleTemplate ("," simpleTemplate)* ;
+  simpleTemplateArg ::= simpleTemplate ;
 
 -----------------------------------------------------
 -- Modules

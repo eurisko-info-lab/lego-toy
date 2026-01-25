@@ -1355,7 +1355,7 @@ def main : IO Unit := do
     let content ← IO.FS.readFile input
     -- Extract module name from output path (e.g., "./generated/CubicalGen/Core.lean" -> "Core")
     let basename := output.dropRightWhile (· ≠ '.') |>.dropRight 1  -- remove .lean
-    let moduleName := basename.dropWhile (· ≠ '/') |>.dropWhile (· == '/') 
+    let moduleName := basename.dropWhile (· ≠ '/') |>.dropWhile (· == '/')
                                |>.dropWhile (· ≠ '/') |>.dropWhile (· == '/')
                                |>.dropWhile (· ≠ '/') |>.dropWhile (· == '/')
     let moduleName := if moduleName.isEmpty then basename.takeRightWhile (· ≠ '/') else moduleName.takeRightWhile (· ≠ '/')

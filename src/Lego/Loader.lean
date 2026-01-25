@@ -392,7 +392,11 @@ def builtinProductions : Productions := [
   ("name", GrammarExpr.ref "TOKEN.ident"),
   ("ident", GrammarExpr.ref "TOKEN.ident"),
   ("string", GrammarExpr.ref "TOKEN.string"),
-  ("number", GrammarExpr.ref "TOKEN.number")
+  ("number", GrammarExpr.ref "TOKEN.number"),
+  -- Cross-file aliases for common Bootstrap productions
+  ("template", GrammarExpr.ref "Template.template"),
+  ("pattern", GrammarExpr.ref "Pattern.pattern"),
+  ("term", GrammarExpr.ref "Term.term")
 ]
 
 /-- First pass: collect all production names from AST (only piece, not token) -/

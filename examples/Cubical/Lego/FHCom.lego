@@ -1,0 +1,201 @@
+-----------------------------------------------------
+-- FHCom.lego: Fibrant Homogeneous Composition
+--
+-- Mathematical Structure:
+-- - FHCom represents types as Kan-filled values
+-- - Box introduces elements of FHCom types
+-- - Cap eliminates FHCom types (extracts the "cap" from a box)
+-- - FHCom implements composition of types in the universe
+-- - Box/Cap form an adjoint pair for FHCom types
+--
+-- FHCom (Fibrant HCom) is used for types in cubical type theory.
+-----------------------------------------------------
+
+import Core ;
+import Kan ;
+
+lang FHCom (Core, Kan) :=
+
+-----------------------------------------------------
+-- FHComInfo
+-- Information about an FHCom type
+-----------------------------------------------------
+piece FHComInfo
+  fhcomInfo ::= "fhcomInfo" "r:" <expr> "r':" <expr> "cap:" <expr> "sys:" <sysEntry>* → fhcomInfo ;
+  sysEntry ::= "[" <expr> "↦" <expr> "]" → sysEntry ;
+  
+  rule fhcomInfoR: (fhcomInfoR (fhcomInfo r: $r r': $r' cap: $c sys: $s)) ~> $r ;
+  rule fhcomInfoR': (fhcomInfoR' (fhcomInfo r: $r r': $r' cap: $c sys: $s)) ~> $r' ;
+  rule fhcomInfoCap: (fhcomInfoCap (fhcomInfo r: $r r': $r' cap: $c sys: $s)) ~> $c ;
+  rule fhcomInfoSys: (fhcomInfoSys (fhcomInfo r: $r r': $r' cap: $c sys: $s)) ~> $s ;
+  
+  rule fhcomInfoIsDegenerate: (fhcomInfoIsDegenerate (fhcomInfo r: $r r': $r' cap: $c sys: $s)) ~>
+    (eq $r $r') ;
+  
+  rule fhcomInfoAtR: (fhcomInfoAtR (fhcomInfo r: $r r': $r' cap: $c sys: $s)) ~> $c ;
+  
+  rule fhcomInfoAtR': (fhcomInfoAtR' (fhcomInfo r: $r r': $r' cap: $c sys: $s)) ~>
+    (case (eq $r $r')
+      true => $c
+      false => $c) ;  -- Simplified: full impl evaluates tubes at r'
+  
+  rule fhcomInfoReduce: (fhcomInfoReduce (fhcomInfo r: $r r': $r' cap: $c sys: $s)) ~>
+    (case (eq $r $r')
+      true => (some $c)
+      false => none) ;
+
+-----------------------------------------------------
+-- MkFHCom
+-- Smart constructor for FHCom types
+-----------------------------------------------------
+piece MkFHCom
+  rule mkFHCom: (mkFHCom $r $r' $cap $sys) ~>
+    (case (eq $r $r')
+      true => $cap
+      false => (fhcom $r $r' $cap $sys)) ;
+
+-----------------------------------------------------
+-- BoxInfo
+-- Information about a Box
+-----------------------------------------------------
+piece BoxInfo
+  boxInfo ::= "boxInfo" "r:" <expr> "r':" <expr> "cap:" <expr> "sys:" <sysEntry>* → boxInfo ;
+  
+  rule boxInfoR: (boxInfoR (boxInfo r: $r r': $r' cap: $c sys: $s)) ~> $r ;
+  rule boxInfoR': (boxInfoR' (boxInfo r: $r r': $r' cap: $c sys: $s)) ~> $r' ;
+  rule boxInfoCap: (boxInfoCap (boxInfo r: $r r': $r' cap: $c sys: $s)) ~> $c ;
+  rule boxInfoSys: (boxInfoSys (boxInfo r: $r r': $r' cap: $c sys: $s)) ~> $s ;
+  
+  rule boxInfoIsDegenerate: (boxInfoIsDegenerate (boxInfo r: $r r': $r' cap: $c sys: $s)) ~>
+    (eq $r $r') ;
+  
+  rule boxInfoGetCap: (boxInfoGetCap (boxInfo r: $r r': $r' cap: $c sys: $s)) ~> $c ;
+  
+  rule boxInfoReduce: (boxInfoReduce (boxInfo r: $r r': $r' cap: $c sys: $s)) ~>
+    (case (eq $r $r')
+      true => (some $c)
+      false => none) ;
+
+-----------------------------------------------------
+-- MkBox
+-- Smart constructor for Box
+-----------------------------------------------------
+piece MkBox
+  rule mkBox: (mkBox $r $r' $cap $sys) ~>
+    (case (eq $r $r')
+      true => $cap
+      false => (box $r $r' $cap $sys)) ;
+
+-----------------------------------------------------
+-- CapInfo
+-- Information about a Cap elimination
+-----------------------------------------------------
+piece CapInfo
+  capInfo ::= "capInfo" "r:" <expr> "r':" <expr> "ty:" <expr> "sys:" <sysEntry>* "el:" <expr> → capInfo ;
+  
+  rule capInfoR: (capInfoR (capInfo r: $r r': $r' ty: $t sys: $s el: $e)) ~> $r ;
+  rule capInfoR': (capInfoR' (capInfo r: $r r': $r' ty: $t sys: $s el: $e)) ~> $r' ;
+  rule capInfoTy: (capInfoTy (capInfo r: $r r': $r' ty: $t sys: $s el: $e)) ~> $t ;
+  rule capInfoSys: (capInfoSys (capInfo r: $r r': $r' ty: $t sys: $s el: $e)) ~> $s ;
+  rule capInfoEl: (capInfoEl (capInfo r: $r r': $r' ty: $t sys: $s el: $e)) ~> $e ;
+
+-----------------------------------------------------
+-- MkCap
+-- Smart constructor for Cap with β-reduction
+-----------------------------------------------------
+piece MkCap
+  -- β-rule: cap r r' ty sys (box r r' cap sys) = cap
+  rule mkCapBox: (mkCap $r $r' $ty $sys (box $r $r' $cap $sysBx)) ~> $cap ;
+  
+  -- Degenerate: cap r r ty sys v = v
+  rule mkCapDegenerate: (mkCap $r $r $ty $sys $v) ~> $v ;
+  
+  -- Default: stuck cap
+  rule mkCapOther: (mkCap $r $r' $ty $sys $v) ~> (cap $r $r' $ty $sys $v) ;
+
+-----------------------------------------------------
+-- ReduceFHCom
+-- Reduction rules for FHCom expressions
+-----------------------------------------------------
+piece ReduceFHCom
+  -- FHCom degeneracy: fhcom r r cap sys = cap
+  rule reduceFHComDegenerate: (reduceFHCom (fhcom $r $r $cap $sys)) ~> (some $cap) ;
+  rule reduceFHComOther: (reduceFHCom $e) ~> none ;
+  
+  -- Box degeneracy: box r r cap sys = cap
+  rule reduceBoxDegenerate: (reduceBox (box $r $r $cap $sys)) ~> (some $cap) ;
+  rule reduceBoxOther: (reduceBox $e) ~> none ;
+  
+  -- Cap β-rule
+  rule reduceCapBeta: (reduceCap (cap $r $r' $ty $sys (box $r $r' $cap $sysBx))) ~> (some $cap) ;
+  rule reduceCapDegenerate: (reduceCap (cap $r $r $ty $sys $v)) ~> (some $v) ;
+  rule reduceCapOther: (reduceCap $e) ~> none ;
+
+-----------------------------------------------------
+-- HComFHCom
+-- Homogeneous composition for FHCom types
+-----------------------------------------------------
+piece HComFHCom
+  -- hcom for fhcom types
+  rule hcomFHCom: (hcomFHCom $r $r' (fhcom $rTy $r'Ty $capTy $sysTy) $φ $tubes $cap) ~>
+    (mkBox $r $r'
+      (hcom $capTy $r $r' $φ 
+        (lam (lam (mkCap $rTy $r'Ty $capTy $sysTy (app (app (shift 0 2 $tubes) (ix 1)) (ix 0)))))
+        (mkCap $rTy $r'Ty $capTy $sysTy $cap))
+      (hcomSys $sysTy $φ $tubes $cap $r $r')) ;
+  
+  rule hcomSys: (hcomSys () $φ $tubes $cap $r $r') ~> () ;
+  rule hcomSysCons: (hcomSys (([$φSys ↦ $tube]) $rest) $φ $tubes $cap $r $r') ~>
+    (([$φSys ↦ (lam (lam (getSide (app (app (shift 0 2 $tubes) (ix 1)) (ix 0)) $φSys)))]) 
+     (hcomSys $rest $φ $tubes $cap $r $r')) ;
+  
+  rule getSide: (getSide (box $r $r' $cap $sys) $φ) ~> (lookupSys $sys $φ) ;
+  rule getSideOther: (getSide $e $φ) ~> $e ;
+  
+  rule lookupSysNil: (lookupSys () $φ) ~> (lit "side-not-found") ;
+  rule lookupSysMatch: (lookupSys (([$φ ↦ $side]) $rest) $φ) ~> $side ;
+  rule lookupSysMiss: (lookupSys (($entry) $rest) $φ) ~> (lookupSys $rest $φ) ;
+
+-----------------------------------------------------
+-- CoeFHCom
+-- Coercion for FHCom types
+-----------------------------------------------------
+piece CoeFHCom
+  -- coe for fhcom types (complex, involves com)
+  rule coeFHCom: (coeFHCom $r $r' (lam (fhcom $rTy $r'Ty $capTy $sysTy)) $v) ~>
+    (mkBox $r $r'
+      (com (lam $capTy) $r $r' cof_bot
+        (lam (lam (lit "no-tube")))
+        (mkCap $rTy $r'Ty (subst 0 $r $capTy) $sysTy $v))
+      ()) ;
+
+-----------------------------------------------------
+-- VProjFHCom
+-- V-type projection for FHCom elements
+-----------------------------------------------------
+piece VProjFHCom
+  -- vproj for fhcom (extract from V-type box)
+  rule vprojFHCom: (vprojFHCom $r (fhcom $rTy $r'Ty $A $sys) $B $equiv $v) ~>
+    (mkCap $rTy $r'Ty $A $sys (vproj $r $A $B $equiv $v)) ;
+
+-----------------------------------------------------
+-- UnfoldFHCom
+-- Unfold stuck fhcom when dimension becomes known
+-----------------------------------------------------
+piece UnfoldFHCom
+  rule unfoldFHComAt0: (unfoldFHComAt (fhcom dim0 $r' $cap $sys) dim0) ~> $cap ;
+  rule unfoldFHComAt1: (unfoldFHComAt (fhcom dim1 $r' $cap $sys) dim1) ~> $cap ;
+  rule unfoldFHComAtOther: (unfoldFHComAt $fh $r) ~> $fh ;
+  
+  rule unfoldBoxAt0: (unfoldBoxAt (box dim0 $r' $cap $sys) dim0) ~> $cap ;
+  rule unfoldBoxAt1: (unfoldBoxAt (box dim1 $r' $cap $sys) dim1) ~> $cap ;
+  rule unfoldBoxAtOther: (unfoldBoxAt $bx $r) ~> $bx ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

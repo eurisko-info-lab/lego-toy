@@ -1,0 +1,243 @@
+-----------------------------------------------------
+-- Module.lego: Module System for Cubical Type Theory
+--
+-- Mathematical Structure:
+-- - Modules form a category where morphisms are imports
+-- - Module composition via qualified name resolution
+-- - Dependency DAG for build ordering
+--
+-- Based on redtt's module system (FileRes, ResEnv, Importer)
+-----------------------------------------------------
+
+import Core ;
+import GlobalEnv ;
+import Elaborate ;
+
+lang Module (Core, GlobalEnv, Elaborate) :=
+
+-----------------------------------------------------
+-- Selector
+-- Module path as list of strings
+-----------------------------------------------------
+piece Selector
+  selector ::= "selector" <name>* → selector ;
+  
+  rule selectorToPath: (selectorToPath (selector)) ~> "" ;
+  rule selectorToPathCons: (selectorToPath (selector $n $rest)) ~>
+    (strConcat $n "." (selectorToPath (selector $rest))) ;
+  
+  rule selectorFromPath: (selectorFromPath $path) ~>
+    (selector (strSplit $path ".")) ;
+  
+  rule selectorToFilePath: (selectorToFilePath $base (selector $parts) $ext) ~>
+    (strConcat $base "/" (strJoin "/" $parts) $ext) ;
+
+-----------------------------------------------------
+-- Visibility
+-- Control what's exported from a module
+-----------------------------------------------------
+piece Visibility
+  visibility ::= "pub" → pub
+              | "priv" → priv ;
+  
+  rule isPublic: (isPublic pub) ~> true ;
+  rule isPublicPriv: (isPublic priv) ~> false ;
+  
+  rule visibilityToString: (visibilityToString pub) ~> "public" ;
+  rule visibilityToStringPriv: (visibilityToString priv) ~> "private" ;
+
+-----------------------------------------------------
+-- ModDecl
+-- Module declarations
+-----------------------------------------------------
+piece ModDecl
+  modDecl ::= "importMod" <visibility> <selector> → importMod
+           | "define" <visibility> <name> ":" <expr> ":=" <expr> → define
+           | "dataDecl" <visibility> <dataDesc> → dataDecl
+           | "axiomDecl" <visibility> <name> ":" <expr> → axiomDecl ;
+  
+  rule modDeclVisibility: (modDeclVisibility (importMod $v $s)) ~> $v ;
+  rule modDeclVisibilityDef: (modDeclVisibility (define $v $n : $t := $b)) ~> $v ;
+  rule modDeclVisibilityData: (modDeclVisibility (dataDecl $v $d)) ~> $v ;
+  rule modDeclVisibilityAxiom: (modDeclVisibility (axiomDecl $v $n : $t)) ~> $v ;
+  
+  rule modDeclName: (modDeclName (define $v $n : $t := $b)) ~> (some $n) ;
+  rule modDeclNameData: (modDeclName (dataDecl $v $d)) ~> (some (dataDescName $d)) ;
+  rule modDeclNameAxiom: (modDeclName (axiomDecl $v $n : $t)) ~> (some $n) ;
+  rule modDeclNameImport: (modDeclName (importMod $v $s)) ~> none ;
+
+-----------------------------------------------------
+-- Module
+-- Complete module structure
+-----------------------------------------------------
+piece ModuleStruct
+  module ::= "module" <selector> "{" <modDecl>* "}" → module ;
+  
+  rule moduleName: (moduleName (module $sel { $decls })) ~> $sel ;
+  rule moduleDecls: (moduleDecls (module $sel { $decls })) ~> $decls ;
+
+-----------------------------------------------------
+-- Resolution
+-- Name resolution to local or global
+-----------------------------------------------------
+piece Resolution
+  resolution ::= "localIx" <nat> → localIx
+              | "globalRes" <gname> → globalRes ;
+  
+  rule isLocalResolution: (isLocalResolution (localIx $n)) ~> true ;
+  rule isLocalResolutionGlobal: (isLocalResolution (globalRes $g)) ~> false ;
+  
+  rule isGlobalResolution: (isGlobalResolution (globalRes $g)) ~> true ;
+  rule isGlobalResolutionLocal: (isGlobalResolution (localIx $n)) ~> false ;
+  
+  rule resolutionIndex: (resolutionIndex (localIx $n)) ~> $n ;
+  rule resolutionGName: (resolutionGName (globalRes $g)) ~> $g ;
+
+-----------------------------------------------------
+-- ImportInfo
+-- Info about an imported name
+-----------------------------------------------------
+piece ImportInfo
+  importInfo ::= "importInfo" "name:" <gname> "vis:" <visibility> "from:" <selector> → importInfo ;
+  
+  rule importInfoName: (importInfoName (importInfo name: $n vis: $v from: $s)) ~> $n ;
+  rule importInfoVis: (importInfoVis (importInfo name: $n vis: $v from: $s)) ~> $v ;
+  rule importInfoFrom: (importInfoFrom (importInfo name: $n vis: $v from: $s)) ~> $s ;
+
+-----------------------------------------------------
+-- ResEnv
+-- Resolution environment for name lookup
+-----------------------------------------------------
+piece ResEnv
+  resEnv ::= "resEnv" "locals:" <name>* "globals:" <importEntry>* "natives:" <gname>* → resEnv ;
+  importEntry ::= "[" <name> "↦" <importInfo> "]" → importEntry ;
+  
+  rule resEnvEmpty: resEnvEmpty ~> (resEnv locals: () globals: () natives: ()) ;
+  
+  rule resEnvBind: (resEnvBind $x (resEnv locals: $ls globals: $gs natives: $ns)) ~>
+    (resEnv locals: ($x $ls) globals: $gs natives: $ns) ;
+  
+  rule resEnvBindN: (resEnvBindN () $env) ~> $env ;
+  rule resEnvBindNCons: (resEnvBindN ($x $xs) $env) ~>
+    (resEnvBindN $xs (resEnvBind $x $env)) ;
+  
+  rule resEnvGet: (resEnvGet $x (resEnv locals: $ls globals: $gs natives: $ns)) ~>
+    (resEnvLookup $x $ls $gs 0) ;
+  
+  rule resEnvLookup: (resEnvLookup $x () $gs $idx) ~> (resEnvLookupGlobal $x $gs) ;
+  rule resEnvLookupMatch: (resEnvLookup $x ($x $rest) $gs $idx) ~> (some (localIx $idx)) ;
+  rule resEnvLookupMiss: (resEnvLookup $x ($y $rest) $gs $idx) ~>
+    (resEnvLookup $x $rest $gs (succ $idx)) ;
+  
+  rule resEnvLookupGlobal: (resEnvLookupGlobal $x ()) ~> none ;
+  rule resEnvLookupGlobalMatch: (resEnvLookupGlobal $x (([$x ↦ $info]) $rest)) ~>
+    (some (globalRes (importInfoName $info))) ;
+  rule resEnvLookupGlobalMiss: (resEnvLookupGlobal $x (($entry) $rest)) ~>
+    (resEnvLookupGlobal $x $rest) ;
+  
+  rule resEnvAddNative: (resEnvAddNative $vis $gname (resEnv locals: $ls globals: $gs natives: $ns)) ~>
+    (resEnv 
+      locals: $ls 
+      globals: (([(gnameName $gname) ↦ (importInfo name: $gname vis: $vis from: (selector))]) $gs)
+      natives: ($gname $ns)) ;
+  
+  rule resEnvImportGlobal: (resEnvImportGlobal $vis $gname $fromMod (resEnv locals: $ls globals: $gs natives: $ns)) ~>
+    (resEnv 
+      locals: $ls 
+      globals: (([(gnameName $gname) ↦ (importInfo name: $gname vis: $vis from: $fromMod)]) $gs)
+      natives: $ns) ;
+  
+  rule resEnvExports: (resEnvExports (resEnv locals: $ls globals: $gs natives: $ns)) ~>
+    (resEnvCollectExports $gs ()) ;
+  
+  rule resEnvCollectExports: (resEnvCollectExports () $acc) ~> $acc ;
+  rule resEnvCollectExportsPub: (resEnvCollectExports (([$n ↦ (importInfo name: $g vis: pub from: $f)]) $rest) $acc) ~>
+    (resEnvCollectExports $rest ($g $acc)) ;
+  rule resEnvCollectExportsPriv: (resEnvCollectExports (([$n ↦ (importInfo name: $g vis: priv from: $f)]) $rest) $acc) ~>
+    (resEnvCollectExports $rest $acc) ;
+
+-----------------------------------------------------
+-- ModuleCache
+-- Cache for loaded modules
+-----------------------------------------------------
+piece ModuleCache
+  moduleCache ::= "moduleCache" "loaded:" <cacheEntry>* "loading:" <selector>* → moduleCache ;
+  cacheEntry ::= "[" <selector> "↦" <resEnv> "," <globalEnv> "]" → cacheEntry ;
+  
+  rule moduleCacheEmpty: moduleCacheEmpty ~> (moduleCache loaded: () loading: ()) ;
+  
+  rule moduleCacheIsLoaded: (moduleCacheIsLoaded $sel (moduleCache loaded: $ls loading: $ing)) ~>
+    (cacheContains $sel $ls) ;
+  
+  rule cacheContains: (cacheContains $sel ()) ~> false ;
+  rule cacheContainsMatch: (cacheContains $sel (([$sel ↦ $r , $e]) $rest)) ~> true ;
+  rule cacheContainsMiss: (cacheContains $sel (($entry) $rest)) ~> (cacheContains $sel $rest) ;
+  
+  rule moduleCacheIsCyclic: (moduleCacheIsCyclic $sel (moduleCache loaded: $ls loading: $ing)) ~>
+    (listContains $sel $ing) ;
+  
+  rule moduleCacheStartLoading: (moduleCacheStartLoading $sel (moduleCache loaded: $ls loading: $ing)) ~>
+    (moduleCache loaded: $ls loading: ($sel $ing)) ;
+  
+  rule moduleCacheStore: (moduleCacheStore $sel $res $env (moduleCache loaded: $ls loading: $ing)) ~>
+    (moduleCache 
+      loaded: (([$sel ↦ $res , $env]) $ls) 
+      loading: (listRemove $sel $ing)) ;
+  
+  rule moduleCacheGetModule: (moduleCacheGetModule $sel (moduleCache loaded: $ls loading: $ing)) ~>
+    (cacheLookup $sel $ls) ;
+  
+  rule cacheLookup: (cacheLookup $sel ()) ~> none ;
+  rule cacheLookupMatch: (cacheLookup $sel (([$sel ↦ $r , $e]) $rest)) ~> (some ($r , $e)) ;
+  rule cacheLookupMiss: (cacheLookup $sel (($entry) $rest)) ~> (cacheLookup $sel $rest) ;
+
+-----------------------------------------------------
+-- ProcessDecl
+-- Process module declarations
+-----------------------------------------------------
+piece ProcessDecl
+  rule processImport: (processDecl (importMod $vis $sel) $resEnv $globEnv $loadImport) ~>
+    (let $importedRes = (apply $loadImport $sel)
+     in ($resEnv, $globEnv)) ;  -- Simplified
+  
+  rule processDefine: (processDecl (define $vis $name : $ty := $tm) $resEnv $globEnv $loadImport) ~>
+    (let $gname = (gname $name)
+     in (let $globEnv' = (globalEnvDefine $gname $ty $tm $globEnv)
+         in (let $resEnv' = (resEnvAddNative $vis $gname $resEnv)
+             in ($resEnv', $globEnv')))) ;
+  
+  rule processDataDecl: (processDecl (dataDecl $vis $desc) $resEnv $globEnv $loadImport) ~>
+    (let $globEnv' = (globalEnvDeclareDatatype $desc $globEnv)
+     in (let $resEnv' = (resEnvAddNative $vis (dataDescName $desc) $resEnv)
+         in ($resEnv', $globEnv'))) ;
+  
+  rule processAxiom: (processDecl (axiomDecl $vis $name : $ty) $resEnv $globEnv $loadImport) ~>
+    (let $gname = (gname $name)
+     in (let $globEnv' = (globalEnvDeclareParam $gname $ty $globEnv)
+         in (let $resEnv' = (resEnvAddNative $vis $gname $resEnv)
+             in ($resEnv', $globEnv')))) ;
+
+-----------------------------------------------------
+-- QualifiedName
+-- Resolve qualified names
+-----------------------------------------------------
+piece QualifiedName
+  rule resolveQualified: (resolveQualified ($name) $env $cache) ~>
+    (resEnvGet $name $env) ;
+  
+  rule resolveQualifiedMulti: (resolveQualified ($modPart $rest) $env $cache) ~>
+    (case (moduleCacheGetModule (selector ($modPart $rest)) $cache)
+      (some ($res , $genv)) => (resEnvGet (last ($modPart $rest)) $res)
+      none => none) ;
+  
+  rule last: (last ($x)) ~> $x ;
+  rule lastCons: (last ($x $y $rest)) ~> (last ($y $rest)) ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

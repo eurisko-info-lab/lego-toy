@@ -1,0 +1,239 @@
+-----------------------------------------------------
+-- VType.lego: V-Types (Glue Types) for Univalence
+--
+-- Mathematical Structure:
+-- V r A B e : Type when r : 𝕀, A B : Type, e : Equiv A B
+-- - At r=0, V r A B e ≡ A
+-- - At r=1, V r A B e ≡ B
+-- - This gives ua : Equiv A B → Path Type A B via λ i → V i A B e
+--
+-- Based on redtt's Val.ml V-type implementation
+-----------------------------------------------------
+
+import Core ;
+import Quote ;
+import Kan ;
+import Visitor ;
+
+lang VType (Core, Quote, Kan, Visitor) :=
+
+-----------------------------------------------------
+-- VTypeInfo
+-- Information about a V-type
+-----------------------------------------------------
+piece VTypeInfo
+  vtypeInfo ::= "vtypeInfo" "dim:" <expr> "ty0:" <expr> "ty1:" <expr> "equiv:" <expr> → vtypeInfo ;
+  
+  rule vtypeInfoDim: (vtypeInfoDim (vtypeInfo dim: $d ty0: $a ty1: $b equiv: $e)) ~> $d ;
+  rule vtypeInfoTy0: (vtypeInfoTy0 (vtypeInfo dim: $d ty0: $a ty1: $b equiv: $e)) ~> $a ;
+  rule vtypeInfoTy1: (vtypeInfoTy1 (vtypeInfo dim: $d ty0: $a ty1: $b equiv: $e)) ~> $b ;
+  rule vtypeInfoEquiv: (vtypeInfoEquiv (vtypeInfo dim: $d ty0: $a ty1: $b equiv: $e)) ~> $e ;
+  
+  rule vtypeInfoAtDim0: (vtypeInfoAtDim0 (vtypeInfo dim: dim0 ty0: $a ty1: $b equiv: $e)) ~> true ;
+  rule vtypeInfoAtDim0Other: (vtypeInfoAtDim0 $info) ~> false ;
+  
+  rule vtypeInfoAtDim1: (vtypeInfoAtDim1 (vtypeInfo dim: dim1 ty0: $a ty1: $b equiv: $e)) ~> true ;
+  rule vtypeInfoAtDim1Other: (vtypeInfoAtDim1 $info) ~> false ;
+  
+  rule vtypeInfoReduce: (vtypeInfoReduce (vtypeInfo dim: dim0 ty0: $a ty1: $b equiv: $e)) ~> (some $a) ;
+  rule vtypeInfoReduce1: (vtypeInfoReduce (vtypeInfo dim: dim1 ty0: $a ty1: $b equiv: $e)) ~> (some $b) ;
+  rule vtypeInfoReduceOther: (vtypeInfoReduce $info) ~> none ;
+
+-----------------------------------------------------
+-- VInInfo
+-- Information about a VIn introduction
+-----------------------------------------------------
+piece VInInfo
+  vinInfo ::= "vinInfo" "dim:" <expr> "tm0:" <expr> "tm1:" <expr> → vinInfo ;
+  
+  rule vinInfoDim: (vinInfoDim (vinInfo dim: $d tm0: $a tm1: $b)) ~> $d ;
+  rule vinInfoTm0: (vinInfoTm0 (vinInfo dim: $d tm0: $a tm1: $b)) ~> $a ;
+  rule vinInfoTm1: (vinInfoTm1 (vinInfo dim: $d tm0: $a tm1: $b)) ~> $b ;
+  
+  rule vinInfoAtDim0: (vinInfoAtDim0 (vinInfo dim: dim0 tm0: $a tm1: $b)) ~> true ;
+  rule vinInfoAtDim0Other: (vinInfoAtDim0 $info) ~> false ;
+  
+  rule vinInfoAtDim1: (vinInfoAtDim1 (vinInfo dim: dim1 tm0: $a tm1: $b)) ~> true ;
+  rule vinInfoAtDim1Other: (vinInfoAtDim1 $info) ~> false ;
+  
+  rule vinInfoReduce: (vinInfoReduce (vinInfo dim: dim0 tm0: $a tm1: $b)) ~> (some $a) ;
+  rule vinInfoReduce1: (vinInfoReduce (vinInfo dim: dim1 tm0: $a tm1: $b)) ~> (some $b) ;
+  rule vinInfoReduceOther: (vinInfoReduce $info) ~> none ;
+
+-----------------------------------------------------
+-- Equivalence
+-- Extract parts of an equivalence
+-----------------------------------------------------
+piece Equivalence
+  -- equiv.fst : A → B (the function)
+  rule equivFunc: (equivFunc $e) ~> (fst $e) ;
+  
+  -- equiv.snd.fst : B → A (the inverse)
+  rule equivInv: (equivInv $e) ~> (fst (snd $e)) ;
+  
+  -- Check if something is an equivalence structure
+  rule isEquiv: (isEquiv (pair $f (pair $g $proofs))) ~> true ;
+  rule isEquivOther: (isEquiv $e) ~> false ;
+
+-----------------------------------------------------
+-- MkVType
+-- Smart constructor for V-types
+-----------------------------------------------------
+piece MkVType
+  rule mkVType: (mkVType dim0 $A $B $e) ~> $A ;
+  rule mkVType1: (mkVType dim1 $A $B $e) ~> $B ;
+  rule mkVTypeOther: (mkVType $r $A $B $e) ~> (vtype $r $A $B $e) ;
+
+-----------------------------------------------------
+-- MkVIn
+-- Smart constructor for VIn
+-----------------------------------------------------
+piece MkVIn
+  rule mkVIn: (mkVIn dim0 $a $b) ~> $a ;
+  rule mkVIn1: (mkVIn dim1 $a $b) ~> $b ;
+  rule mkVInOther: (mkVIn $r $a $b) ~> (vin $r $a $b) ;
+
+-----------------------------------------------------
+-- ReduceVProj
+-- Reduction rules for vproj
+-----------------------------------------------------
+piece ReduceVProj
+  -- vproj at r=0: apply the equivalence function
+  rule reduceVProj0: (reduceVProj dim0 $ty0 $ty1 $equiv $el) ~>
+    (app (equivFunc $equiv) $el) ;
+  
+  -- vproj at r=1: element is already in B
+  rule reduceVProj1: (reduceVProj dim1 $ty0 $ty1 $equiv $el) ~> $el ;
+  
+  -- General case: check if el is a vin
+  rule reduceVProjVin: (reduceVProj $r $ty0 $ty1 $equiv (vin $r' $a $b)) ~>
+    (case (eq $r $r')
+      true => $b
+      false => (vproj $r $ty0 $ty1 $equiv (vin $r' $a $b))) ;
+  
+  rule reduceVProjOther: (reduceVProj $r $ty0 $ty1 $equiv $el) ~>
+    (vproj $r $ty0 $ty1 $equiv $el) ;
+
+-----------------------------------------------------
+-- CoeV
+-- Coercion through a V-type
+-----------------------------------------------------
+piece CoeV
+  -- Coercion through V-type path
+  -- This is complex: involves the equivalence
+  
+  rule coeV: (coeV $dir (vtypeInfo dim: $d ty0: $A ty1: $B equiv: $e) $el) ~>
+    (case (dirIsDegenerate $dir)
+      true => $el
+      false => (coeVBody $dir $d $A $B $e $el)) ;
+  
+  rule dirIsDegenerate: (dirIsDegenerate (dir $r $r)) ~> true ;
+  rule dirIsDegenerateOther: (dirIsDegenerate $dir) ~> false ;
+  
+  -- The actual coercion computation
+  rule coeVBody: (coeVBody (dir $r $r') $d $A $B $e $el) ~>
+    (mkVIn $r'
+      -- A component: coerce in A
+      (coe $r $r' (lam $A) (case $el
+        (vin $_ $a $_) => $a
+        _ => $el))
+      -- B component: use equivalence and coerce
+      (coe $r $r' (lam $B) (case $el
+        (vin $_ $_ $b) => $b
+        _ => (app (equivFunc $e) $el)))) ;
+
+-----------------------------------------------------
+-- HComV
+-- Homogeneous composition for V-types
+-----------------------------------------------------
+piece HComV
+  rule hcomV: (hcomV (vtype $d $A $B $e) $r $r' $φ $tubes $cap) ~>
+    (mkVIn $d
+      -- A component
+      (hcom $A $r $r' $φ 
+        (lam (lam (vinProj0 (app (app (shift 0 2 $tubes) (ix 1)) (ix 0)))))
+        (vinProj0 $cap))
+      -- B component (with correction via equiv)
+      (hcom $B $r $r' (cof_disj $φ (cof_eq $d dim0))
+        (lam (lam
+          (caseCof (ix 1)
+            ($φ => (vinProj1 (app (app (shift 0 2 $tubes) (ix 1)) (ix 0))))
+            ((cof_eq $d dim0) => (app (equivFunc $e) 
+              (vinProj0 (app (app (shift 0 2 $tubes) (ix 1)) (ix 0))))))))
+        (vinProj1 $cap))) ;
+  
+  rule vinProj0: (vinProj0 (vin $d $a $b)) ~> $a ;
+  rule vinProj0Other: (vinProj0 $e) ~> $e ;
+  
+  rule vinProj1: (vinProj1 (vin $d $a $b)) ~> $b ;
+  rule vinProj1Other: (vinProj1 $e) ~> $e ;
+
+-----------------------------------------------------
+-- Univalence
+-- ua : Equiv A B → Path Type A B
+-----------------------------------------------------
+piece Univalence
+  -- ua e = λi. V i A B e
+  rule ua: (ua $A $B $e) ~>
+    (plam (lit "i") (vtype (ix 0) (shift 0 1 $A) (shift 0 1 $B) (shift 0 1 $e))) ;
+  
+  -- idEquiv A : Equiv A A
+  rule idEquiv: (idEquiv $A) ~>
+    (pair (lam (ix 0))  -- id function
+      (pair (lam (ix 0))  -- inverse (also id)
+        (pair (lam (refl))  -- left inverse proof
+          (pair (lam (refl))  -- right inverse proof
+            (lit "contractible-fibers"))))) ;
+  
+  -- uaβ : transport (ua e) a ≡ e.fst a
+  rule uaβ: (uaβ $e $a) ~>
+    (coe dim0 dim1 (ua (typeOf $a) (codomain $e) $e) $a) ;
+  
+  -- uaη : ua (idEquiv A) ≡ refl A
+  rule uaη: (uaη $A) ~>
+    (plam (lit "_") $A) ;  -- Path is constant
+
+-----------------------------------------------------
+-- VTypeQuote
+-- Quote V-type terms
+-----------------------------------------------------
+piece VTypeQuote
+  rule quoteVType: (quoteVType (vtype $r $A $B $e)) ~>
+    (surface ("V" (quoteDim $r) (quote $A) (quote $B) (quote $e))) ;
+  
+  rule quoteVIn: (quoteVIn (vin $r $a $b)) ~>
+    (surface ("vin" (quoteDim $r) (quote $a) (quote $b))) ;
+  
+  rule quoteVProj: (quoteVProj (vproj $r $A $B $e $v)) ~>
+    (surface ("vproj" (quoteDim $r) (quote $v))) ;
+
+-----------------------------------------------------
+-- VTypeNormalize
+-- Normalize V-type expressions
+-----------------------------------------------------
+piece VTypeNormalize
+  rule normalizeVType: (normalizeVType (vtype dim0 $A $B $e)) ~> $A ;
+  rule normalizeVType1: (normalizeVType (vtype dim1 $A $B $e)) ~> $B ;
+  rule normalizeVTypeOther: (normalizeVType (vtype $r $A $B $e)) ~>
+    (vtype (normalizeDim $r) (normalize $A) (normalize $B) (normalize $e)) ;
+  
+  rule normalizeVIn: (normalizeVIn (vin dim0 $a $b)) ~> $a ;
+  rule normalizeVIn1: (normalizeVIn (vin dim1 $a $b)) ~> $b ;
+  rule normalizeVInOther: (normalizeVIn (vin $r $a $b)) ~>
+    (vin (normalizeDim $r) (normalize $a) (normalize $b)) ;
+  
+  rule normalizeVProj: (normalizeVProj (vproj dim0 $A $B $e $v)) ~>
+    (app (equivFunc $e) $v) ;
+  rule normalizeVProj1: (normalizeVProj (vproj dim1 $A $B $e $v)) ~> $v ;
+  rule normalizeVProjVin: (normalizeVProj (vproj $r $A $B $e (vin $r $a $b))) ~> $b ;
+  rule normalizeVProjOther: (normalizeVProj (vproj $r $A $B $e $v)) ~>
+    (vproj (normalizeDim $r) (normalize $A) (normalize $B) (normalize $e) (normalize $v)) ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

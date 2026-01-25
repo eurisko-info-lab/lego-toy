@@ -34,59 +34,59 @@ type Tensor-intro : (Tensor $A $B) : QTy
 type QCtx-Set : QCtx : Set ;
 
 type ε-intro : ε : QCtx ;
-type extend-intro : (ext $Γ $A) : QCtx
-  when $Γ : QCtx, $A : QTy ;
+type extend-intro : (ext $G $A) : QCtx
+  when $G : QCtx, $A : QTy ;
 
 -----------------------------------------------------
 -- Variables (linear, de Bruijn)
 --
 -- Original Agda-style:
 --   data Var : QCtx → QTy → Set where
---     vz : Var (ext Γ A) A
---     vs : Var Γ A → Var (Γ , B) A
+--     vz : Var (ext G A) A
+--     vs : Var G A → Var (G , B) A
 -----------------------------------------------------
 
-type Var-Set : (Var $Γ $A) : Set
-  when $Γ : QCtx, $A : QTy ;
+type Var-Set : (Var $G $A) : Set
+  when $G : QCtx, $A : QTy ;
 
-type vz-intro : vz : (Var (ext $Γ $A) $A)
-  when $Γ : QCtx, $A : QTy ;
-type vs-intro : (vs $v) : (Var (ext $Γ $B) $A)
-  when $v : (Var $Γ $A), $Γ : QCtx, $A : QTy, $B : QTy ;
+type vz-intro : vz : (Var (ext $G $A) $A)
+  when $G : QCtx, $A : QTy ;
+type vs-intro : (vs $v) : (Var (ext $G $B) $A)
+  when $v : (Var $G $A), $G : QCtx, $A : QTy, $B : QTy ;
 
 -----------------------------------------------------
 -- Quantum Terms (circuits)
 --
 -- Original Agda-style:
 --   data QTm : QCtx → QTy → Set where
---     qvar  : Var Γ A → QTm Γ A
---     unit  : QTm Γ QUnit
---     pair  : QTm Γ A → QTm Δ B → QTm (ext Γ Δ) (Tensor A B)
+--     qvar  : Var G A → QTm G A
+--     unit  : QTm G QUnit
+--     pair  : QTm G A → QTm D B → QTm (ext G D) (Tensor A B)
 -----------------------------------------------------
 
-type QTm-Set : (QTm $Γ $A) : Set
-  when $Γ : QCtx, $A : QTy ;
+type QTm-Set : (QTm $G $A) : Set
+  when $G : QCtx, $A : QTy ;
 
-type qvar-intro : (qvar $v) : (QTm $Γ $A)
-  when $v : (Var $Γ $A) ;
-type unit-intro : unit : (QTm $Γ QUnit)
-  when $Γ : QCtx ;
-type pair-intro : (pair $t $u) : (QTm (ext $Γ $Δ) (Tensor $A $B))
-  when $t : (QTm $Γ $A), $u : (QTm $Δ $B) ;
+type qvar-intro : (qvar $v) : (QTm $G $A)
+  when $v : (Var $G $A) ;
+type unit-intro : unit : (QTm $G QUnit)
+  when $G : QCtx ;
+type pair-intro : (pair $t $u) : (QTm (ext $G $D) (Tensor $A $B))
+  when $t : (QTm $G $A), $u : (QTm $D $B) ;
 
 -----------------------------------------------------
 -- Unitary paths
 --
 -- Original Agda-style:
---   Unitary : ∀{Γ A} → QTm Γ A → QTm Γ A → Set
+--   Unitary : ∀{G A} → QTm G A → QTm G A → Set
 --   Unitary u v = Path (QTm _ _) u v
 -----------------------------------------------------
 
 type Unitary-sig : (Unitary $u $v) : Set
-  when $u : (QTm $Γ $A), $v : (QTm $Γ $A) ;
+  when $u : (QTm $G $A), $v : (QTm $G $A) ;
 
-rule Unitary-def : (Unitary $u $v) ~> (Path (QTm $Γ $A) $u $v)
-  when $u : (QTm $Γ $A), $v : (QTm $Γ $A) ;
+rule Unitary-def : (Unitary $u $v) ~> (Path (QTm $G $A) $u $v)
+  when $u : (QTm $G $A), $v : (QTm $G $A) ;
 
 -----------------------------------------------------
 -- Measurement as a HIT
@@ -132,20 +132,20 @@ type nfPair-intro : (nfPair $nf1 $nf2) : (NF (Tensor $A $B))
 -- Soundness and completeness placeholders
 --
 -- Original Agda-style:
---   soundness : ∀{Γ A} (t : QTm Γ A) → Set
+--   soundness : ∀{G A} (t : QTm G A) → Set
 --   soundness t = ⊤
---   completeness : ∀{Γ A} (t u : QTm Γ A) → Unitary t u → Set
+--   completeness : ∀{G A} (t u : QTm G A) → Unitary t u → Set
 --   completeness t u p = ⊤
 -----------------------------------------------------
 
 type soundness-sig : (soundness $t) : Set
-  when $t : (QTm $Γ $A) ;
+  when $t : (QTm $G $A) ;
 
 rule soundness-def : (soundness $t) ~> ⊤
-  when $t : (QTm $Γ $A) ;
+  when $t : (QTm $G $A) ;
 
 type completeness-sig : (completeness $t $u $p) : Set
-  when $t : (QTm $Γ $A), $u : (QTm $Γ $A), $p : (Unitary $t $u) ;
+  when $t : (QTm $G $A), $u : (QTm $G $A), $p : (Unitary $t $u) ;
 
 rule completeness-def : (completeness $t $u $p) ~> ⊤
-  when $t : (QTm $Γ $A), $u : (QTm $Γ $A), $p : (Unitary $t $u) ;
+  when $t : (QTm $G $A), $u : (QTm $G $A), $p : (Unitary $t $u) ;

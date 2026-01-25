@@ -1,0 +1,262 @@
+-----------------------------------------------------
+-- Domain.lego: Semantic Domain Types for NbE
+--
+-- The domain consists of:
+-- - D.Con: Semantic values (evaluated terms)
+-- - D.Tp: Semantic types
+-- - D.Cut: Neutral terms with their types
+-- - D.Env: Evaluation environments
+-- - D.Clo: Closures for delayed evaluation
+--
+-- Mathematical Structure:
+-- - The domain forms a partial equivalence relation (PER) model
+-- - Evaluation maps syntax to semantics: ⟦_⟧ : Expr → D.Con
+-- - Quotation maps semantics back to syntax: ↓ : D.Con → Expr
+-- - NbE: normalize(e) = ↓⟦e⟧
+-----------------------------------------------------
+
+import Core ;
+
+lang Domain (Core) :=
+
+-----------------------------------------------------
+-- DLevel
+-- Semantic universe level
+-----------------------------------------------------
+piece DLevel
+  dlevel ::= "const" <number> → dconst
+           | "dlvar" <number> → dlvar
+           | "dmax" dlevel dlevel → dmax
+           | "dsuc" dlevel → dsuc
+           ;
+  
+  -- Constants
+  rule dlevZero: dzero ~> (dconst 0) ;
+  rule dlevOne: done ~> (dconst 1) ;
+  
+  -- Conversion from syntax
+  rule ofLevelZero: (ofLevel lzero) ~> dzero ;
+  rule ofLevelSuc: (ofLevel (lsuc $l)) ~> (dsuc (ofLevel $l)) ;
+  rule ofLevelMax: (ofLevel (lmax $l1 $l2)) ~> (dmax (ofLevel $l1) (ofLevel $l2)) ;
+  rule ofLevelVar: (ofLevel (lvar $n)) ~> (dlvar $n) ;
+
+-----------------------------------------------------
+-- Dim
+-- Semantic dimension value
+-----------------------------------------------------
+piece Dim
+  dim ::= "ddim0" → ddim0
+        | "ddim1" → ddim1
+        | "dvar" <number> → dvar
+        ;
+  
+  -- Convert from expression
+  rule dimOfExprD0: (dimOfExpr dim0) ~> (some ddim0) ;
+  rule dimOfExprD1: (dimOfExpr dim1) ~> (some ddim1) ;
+  rule dimOfExprVar: (dimOfExpr (dimVar $n)) ~> (some (dvar $n)) ;
+  rule dimOfExprOther: (dimOfExpr $e) ~> none ;
+  
+  -- Convert to expression
+  rule dimToExprD0: (dimToExpr ddim0) ~> dim0 ;
+  rule dimToExprD1: (dimToExpr ddim1) ~> dim1 ;
+  rule dimToExprVar: (dimToExpr (dvar $n)) ~> (dimVar $n) ;
+  
+  -- Equality
+  rule dimEqD0: (dimEqD ddim0 ddim0) ~> true ;
+  rule dimEqD1: (dimEqD ddim1 ddim1) ~> true ;
+  rule dimEqVar: (dimEqD (dvar $n) (dvar $m)) ~> (eq $n $m) ;
+  rule dimEqMixed: (dimEqD $d1 $d2) ~> false when (neq $d1 $d2) ;
+  
+  test "dim-eq": (dimEqD ddim0 ddim0) ~~> true ;
+  test "dim-neq": (dimEqD ddim0 ddim1) ~~> false ;
+
+-----------------------------------------------------
+-- DCof
+-- Semantic cofibration
+-----------------------------------------------------
+piece DCof
+  dcof ::= "dcof_top" → dcof_top
+         | "dcof_bot" → dcof_bot
+         | "dcof_eq" dim dim → dcof_eq
+         | "dcof_join" dcof dcof → dcof_join
+         | "dcof_meet" dcof dcof → dcof_meet
+         ;
+  
+  -- Check if definitely true
+  rule isTrueTop: (dCofIsTrue dcof_top) ~> true ;
+  rule isTrueBot: (dCofIsTrue dcof_bot) ~> false ;
+  rule isTrueEq: (dCofIsTrue (dcof_eq $d1 $d2)) ~> (dimEqD $d1 $d2) ;
+  rule isTrueJoin: (dCofIsTrue (dcof_join $φ $ψ)) ~> (or (dCofIsTrue $φ) (dCofIsTrue $ψ)) ;
+  rule isTrueMeet: (dCofIsTrue (dcof_meet $φ $ψ)) ~> (and (dCofIsTrue $φ) (dCofIsTrue $ψ)) ;
+  
+  -- Check if definitely false
+  rule isFalse: (dCofIsFalse $φ) ~> (not (dCofIsTrue $φ)) ;
+  
+  test "dcof-true": (dCofIsTrue dcof_top) ~~> true ;
+  test "dcof-false": (dCofIsTrue dcof_bot) ~~> false ;
+
+-----------------------------------------------------
+-- DEnv
+-- Evaluation environment: list of values
+-----------------------------------------------------
+piece DEnv
+  denv ::= "denvNil" → denvNil
+         | "denvCons" dcon denv → denvCons
+         ;
+  
+  -- Lookup by index
+  rule envLookup0: (denvLookup 0 (denvCons $v $rest)) ~> (some $v) ;
+  rule envLookupS: (denvLookup (suc $n) (denvCons $v $rest)) ~> (denvLookup $n $rest) ;
+  rule envLookupNil: (denvLookup $n denvNil) ~> none ;
+  
+  -- Extend environment
+  rule envExtend: (denvExtend $v $env) ~> (denvCons $v $env) ;
+  
+  test "env-lookup": (denvLookup 0 (denvCons (dlit "x") denvNil)) ~~> (some (dlit "x")) ;
+
+-----------------------------------------------------
+-- DClo
+-- Closures: term + environment
+-----------------------------------------------------
+piece DClo
+  dclo ::= "dclo" term denv → dclo ;
+  
+  -- Apply closure to argument
+  rule cloApply: (dCloApply (dclo $body $env) $arg) ~> (deval (denvCons $arg $env) $body) ;
+
+-----------------------------------------------------
+-- DCon
+-- Semantic values (canonical forms)
+-----------------------------------------------------
+piece DCon
+  dcon ::= "dlit" <string> → dlit
+         | "dlam" dclo → dlam
+         | "dpair" dcon dcon → dpair
+         | "dpi" dtp dclo → dpi
+         | "dsigma" dtp dclo → dsigma
+         | "duniv" dlevel → duniv
+         | "dpath" dtp dcon dcon → dpath
+         | "dplam" dclo → dplam
+         | "drefl" dcon → drefl
+         | "dnat" → dnat
+         | "dzero" → dzeroN
+         | "dsuc" dcon → dsucN
+         | "dcircle" → dcircle
+         | "dbase" → dbase
+         | "dloop" dim → dloop
+         | "dneu" dcut → dneu
+         ;
+
+-----------------------------------------------------
+-- DTp
+-- Semantic types
+-----------------------------------------------------
+piece DTp
+  dtp ::= "dtpUniv" dlevel → dtpUniv
+        | "dtpPi" dtp dclo → dtpPi
+        | "dtpSigma" dtp dclo → dtpSigma
+        | "dtpPath" dtp dcon dcon → dtpPath
+        | "dtpNat" → dtpNat
+        | "dtpCircle" → dtpCircle
+        | "dtpNeu" dcut → dtpNeu
+        ;
+
+-----------------------------------------------------
+-- DCut
+-- Neutral terms: head + spine
+-----------------------------------------------------
+piece DCut
+  dcut ::= "dcut" dneu dtp → dcut ;
+  
+  dneu ::= "dneuVar" <number> → dneuVar
+         | "dneuApp" dneu dcon → dneuApp
+         | "dneuFst" dneu → dneuFst
+         | "dneuSnd" dneu → dneuSnd
+         | "dneuPApp" dneu dim → dneuPApp
+         | "dneuNatElim" dcon dcon dcon dneu → dneuNatElim
+         | "dneuCircleElim" dcon dcon dcon dneu → dneuCircleElim
+         ;
+
+-----------------------------------------------------
+-- Eval
+-- Evaluation: Expr × Env → DCon
+-----------------------------------------------------
+piece Eval
+  -- Variables
+  rule evalIx: (deval $env (ix $n)) ~> (fromOption (denvLookup $n $env) (dneu (dcut (dneuVar $n) dtpUnknown))) ;
+  
+  -- Literals
+  rule evalLit: (deval $env (lit $s)) ~> (dlit $s) ;
+  
+  -- Lambda
+  rule evalLam: (deval $env (lam $body)) ~> (dlam (dclo $body $env)) ;
+  
+  -- Application
+  rule evalApp: (deval $env (app $f $a)) ~> (dApply (deval $env $f) (deval $env $a)) ;
+  
+  -- Pi
+  rule evalPi: (deval $env (pi $A $B)) ~> (dpi (dtpOf (deval $env $A)) (dclo $B $env)) ;
+  
+  -- Sigma
+  rule evalSigma: (deval $env (sigma $A $B)) ~> (dsigma (dtpOf (deval $env $A)) (dclo $B $env)) ;
+  
+  -- Pair
+  rule evalPair: (deval $env (pair $a $b)) ~> (dpair (deval $env $a) (deval $env $b)) ;
+  
+  -- Fst
+  rule evalFst: (deval $env (fst $p)) ~> (dFst (deval $env $p)) ;
+  
+  -- Snd
+  rule evalSnd: (deval $env (snd $p)) ~> (dSnd (deval $env $p)) ;
+  
+  -- Universe
+  rule evalUniv: (deval $env (univ $l)) ~> (duniv (ofLevel $l)) ;
+  
+  -- Path operations
+  rule evalPath: (deval $env (path $A $a $b)) ~> (dpath (dtpOf (deval $env $A)) (deval $env $a) (deval $env $b)) ;
+  rule evalPlam: (deval $env (plam $body)) ~> (dplam (dclo $body $env)) ;
+  rule evalPapp: (deval $env (papp $p $r)) ~> (dPApp (deval $env $p) (dimOfExprForce $r)) ;
+  rule evalRefl: (deval $env (refl $a)) ~> (drefl (deval $env $a)) ;
+  
+  -- Nat
+  rule evalNat: (deval $env nat) ~> dnat ;
+  rule evalZero: (deval $env zero) ~> dzeroN ;
+  rule evalSuc: (deval $env (suc $n)) ~> (dsucN (deval $env $n)) ;
+  
+  -- Circle
+  rule evalCircle: (deval $env circle) ~> dcircle ;
+  rule evalBase: (deval $env base) ~> dbase ;
+  rule evalLoop: (deval $env (loop $r)) ~> (dloop (dimOfExprForce $r)) ;
+
+-----------------------------------------------------
+-- Operations
+-- Operations on semantic values
+-----------------------------------------------------
+piece Operations
+  -- Application
+  rule applyLam: (dApply (dlam $clo) $arg) ~> (dCloApply $clo $arg) ;
+  rule applyNeu: (dApply (dneu (dcut $neu $tp)) $arg) ~> (dneu (dcut (dneuApp $neu $arg) (dtpApply $tp $arg))) ;
+  
+  -- Projection
+  rule fstPair: (dFst (dpair $a $b)) ~> $a ;
+  rule fstNeu: (dFst (dneu (dcut $neu $tp))) ~> (dneu (dcut (dneuFst $neu) (dtpFst $tp))) ;
+  
+  rule sndPair: (dSnd (dpair $a $b)) ~> $b ;
+  rule sndNeu: (dSnd (dneu (dcut $neu $tp))) ~> (dneu (dcut (dneuSnd $neu) (dtpSnd $tp))) ;
+  
+  -- Path application
+  rule pappPlam: (dPApp (dplam $clo) $d) ~> (dCloApplyDim $clo $d) ;
+  rule pappRefl: (dPApp (drefl $a) $d) ~> $a ;
+  rule pappNeu: (dPApp (dneu (dcut $neu $tp)) $d) ~> (dneu (dcut (dneuPApp $neu $d) (dtpPApp $tp $d))) ;
+  
+  test "apply": (dApply (dlam (dclo (ix 0) denvNil)) (dlit "x")) ~~> (dlit "x") ;
+  test "fst": (dFst (dpair (dlit "a") (dlit "b"))) ~~> (dlit "a") ;
+
+
+-----------------------------------------------------
+-- Derived Operations
+-----------------------------------------------------
+
+derive subst for term ;
+derive normalize for term with fuel = 100 ;
+

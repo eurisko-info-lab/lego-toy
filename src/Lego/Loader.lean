@@ -924,6 +924,9 @@ def isSubsetOfProductions (p1 p2 : Productions) : Bool × List String :=
 -/
 partial def patternAstToTerm (t : Term) : Term :=
   match t with
+  -- Number handling: (num (number "n")) → .lit "n"
+  | .con "num" [.con "number" [.lit n]] => .lit n
+  | .con "num" [.lit n] => .lit n
   -- NEW format from generated grammar: (var "$" (ident name)) → .var "$name"
   | .con "var" [.lit "$", .con "ident" [.var name]] =>
     .var s!"${name}"
@@ -965,9 +968,11 @@ partial def patternAstToTerm (t : Term) : Term :=
     -- c is the outer structure, name is the actual constructor name
     if c == "con" then .con name (args.map patternAstToTerm)
     else .con c ((.var name) :: args.map patternAstToTerm)
-  -- ident node → variable
+  -- ident node without $ prefix → nullary constructor, not a variable
+  -- Variables in patterns start with $ (e.g., $x)
   | .con "ident" [.var name] =>
-    .var name
+    if name.startsWith "$" then .var name
+    else .con name []  -- Treat bare idents as nullary constructors
   -- Plain constructor application
   | .con c args =>
     let cleanArgs := args.filter (· != .lit "(") |>.filter (· != .lit ")")
@@ -981,6 +986,9 @@ partial def patternAstToTerm (t : Term) : Term :=
 -/
 partial def templateAstToTerm (t : Term) : Term :=
   match t with
+  -- Number handling: (num (number "n")) → .lit "n"
+  | .con "num" [.con "number" [.lit n]] => .lit n
+  | .con "num" [.lit n] => .lit n
   -- NEW format from generated grammar: (var "$" (ident name)) → .var "$name"
   | .con "var" [.lit "$", .con "ident" [.var name]] =>
     .var s!"${name}"
@@ -1006,21 +1014,45 @@ partial def templateAstToTerm (t : Term) : Term :=
     let filtered := rest.filter (· != .lit "(") |>.filter (· != .lit ")")
     match filtered with
     | .con "ident" [.var conName] :: args =>
-      .con conName (args.map templateAstToTerm)
+      -- Flatten any con-wrapped siblings in the args
+      let convertedArgs := args.map templateAstToTerm
+      let flatArgs := convertedArgs.flatMap fun a =>
+        match a with
+        | .con "con" children => children  -- Flatten con wrappers
+        | other => [other]
+      .con conName flatArgs
     | _ => .con "con" (rest.map templateAstToTerm)
   -- New clean format: (con (ident name) args...) → .con name [args...]
   | .con "con" (.con "ident" [.var conName] :: args) =>
-    .con conName (args.map templateAstToTerm)
+    -- Check if the first arg is a parenthesized expression (starts with "(")
+    -- If so, it's a separate application, not arguments to conName
+    match args with
+    | .con "con" (.lit "(" :: _) :: _ =>
+      -- conName is a nullary constructor, rest are siblings
+      .con "con" ((.con conName []) :: args.map templateAstToTerm)
+    | _ =>
+      .con conName (args.map templateAstToTerm)
   -- New clean format: (lit (string "...")) → .lit ...
   | .con "lit" [.con "string" [.lit s]] =>
     .lit (s.drop 1 |>.dropRight 1)  -- strip quotes
   -- Regular con with ident first child (common case)
   | .con c (.con "ident" [.var name] :: args) =>
-    if c == "con" then .con name (args.map templateAstToTerm)
-    else .con c ((.var name) :: args.map templateAstToTerm)
-  -- ident node → variable
+    -- Check if the first arg is a parenthesized expression
+    match args with
+    | .con "con" (.lit "(" :: _) :: _ =>
+      -- name is a nullary constructor, rest are siblings
+      if c == "con" then
+        .con "con" ((.con name []) :: args.map templateAstToTerm)
+      else
+        .con c ((.con name []) :: args.map templateAstToTerm)
+    | _ =>
+      if c == "con" then .con name (args.map templateAstToTerm)
+      else .con c ((.var name) :: args.map templateAstToTerm)
+  -- ident node without $ prefix → nullary constructor, not a variable
+  -- Variables in templates start with $ (e.g., $x)
   | .con "ident" [.var name] =>
-    .var name
+    if name.startsWith "$" then .var name
+    else .con name []  -- Treat bare idents as nullary constructors
   -- Plain constructor application
   | .con c args =>
     let cleanArgs := args.filter (· != .lit "(") |>.filter (· != .lit ")")
@@ -1029,18 +1061,47 @@ partial def templateAstToTerm (t : Term) : Term :=
   | .lit s => .lit s
   | .var s => .var s
 
+/-- Extract guard term from a guard AST node -/
+def extractGuard (guardNode : Term) : Option Term :=
+  match guardNode with
+  | .con "guard" args =>
+    -- Guard contains side conditions: (guard "when" cond1 "," cond2 ...)
+    let filtered := args.filter (· != .lit "when") |>.filter (· != .lit ",")
+    -- For now, use the first condition as the guard
+    match filtered with
+    | [cond] => unwrapSidePattern cond
+    | cond :: _ => unwrapSidePattern cond  -- multiple conditions - just take first
+    | [] => none
+  | _ => none
+where
+  /-- Unwrap a sidePattern wrapper and convert to term -/
+  unwrapSidePattern (t : Term) : Option Term :=
+    match t with
+    | .con "sidePattern" [inner] => some (templateAstToTerm inner)
+    | other => some (templateAstToTerm other)
+
 /-- Extract a Rule from a DRule AST node -/
 def extractRule (ruleDecl : Term) : Option Rule :=
   match ruleDecl with
   | .con "DRule" args =>
-    -- Structure varies based on whether patterns have outer parens
-    -- Filter out keywords, punctuation, and empty guard
+    -- First, check for guard node (con "guard" [...])
+    let guardNode := args.find? fun t =>
+      match t with
+      | .con "guard" _ => true
+      | _ => false
+    let guard := guardNode.bind extractGuard
+
+    -- Filter out keywords, punctuation, empty guard, and the guard node
     let filtered := args.filter (· != .lit "rule") |>.filter (· != .lit ":")
                        |>.filter (· != .lit "~>") |>.filter (· != .lit "~~>")
                        |>.filter (· != .lit ";")
                        |>.filter (· != .lit "(") |>.filter (· != .lit ")")
                        |>.filter (· != .lit "$")
                        |>.filter (· != .con "unit" [])  -- empty guard
+                       |>.filter fun t =>
+                         match t with
+                         | .con "guard" _ => false  -- remove guard node from filtered
+                         | _ => true
     -- Find the name (first ident) and separate pattern/template parts
     match filtered with
     | .con "ident" [.var name] :: rest =>
@@ -1054,12 +1115,14 @@ def extractRule (ruleDecl : Term) : Option Rule :=
           name := name
           pattern := patternAstToTerm pat
           template := patternAstToTerm pat
+          guard := guard
         }
       | [pat, tmpl] =>
         some {
           name := name
           pattern := patternAstToTerm pat
           template := templateAstToTerm tmpl
+          guard := guard
         }
       | _ => none
     | _ => none
@@ -1259,6 +1322,11 @@ structure TestCase where
   pieceName : String := ""  -- The piece this test belongs to (for type dispatch)
   deriving Repr, Inhabited
 
+/-- Strip surrounding quotes from a string if present -/
+def stripQuotes (s : String) : String :=
+  let s := if s.startsWith "\"" then s.drop 1 else s
+  if s.endsWith "\"" then s.dropRight 1 else s
+
 /-- Extract a test case from a DTest AST node.
     Syntax: test "name" : input ~~> expected ; -/
 def extractTestCase (testDecl : Term) : Option TestCase :=
@@ -1271,13 +1339,13 @@ def extractTestCase (testDecl : Term) : Option TestCase :=
       t != .lit "test" && t != .lit ":" && t != .lit "~~>" && t != .lit ";"
     match filtered with
     | [.con "string" [.lit name], input, expected] =>
-      some { name := name, input := input, expected := some expected }
+      some { name := stripQuotes name, input := input, expected := some expected }
     | [.con "string" [.lit name], input] =>
-      some { name := name, input := input, expected := none }
+      some { name := stripQuotes name, input := input, expected := none }
     | [.lit name, input, expected] =>  -- Direct lit for name
-      some { name := name, input := input, expected := some expected }
+      some { name := stripQuotes name, input := input, expected := some expected }
     | [.lit name, input] =>
-      some { name := name, input := input, expected := none }
+      some { name := stripQuotes name, input := input, expected := none }
     | _ => none
   | _ => none
 
@@ -1309,9 +1377,9 @@ where
         t != .lit "~~>" && t != .lit ";"
       match filtered with
       | [.con "string" [.lit name], expected] =>
-        [{ name := name, input := .con "unit" [], expected := some expected, pieceName := currentPiece }]
+        [{ name := stripQuotes name, input := .con "unit" [], expected := some expected, pieceName := currentPiece }]
       | [.lit name, expected] =>
-        [{ name := name, input := .con "unit" [], expected := some expected, pieceName := currentPiece }]
+        [{ name := stripQuotes name, input := .con "unit" [], expected := some expected, pieceName := currentPiece }]
       | _ => []
     | .con "DLang" ts => ts.flatMap (go currentPiece)
     | .con "seq" ts => ts.flatMap (go currentPiece)

@@ -78,8 +78,8 @@ Goal: Generate these from Lego/*.lego specs.
 ## Test Execution
 
 ```bash
-# Run embedded .lego tests (Core.lego tests)
-lake exe lego-test-embedded -v
+# Run embedded .lego tests (49 tests, 41 passing)
+lake exe lego-test-embedded
 
 # Run full Cubical test suite  
 lake exe lego-test-red
@@ -87,6 +87,24 @@ lake exe lego-test-red
 # Parse redtt library
 lake exe lego-test-red --parse-redtt ~/redtt/library
 ```
+
+## Test Status
+
+The embedded test runner executes tests defined in `.lego` files:
+
+| File | Tests | Status | Notes |
+|------|-------|--------|-------|
+| Core.lego | 15 | ✓ All passing | Basic term operations |
+| Cofibration.lego | 15 | ✓ All passing | Cofibration primitives |
+| Kan.lego | 7 | 5/7 | 2 need cross-file rules (dimEqD from Domain) |
+| Domain.lego | 7 | 5/7 | 2 need complex guards (env-lookup) |
+| Quote.lego | 4 | 1/4 | 3 need NbE evaluation chain |
+| TermBuilder.lego | 1 | 0/1 | Needs HOAS handling |
+
+### Known Limitations
+- Cross-file rule dependencies not yet resolved (rules from imports)
+- Complex NbE chains need more evaluation fuel
+- HOAS patterns (`fun x => e`) not fully handled
 
 ## Code Generation Goals
 

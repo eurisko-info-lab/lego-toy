@@ -303,11 +303,12 @@ instance : AST GrammarExpr where
 
 /-! ## Rule Algebra -/
 
-/-- A rewrite rule: pattern ↔ template -/
+/-- A rewrite rule: pattern ↔ template with optional guard -/
 structure Rule where
   name     : String
   pattern  : Term
   template : Term
+  guard    : Option Term := none  -- when clause (evaluated to true/false)
   deriving Repr, BEq
 
 /-- Match a pattern against a term, returning bindings -/
@@ -324,12 +325,19 @@ partial def matchPattern (pat : Term) (t : Term) : Option (List (String × Term)
     else none
   | _, _ => none
 where
+  /-- Merge bindings, checking consistency: if a variable is already bound,
+      the new binding must be equal -/
+  mergeBindings (env1 env2 : List (String × Term)) : Option (List (String × Term)) :=
+    env2.foldlM (init := env1) fun acc (name, term) =>
+      match acc.find? (·.1 == name) with
+      | some (_, existing) => if existing == term then some acc else none
+      | none => some ((name, term) :: acc)
   matchList : List Term → List Term → Option (List (String × Term))
     | [], [] => some []
     | p :: ps, t :: ts => do
       let m1 ← matchPattern p t
       let m2 ← matchList ps ts
-      pure (m1 ++ m2)
+      mergeBindings m1 m2
     | _, _ => none
 
 /-- Apply a template with bindings to produce a term -/
@@ -359,6 +367,153 @@ def Rule.apply (r : Rule) (t : Term) : Option Term :=
 /-- Apply a rule in reverse (backward direction) -/
 def Rule.unapply (r : Rule) (t : Term) : Option Term :=
   r.toIso.backward t
+
+/-! ## Built-in Primitives (needed for guard evaluation) -/
+
+/-- Built-in rules for primitive operations (eq, neq, add, sub, etc.) -/
+def builtinStep (t : Term) : Option Term :=
+  match t with
+  -- Boolean operations
+  | .con "true" [] => none
+  | .con "false" [] => none
+  | .con "not" [.con "true" []] => some (.con "false" [])
+  | .con "not" [.con "false" []] => some (.con "true" [])
+  | .con "and" [.con "true" [], b] => some b
+  | .con "and" [.con "false" [], _] => some (.con "false" [])
+  | .con "and" [a, .con "true" []] => some a
+  | .con "and" [_, .con "false" []] => some (.con "false" [])
+  | .con "or" [.con "true" [], _] => some (.con "true" [])
+  | .con "or" [.con "false" [], b] => some b
+  | .con "or" [_, .con "true" []] => some (.con "true" [])
+  | .con "or" [a, .con "false" []] => some a
+
+  -- Numeric equality
+  | .con "eq" [.lit a, .lit b] =>
+    if a == b then some (.con "true" []) else some (.con "false" [])
+  | .con "neq" [.lit a, .lit b] =>
+    if a != b then some (.con "true" []) else some (.con "false" [])
+
+  -- Constructor equality (for things like ddim0, ddim1)
+  | .con "eq" [.con a [], .con b []] =>
+    if a == b then some (.con "true" []) else some (.con "false" [])
+  | .con "neq" [.con a [], .con b []] =>
+    if a != b then some (.con "true" []) else some (.con "false" [])
+
+  -- Numeric comparisons
+  | .con "gt" [.lit a, .lit b] =>
+    match a.toNat?, b.toNat? with
+    | some na, some nb => if na > nb then some (.con "true" []) else some (.con "false" [])
+    | _, _ => none
+  | .con "lt" [.lit a, .lit b] =>
+    match a.toNat?, b.toNat? with
+    | some na, some nb => if na < nb then some (.con "true" []) else some (.con "false" [])
+    | _, _ => none
+  | .con "geq" [.lit a, .lit b] =>
+    match a.toNat?, b.toNat? with
+    | some na, some nb => if na >= nb then some (.con "true" []) else some (.con "false" [])
+    | _, _ => none
+  | .con "leq" [.lit a, .lit b] =>
+    match a.toNat?, b.toNat? with
+    | some na, some nb => if na <= nb then some (.con "true" []) else some (.con "false" [])
+    | _, _ => none
+
+  -- Arithmetic
+  | .con "add" [.lit a, .lit b] =>
+    match a.toNat?, b.toNat? with
+    | some na, some nb => some (.lit (toString (na + nb)))
+    | _, _ => none
+  | .con "sub" [.lit a, .lit b] =>
+    match a.toNat?, b.toNat? with
+    | some na, some nb => some (.lit (toString (na - nb)))
+    | _, _ => none
+  | .con "mul" [.lit a, .lit b] =>
+    match a.toNat?, b.toNat? with
+    | some na, some nb => some (.lit (toString (na * nb)))
+    | _, _ => none
+
+  -- Conditionals
+  | .con "if" [.con "true" [], thenBranch, _] => some thenBranch
+  | .con "if" [.con "false" [], _, elseBranch] => some elseBranch
+
+  -- Option handling
+  | .con "fromOption" [.con "some" [x], _] => some x
+  | .con "fromOption" [.con "none" [], dflt] => some dflt
+
+  | _ => none
+
+/-- Apply built-in primitives recursively -/
+partial def applyBuiltinsDeep (t : Term) : Term :=
+  let t' := match t with
+    | .con name args => .con name (args.map applyBuiltinsDeep)
+    | other => other
+  match builtinStep t' with
+  | some result => applyBuiltinsDeep result
+  | none => t'
+
+/-! ## Rule Interpreter
+
+    The meta-rule interpreter applies rewrite rules to normalize terms.
+    It uses a bottom-up strategy: normalize children first, then apply rules at the root.
+-/
+
+/-- Evaluate a guard condition given a substitution -/
+def evaluateGuard (env : List (String × Term)) (guard : Term) : Bool :=
+  -- Apply substitution to the guard, then evaluate with builtins
+  let guardInst := applyTemplate env guard
+  let guardEval := applyBuiltinsDeep guardInst
+  -- Check if it evaluated to true
+  match guardEval with
+  | .con "true" [] => true
+  | .lit "true" => true
+  | _ => false
+
+/-- Apply a rule with optional guard to a term -/
+def Rule.applyWithGuard (r : Rule) (t : Term) : Option Term :=
+  match matchPattern r.pattern t with
+  | some env =>
+    -- Check guard if present
+    match r.guard with
+    | none => some (applyTemplate env r.template)
+    | some guard =>
+      if evaluateGuard env guard
+      then some (applyTemplate env r.template)
+      else none
+  | none => none
+
+/-- Apply a list of rules to a term, returning first match (with guard support) -/
+def applyRulesOnce (rules : List Rule) (t : Term) : Option Term :=
+  rules.findSome? (·.applyWithGuard t)
+
+/-- Apply rules recursively to all subterms (bottom-up) -/
+partial def applyRulesDeep (rules : List Rule) (t : Term) : Term :=
+  -- First normalize children
+  let t' := match t with
+    | .con name args => .con name (args.map (applyRulesDeep rules))
+    | other => other
+  -- Then try to apply rules at root
+  match applyRulesOnce rules t' with
+  | some result => applyRulesDeep rules result  -- Keep reducing
+  | none => t'
+
+/-- Normalize a term using rules with fuel limit -/
+partial def normalizeWithRules (fuel : Nat) (rules : List Rule) (t : Term) : Term :=
+  if fuel == 0 then t
+  else
+    let t' := applyRulesDeep rules t
+    if t' == t then t  -- Fixpoint reached
+    else normalizeWithRules (fuel - 1) rules t'
+
+/-- Full normalization: builtins + user rules -/
+def normalizeWithRulesAndBuiltins (fuel : Nat) (rules : List Rule) (t : Term) : Term :=
+  match fuel with
+  | 0 => t
+  | fuel' + 1 =>
+    -- Apply user rules
+    let t1 := applyRulesDeep rules t
+    -- Apply builtins
+    let t2 := applyBuiltinsDeep t1
+    if t2 == t then t
+    else normalizeWithRulesAndBuiltins fuel' rules t2
 
 /-! ## Type Rule Algebra -/
 

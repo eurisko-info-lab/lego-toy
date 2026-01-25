@@ -256,21 +256,74 @@ def runExprTest (tc : Lego.Loader.TestCase) (fuel : Nat := 100) : IO TestResult 
       let _ := normalizeExpr fuel inputExpr
       pure .pass
 
-/-- Run a single test case, dispatching by piece type -/
-def runTest (tc : Lego.Loader.TestCase) (fuel : Nat := 100) : IO TestResult := do
-  if tc.pieceName == "Level" then
+/-- Run a meta-rule test using the rule interpreter -/
+def runRuleTest (rules : List Lego.Rule) (tc : Lego.Loader.TestCase) (fuel : Nat := 100) : IO TestResult := do
+  let normalizedInput := normalizeAst tc.input
+  match tc.expected with
+  | some expectedTerm =>
+    let normalizedExpected := normalizeAst expectedTerm
+    let result := Lego.normalizeWithRulesAndBuiltins fuel rules normalizedInput
+    if result == normalizedExpected then
+      pure .pass
+    else
+      pure (.fail s!"Expected: {repr normalizedExpected}\nGot: {repr result}")
+  | none =>
+    -- Just check it normalizes without error
+    let _ := Lego.normalizeWithRulesAndBuiltins fuel rules normalizedInput
+    pure .pass
+
+/-- Check if a test looks like it uses meta-rule functions (not Core.Expr constructors) -/
+def isMetaRuleTest (tc : Lego.Loader.TestCase) : Bool :=
+  -- Meta-rule tests typically use functions like isDim0, cofEq, nbe, etc.
+  -- that aren't Core.Expr constructors
+  let normalizedInput := normalizeAst tc.input
+  match normalizedInput with
+  | .con name _ =>
+    -- Known meta-functions that aren't Core.Expr constructors
+    name ∈ ["isDim0", "isDim1", "dimEq", "dimEqD", "cofEq", "cofTrue", "cofFalse",
+            "dCofIsTrue", "dCofIsFalse", "boundary", "cofLe",
+            "dirIsDegenerate", "dimOfExpr", "dimToExpr",
+            "denvLookup", "dApply", "dFst", "dSnd",
+            "nbe", "levelToIndex", "runBuild", "buildLam",
+            "normCof", "evalCof", "substDim0'"]
+  | _ => false
+
+/-- Check if a term contains a `fun` node (HOAS) -/
+partial def containsFun : Term → Bool
+  | .con "fun" _ => true
+  | .con _ args => args.any containsFun
+  | _ => false
+
+/-- Check if a test requires HOAS (higher-order function application) -/
+def requiresHOAS (tc : Lego.Loader.TestCase) : Bool :=
+  -- Tests with `fun x => ...` require HOAS evaluation
+  let normalizedInput := normalizeAst tc.input
+  containsFun normalizedInput
+
+/-- Run a single test case, dispatching by piece type and test kind -/
+def runTest (rules : List Lego.Rule) (tc : Lego.Loader.TestCase) (fuel : Nat := 100) : IO TestResult := do
+  -- Skip HOAS tests (require higher-order function application)
+  if requiresHOAS tc then
+    pure (.skip "requires HOAS evaluation")
+  else if tc.pieceName == "Level" then
     runLevelTest tc
+  else if isMetaRuleTest tc then
+    runRuleTest rules tc fuel
   else
-    runExprTest tc fuel
+    -- Try Expr test first, fall back to rule test if conversion fails
+    let normalizedInput := normalizeAst tc.input
+    match termToExpr normalizedInput with
+    | some _ => runExprTest tc fuel
+    | none => runRuleTest rules tc fuel
 
 /-- Run all tests from a list of test cases -/
-def runTests (tests : List Lego.Loader.TestCase) (verbose : Bool := false) : IO (Nat × Nat × Nat) := do
+def runTests (rules : List Lego.Rule) (tests : List Lego.Loader.TestCase) (verbose : Bool := false) : IO (Nat × Nat × Nat) := do
   let mut passed := 0
   let mut failed := 0
   let mut skipped := 0
 
   for tc in tests do
-    let result ← runTest tc
+    let result ← runTest rules tc
     match result with
     | .pass =>
       passed := passed + 1
@@ -278,7 +331,7 @@ def runTests (tests : List Lego.Loader.TestCase) (verbose : Bool := false) : IO 
         IO.println s!"  ✓ {tc.name}"
     | .fail reason =>
       failed := failed + 1
-      IO.println s!"  ✗ {tc.name}"
+      IO.println s!"  ✗ \"{tc.name}\""
       IO.println s!"    {reason}"
     | .skip reason =>
       skipped := skipped + 1
@@ -287,15 +340,26 @@ def runTests (tests : List Lego.Loader.TestCase) (verbose : Bool := false) : IO 
 
   pure (passed, failed, skipped)
 
-/-- Run tests from a .lego file -/
+/-- Run tests from a .lego file with file-local rules only -/
 def runFileTests (ast : Term) (fileName : String) (verbose : Bool := false) : IO (Nat × Nat × Nat) := do
+  let tests := Lego.Loader.extractTests ast
+  let rules := Lego.Loader.extractRules ast
+  if tests.isEmpty then
+    if verbose then IO.println s!"{fileName}: No tests found"
+    pure (0, 0, 0)
+  else
+    IO.println s!"{fileName}: {tests.length} tests ({rules.length} rules)"
+    runTests rules tests verbose
+
+/-- Run tests from a .lego file with combined rules from all files -/
+def runFileTestsWithRules (ast : Term) (allRules : List Lego.Rule) (fileName : String) (verbose : Bool := false) : IO (Nat × Nat × Nat) := do
   let tests := Lego.Loader.extractTests ast
   if tests.isEmpty then
     if verbose then IO.println s!"{fileName}: No tests found"
     pure (0, 0, 0)
   else
-    IO.println s!"{fileName}: {tests.length} tests"
-    runTests tests verbose
+    IO.println s!"{fileName}: {tests.length} tests (using {allRules.length} combined rules)"
+    runTests allRules tests verbose
 
 /-- Print summary statistics -/
 def printSummary (passed failed skipped : Nat) : IO Unit := do

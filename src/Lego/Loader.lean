@@ -683,13 +683,9 @@ def extractKeywords (prods : Productions) : List String :=
   -- Step 2: Filter to pairs where the ref can transitively end with star
   let conflictingLits := refFollows.filterMap fun (refName, lit) =>
     if canEndWithStar starEndingProds refName then some lit else none
-  -- Step 3: Find control-flow starters that appear in the grammar
-  -- These need to be keywords if they appear as literals in the grammar
-  let controlFlowStarters := ["for", "while", "repeat", "unless", "return"]
-  let presentControlFlow := controlFlowStarters.filter fun kw =>
-    prods.any fun (_, g) => containsLiteral g kw
-  -- Step 4: Filter to keyword-like strings and combine
-  (conflictingLits.filter isKeywordLike ++ presentControlFlow) |>.eraseDups
+  -- Step 3: Filter to keyword-like strings
+  -- Note: Language-specific keywords should be added by the caller
+  conflictingLits.filter isKeywordLike |>.eraseDups
 where
   /-- Check if a grammar contains a specific literal -/
   containsLiteral (g : GrammarExpr) (lit : String) : Bool :=

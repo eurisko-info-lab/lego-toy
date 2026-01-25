@@ -50,9 +50,10 @@ token Token
   nonnl  ::= alpha | digit | symch | ' ' | '\t' | '\'' | '"' ;
   
   -- Block comments: /- ... -/
-  -- Note: The tokenizer handles nested block comments specially
+  -- Note: Block comments can contain any characters including '/' and '-'
+  -- The tokenizer uses the grammar but manually handles the end sequence
   blockComment ::= '/' '-' blockInner* '-' '/' ;
-  blockInner ::= alpha | digit | symch | ' ' | '\t' | '\n' | '\r' | '\'' | '"' | '-' ;
+  blockInner ::= alpha | digit | symch | ' ' | '\t' | '\n' | '\r' | '\'' | '"' | '-' | '/' ;
   
   -- Operators
   operator ::= #longest[
@@ -222,6 +223,8 @@ piece CoreTerms
     | "false"                                     → falseLit
     | "()"                                        → unitLit
     | "Unit.unit"                                 → unitLit
+    -- Anonymous dot constructor (type-directed)
+    | "." <ident>                                 → dotCtor
     -- Lambda and function
     | "fun" binder+ "=>" term                     → lam
     | "λ" binder+ "=>" term                       → lamUnicode
@@ -235,8 +238,9 @@ piece CoreTerms
     -- Conditionals
     | "if" term "then" term "else" term           → ifExpr
     | "if" "let" pattern ":=" term "then" term "else" term → ifLetExpr
-    -- Match
+    -- Match (including monadic match with ←)
     | "match" termList "with" matchAlt*           → matchExpr
+    | "match" "←" term "with" matchAlt*           → matchBindExpr
     -- Lists and arrays
     | "[" termList? "]"                           → listLit
     | "#[" termList? "]"                          → arrayLit
@@ -292,13 +296,20 @@ piece Patterns
             | <string>                            → patStr
             | "." <ident>                         → patCtor
             | <ident> pattern*                    → patApp
+            | "some" pattern                      → patSome
+            | "none"                              → patNone
             | "(" patternList ")"                 → patTuple
             | "⟨" patternList "⟩"                 → patAnon
+            | "[" patternList? "]"                → patList
+            | "#[" patternList? "]"               → patArray
             | pattern "::" pattern                → patCons
             | pattern "+" <number>                → patSucc
             ;
   patternList ::= pattern ("," pattern)*          → patternList ;
-  matchAlt ::= "|" patternList "=>" term          → matchAlt ;
+  -- Match alternatives can contain either a single term or a sequence of doElems
+  matchAlt ::= "|" patternList "=>" doElem+       → matchAltDo
+             | "|" patternList "=>" term          → matchAlt
+             ;
 
 -----------------------------------------------------
 -- Do Notation
@@ -426,8 +437,9 @@ piece Declarations
   derivingClause ::= "deriving" <ident> ("," <ident>)* → derivingClause ;
   fieldDecl ::= <ident> ":" term defaultVal?      → fieldDecl ;
   fieldDef ::= <ident> ":=" term                  → fieldDef ;
+  -- Field assignments in struct literals
   fieldAssign ::= <ident> ":=" term               → fieldAssign ;
-  defaultVal ::= ":=" term                        → defaultVal ;
+  defaultVal ::= term                             → defaultVal ;
   extendsClause ::= "extends" term                → extendsClause ;
   instName ::= <ident>                            → instName ;
   modulePath ::= <ident> ("." <ident>)*           → modulePath ;

@@ -172,7 +172,7 @@ where
           let tokenEnd := skipOneToken bytes pos'
           go tokenEnd (remaining - 1) fuel'
     go 0 n bytes.size
-  /-- Skip whitespace and -- comments -/
+  /-- Skip whitespace and comments (both -- and /- ... -/) -/
   skipWsComments (bytes : ByteArray) (pos : Nat) (fuel : Nat) : Nat :=
     match fuel with
     | 0 => pos
@@ -189,6 +189,20 @@ where
             else if bytes.get! p == 0x0A then p + 1
             else skipLine (p + 1)
           skipWsComments bytes (skipLine (pos + 2)) fuel'
+        else if b == 0x2F && pos + 1 < bytes.size && bytes.get! (pos + 1) == 0x2D then  -- "/-"
+          -- Skip block comment (handles nesting)
+          let rec skipBlock (p : Nat) (depth : Nat) : Nat :=
+            if p >= bytes.size then p
+            else if depth == 0 then p
+            else
+              let c := bytes.get! p
+              if c == 0x2F && p + 1 < bytes.size && bytes.get! (p + 1) == 0x2D then  -- "/-" nested
+                skipBlock (p + 2) (depth + 1)
+              else if c == 0x2D && p + 1 < bytes.size && bytes.get! (p + 1) == 0x2F then  -- "-/"
+                skipBlock (p + 2) (depth - 1)
+              else
+                skipBlock (p + 1) depth
+          skipWsComments bytes (skipBlock (pos + 2) 1) fuel'
         else pos
   /-- Skip one token, return position after token -/
   skipOneToken (bytes : ByteArray) (pos : Nat) : Nat :=

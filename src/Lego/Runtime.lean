@@ -103,6 +103,7 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
         let mergedLegoProds := legoProds ++ bootstrapGrammar.productions
         let mergedLegoTokenProds := legoTokenProds ++ bootstrapGrammar.tokenProductions
         let mergedLegoSymbols := Loader.extractAllSymbols mergedLegoProds
+        -- Lego-specific keywords: none needed beyond the heuristic
         let mergedLegoKeywords := Loader.extractKeywords mergedLegoProds
         let legoGrammar : Loader.LoadedGrammar := {
           productions := mergedLegoProds
@@ -124,6 +125,7 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
           let mergedRosettaProds := rosettaProds ++ mergedLegoProds
           let mergedRosettaTokenProds := rosettaTokenProds ++ mergedLegoTokenProds
           let mergedRosettaSymbols := Loader.extractAllSymbols mergedRosettaProds
+          -- Rosetta-specific keywords: none needed beyond the heuristic
           let mergedRosettaKeywords := Loader.extractKeywords mergedRosettaProds
           let rosettaGrammar : Loader.LoadedGrammar := {
             productions := mergedRosettaProds
@@ -145,7 +147,27 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
             let mergedLeanProds := leanProds ++ mergedLegoProds
             let mergedLeanTokenProds := leanTokenProds ++ mergedLegoTokenProds
             let mergedLeanSymbols := Loader.extractAllSymbols mergedLeanProds
-            let mergedLeanKeywords := Loader.extractKeywords mergedLeanProds
+            -- Lean-specific keywords: needed to prevent identifier confusion
+            let leanSpecificKeywords := [
+              -- Control flow
+              "for", "while", "repeat", "unless", "return",
+              -- Expression starters
+              "match", "if", "let", "fun", "do", "by",
+              -- Type keywords
+              "Type", "Prop", "Sort",
+              -- Literal keywords (needed for pattern matching)
+              "some", "none", "true", "false",
+              -- Definition keywords
+              "def", "theorem", "lemma", "example", "abbrev",
+              "inductive", "structure", "class", "instance",
+              "namespace", "section", "import", "open", "variable",
+              "private", "protected", "partial",
+              -- Tactic keywords
+              "rfl", "sorry", "trivial", "decide", "assumption",
+              "exact", "apply", "intro", "cases", "induction", "simp", "rewrite"
+            ]
+            let baseKeywords := Loader.extractKeywords mergedLeanProds
+            let mergedLeanKeywords := (baseKeywords ++ leanSpecificKeywords).eraseDups
             let leanGrammar : Loader.LoadedGrammar := {
               productions := mergedLeanProds
               tokenProductions := mergedLeanTokenProds

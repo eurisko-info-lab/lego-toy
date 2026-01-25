@@ -38,9 +38,10 @@ def getMainTokenProdsOrdered (tokenProds : Productions) : List String :=
   let names := tokenProds.map (·.1)
   -- Priority: comments/whitespace first (to skip), then longest operators first
   -- op10 before op7 before op5 before op3 before op2 before sym to ensure longest match
+  -- Note: Cooltt uses Token.operator instead of Token.sym
   let priority := ["Token.comment", "Token.ws", "Token.string",
                    "Token.op10", "Token.op7", "Token.op5", "Token.op3", "Token.op2",
-                   "Token.ident", "Token.number", "Token.sym"]
+                   "Token.ident", "Token.number", "Token.operator", "Token.sym"]
   priority.filter names.contains
 
 /-- Remove block comments /-...-/ from content (handles nesting) -/
@@ -207,7 +208,8 @@ def debugCoolttParse (rt : Runtime) (decl : String) : IO Unit := do
                              "let", "in", "elim", "with", "section", "view", "export", "repack",
                              "begin", "end", "as", "sig", "struct", "open", "renaming",
                              "generalize", "unfold", "ext", "sub", "coe", "com", "hcom", "hfill",
-                             "∨", "\\/", "∧", "/\\"]
+                             "∨", "\\/", "∧", "/\\",
+                             "+", "-", "*", "_"]
       let keywords := (extractKeywords coolttProds ++ coolttKeywords).eraseDups
       let mainProds := getMainTokenProdsOrdered tokenProds
       let tokens := tokenizeWithGrammar coolttFuel tokenProds mainProds decl keywords
@@ -307,14 +309,20 @@ def runCoolttParsingTests (rt : Runtime) : IO (List TestResult) := do
   | some ast =>
     let coolttProds := extractAllProductions ast
     let tokenProds := extractTokenProductions ast
-    -- CoolTT keywords - ONLY true reserved words that start constructs
+    -- CoolTT keywords - reserved words that start constructs AND operators used as names
+    -- Operators like +, -, * need to be keywords so they're tokenized as symbols not idents
+    -- Underscore _ is also a keyword (wildcard pattern)
     -- Don't include type names (nat, circle, cof) or value names (zero, suc, base, loop)
     -- as these are valid identifiers in many contexts
     let coolttKeywords := ["abstract", "shadowing", "def", "axiom", "import",
                            "let", "in", "elim", "with", "section", "view", "export", "repack",
                            "begin", "end", "as", "sig", "struct", "open", "renaming",
                            "generalize", "unfold", "ext", "sub", "coe", "com", "hcom", "hfill",
-                           "∨", "\\/", "∧", "/\\"]
+                           "∨", "\\/", "∧", "/\\",
+                           -- Operators that can be function names
+                           "+", "-", "*",
+                           -- Wildcard pattern
+                           "_"]
     let keywords := (extractKeywords coolttProds ++ coolttKeywords).eraseDups
 
     let testPath := "../vendor/cooltt/test"

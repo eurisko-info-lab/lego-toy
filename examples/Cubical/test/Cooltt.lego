@@ -120,7 +120,8 @@ piece Imports
 -----------------------------------------------------
 piece Definitions
   defndecl   ::= modifiers? "def" defname telecells? ":" expr ":=" expr ;
-  defname    ::= opname | path ;
+  -- defname allows underscore for anonymous definitions (def _ ...)
+  defname    ::= opname | path | "_" ;
   opname     ::= "+" | "-" | "*" ;
   path       ::= name ("::" name)* ;
   telecells  ::= telecell+ ;
@@ -232,7 +233,9 @@ piece Lambda
   patlabel   ::= "zero" | "suc" | "base" | "loop" | path ;
   patargs    ::= patarg+ ;
   -- patarg: underscore, inductive pattern {n => ih}, or single name 
-  patarg     ::= "{" name "=>" name "}" | "_" | name ;
+  -- patname allows underscore for wildcards in pattern positions
+  patarg     ::= "{" patname "=>" patname "}" | "_" | name ;
+  patname    ::= name | "_" ;
 
 -----------------------------------------------------
 -- Let, Open, Generalize, Unfold, Abstract

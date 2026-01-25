@@ -22,9 +22,9 @@
   of the given type, while synthesis tactics produce both term and type.
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.Cofibration
-import Lego.Cubical.Splice
+import Cubical.Core
+import Cubical.Cofibration
+import Cubical.Splice
 
 namespace Lego.Cubical.Tactic
 

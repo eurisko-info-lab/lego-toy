@@ -24,6 +24,16 @@ package «lego» where
 lean_lib «Lego» where
   srcDir := "src"
 
+-- Cubical type theory implementation (examples/Cubical)
+lean_lib «LegoCubical» where
+  srcDir := "examples"
+  roots := #[`Cubical.Core, `Cubical.TypeAttrs, `Cubical.GlobalEnv, `Cubical.Unify,
+             `Cubical.Quote, `Cubical.Datatype, `Cubical.Elaborate, `Cubical.Module,
+             `Cubical.Kan, `Cubical.VType, `Cubical.FHCom, `Cubical.ExtType,
+             `Cubical.SubType, `Cubical.HIT, `Cubical.Signature, `Cubical.Cofibration,
+             `Cubical.Splice, `Cubical.Tactic, `Cubical.Domain, `Cubical.Conversion,
+             `Cubical.RefineMonad, `Cubical.TermBuilder, `Cubical.Semantics, `Cubical.Visitor]
+
 -- Rosetta code generation pipeline
 lean_lib «Rosetta» where
   srcDir := "src"
@@ -42,7 +52,7 @@ lean_lib «LegoGenerated» where
 lean_lib «ToolsLib» where
   srcDir := "tools"
   roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GrammarDrivenPipeline,
-             `ToLean, `ToAntlr, `ToTreeSitter, `LegoGen, `Cubical]
+             `ToLean, `ToAntlr, `ToTreeSitter, `LegoGen]
 
 lean_exe «test-grammar-driven» where
   root := `test.lean.TestGrammarDriven
@@ -59,11 +69,9 @@ lean_exe «lego-test» where
   -- Ensure proper linking with Init library
   moreLinkArgs := #["-lInit"]
 
--- TODO: Re-enable when Cubical examples are integrated into main build
--- TestRed depends on examples/Cubical/* which isn't in Lego lib
--- lean_exe «lego-test-red» where
---   root := `test.lean.TestRed
---   moreLinkArgs := #["-lInit"]
+lean_exe «lego-test-red» where
+  root := `test.lean.TestRed
+  moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-cool» where
   root := `test.lean.TestCool

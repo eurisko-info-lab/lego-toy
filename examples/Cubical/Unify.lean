@@ -21,8 +21,8 @@
   - redtt's Unify.ml implementation
 -/
 
-import Lego.Cubical.GlobalEnv
-import Lego.Cubical.Visitor
+import Cubical.GlobalEnv
+import Cubical.Visitor
 
 namespace Lego.Cubical
 

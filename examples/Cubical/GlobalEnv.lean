@@ -16,8 +16,8 @@
 -/
 
 import Lego.Algebra
-import Lego.Cubical.Core
-import Lego.Cubical.Visitor
+import Cubical.Core
+import Cubical.Visitor
 import Std.Data.HashMap
 
 namespace Lego.Cubical

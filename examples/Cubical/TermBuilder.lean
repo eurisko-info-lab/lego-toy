@@ -14,7 +14,7 @@
    Lean functions and convert them to de Bruijn-indexed terms."
 -/
 
-import Lego.Cubical.Core
+import Cubical.Core
 
 namespace Lego.Cubical.TermBuilder
 

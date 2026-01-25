@@ -17,10 +17,10 @@
   Based on redtt's Val.ml V-type implementation and CCHM cubical type theory.
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.Quote
-import Lego.Cubical.Kan
-import Lego.Cubical.Visitor
+import Cubical.Core
+import Cubical.Quote
+import Cubical.Kan
+import Cubical.Visitor
 
 namespace Lego.Cubical.VType
 

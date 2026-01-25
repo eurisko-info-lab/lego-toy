@@ -18,9 +18,9 @@
    and local context (variables in scope, cofibration assumptions)."
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.Cofibration
-import Lego.Cubical.Conversion
+import Cubical.Core
+import Cubical.Cofibration
+import Cubical.Conversion
 
 namespace Lego.Cubical.RefineMonad
 

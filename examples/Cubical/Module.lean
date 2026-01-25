@@ -16,9 +16,9 @@
   Based on redtt's module system (FileRes, ResEnv, Importer)
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.GlobalEnv
-import Lego.Cubical.Elaborate
+import Cubical.Core
+import Cubical.GlobalEnv
+import Cubical.Elaborate
 import Std.Data.HashMap
 
 namespace Lego.Cubical.Module

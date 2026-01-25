@@ -18,7 +18,7 @@
   Based on cooltt's Domain.ml and redtt's Val.ml
 -/
 
-import Lego.Cubical.Core
+import Cubical.Core
 
 namespace Lego.Cubical.Domain
 

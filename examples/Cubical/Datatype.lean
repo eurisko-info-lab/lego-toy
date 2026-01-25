@@ -19,8 +19,8 @@
   Based on redtt's Desc.ml and Val.ml datatype handling
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.GlobalEnv
+import Cubical.Core
+import Cubical.GlobalEnv
 
 namespace Lego.Cubical.Datatype
 

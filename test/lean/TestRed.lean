@@ -14,37 +14,37 @@ import Lego.Attr
 import Lego.AttrEval
 import Lego.Bootstrap
 import Lego.Runtime
-import Lego.Cubical.Core
-import Lego.Cubical.TypeAttrs
-import Lego.Cubical.GlobalEnv
-import Lego.Cubical.Unify
-import Lego.Cubical.Quote
-import Lego.Cubical.Datatype
-import Lego.Cubical.Elaborate
-import Lego.Cubical.Module
-import Lego.Cubical.Kan
-import Lego.Cubical.VType
-import Lego.Cubical.FHCom
-import Lego.Cubical.ExtType
-import Lego.Cubical.SubType
-import Lego.Cubical.HIT
-import Lego.Cubical.Signature
-import Lego.Cubical.Cofibration
-import Lego.Cubical.Splice
-import Lego.Cubical.Tactic
-import Lego.Cubical.Domain
-import Lego.Cubical.Conversion
-import Lego.Cubical.RefineMonad
-import Lego.Cubical.TermBuilder
-import Lego.Cubical.Semantics
+import Cubical.Core
+import Cubical.TypeAttrs
+import Cubical.GlobalEnv
+import Cubical.Unify
+import Cubical.Quote
+import Cubical.Datatype
+import Cubical.Elaborate
+import Cubical.Module
+import Cubical.Kan
+import Cubical.VType
+import Cubical.FHCom
+import Cubical.ExtType
+import Cubical.SubType
+import Cubical.HIT
+import Cubical.Signature
+import Cubical.Cofibration
+import Cubical.Splice
+import Cubical.Tactic
+import Cubical.Domain
+import Cubical.Conversion
+import Cubical.RefineMonad
+import Cubical.TermBuilder
+import Cubical.Semantics
 import Lego.Loader
 
 set_option linter.unusedVariables false
 
 open Lego
 open Lego.Loader
-open Lego.Cubical
-open Lego.Cubical.Datatype
+open Cubical
+open Cubical.Datatype
 open Lego.Core
 -- Don't open Elaborate fully to avoid conflicts with Core.infer/check/conv
 -- Use qualified names: Elaborate.Surface, Elaborate.elaborate, etc.
@@ -1309,7 +1309,7 @@ def datatypeTests : List TestResult :=
 def surfaceElabTests : List TestResult :=
   open Lego.Core in
   open Lego.Core.Expr in
-  open Lego.Cubical.Elaborate in
+  open Cubical.Elaborate in
 
   let env := stdEnvWithDatatypes
 
@@ -1527,7 +1527,7 @@ def surfaceElabTests : List TestResult :=
 def moduleTests : List TestResult :=
   open Lego.Core in
   open Lego.Core.Expr in
-  open Lego.Cubical.Module in
+  open Cubical.Module in
 
   -- Test Selector utilities
   let sel := ["prelude", "path"]
@@ -1625,7 +1625,7 @@ def moduleTests : List TestResult :=
 def kanModuleTests : List TestResult :=
   open Lego.Core in
   open Lego.Core.Expr in
-  open Lego.Cubical.Kan in
+  open Cubical.Kan in
 
   -- Test dimension types
   let dim_i0 := Dim.i0
@@ -1741,8 +1741,8 @@ def kanModuleTests : List TestResult :=
 def vtypeModuleTests : List TestResult :=
   open Lego.Core in
   open Lego.Core.Expr in
-  open Lego.Cubical.VType in
-  open Lego.Cubical.Kan in
+  open Cubical.VType in
+  open Cubical.Kan in
 
   -- VType reduction at endpoints
   let v_at_0 := mkV dim0 (ix 0) (ix 1) (ix 2)
@@ -1851,8 +1851,8 @@ def vtypeModuleTests : List TestResult :=
 def fhcomModuleTests : List TestResult :=
   open Lego.Core in
   open Lego.Core.Expr in
-  open Lego.Cubical.FHCom in
-  open Lego.Cubical.Kan in
+  open Cubical.FHCom in
+  open Cubical.Kan in
 
   -- FHComInfo tests
   let fhinfo1 : FHComInfo := { r := dim0, r' := dim0, cap := ix 0, sys := [] }
@@ -3549,7 +3549,7 @@ def tacticModuleTests : List TestResult :=
 /-! ## Domain Module Tests -/
 
 def domainModuleTests : List TestResult :=
-  open Lego.Cubical.Domain in
+  open Cubical.Domain in
 
   -- Test DLevel
   let lvl0 := DLevel.zero
@@ -3729,7 +3729,7 @@ def domainModuleTests : List TestResult :=
 
 def conversionModuleTests : List TestResult :=
   open Lego.Core.Expr in
-  open Lego.Cubical.Conversion in
+  open Cubical.Conversion in
 
   -- Test ConvResult
   let result_ok := ConvResult.ok
@@ -3883,7 +3883,7 @@ def conversionModuleTests : List TestResult :=
 
 def refineMonadModuleTests : List TestResult :=
   open Lego.Core.Expr in
-  open Lego.Cubical.RefineMonad in
+  open Cubical.RefineMonad in
 
   -- Test Ident
   let ident_anon := Ident.anon
@@ -4030,7 +4030,7 @@ def refineMonadModuleTests : List TestResult :=
 
 def termBuilderModuleTests : List TestResult :=
   open Lego.Core.Expr in
-  open Lego.Cubical.TermBuilder in
+  open Cubical.TermBuilder in
 
   -- Test BuildCtx
   let ctx_empty := BuildCtx.empty
@@ -4186,7 +4186,7 @@ def termBuilderModuleTests : List TestResult :=
 
 def semanticsModuleTests : List TestResult :=
   open Lego.Core.Expr in
-  open Lego.Cubical.Semantics in
+  open Cubical.Semantics in
 
   -- Test EvalCtx
   let ctx_empty := EvalCtx.empty

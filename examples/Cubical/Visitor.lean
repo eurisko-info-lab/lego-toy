@@ -12,7 +12,7 @@
   - traverse: generic traversal that composes them
 -/
 
-import Lego.Cubical.Core
+import Cubical.Core
 
 open Lego.Core
 

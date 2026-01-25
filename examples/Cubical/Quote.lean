@@ -1,4 +1,4 @@
-import Lego.Cubical.Core
+import Cubical.Core
 
 /-!
 # Quotation: Reading Back Semantic Values to Syntax

@@ -26,9 +26,9 @@
   - compile : Splice Term → (Env × Term) (extract result)
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.Cofibration
-import Lego.Cubical.Visitor
+import Cubical.Core
+import Cubical.Cofibration
+import Cubical.Visitor
 
 namespace Lego.Cubical.Splice
 

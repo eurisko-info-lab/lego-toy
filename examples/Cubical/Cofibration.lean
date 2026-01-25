@@ -20,7 +20,7 @@
   - cof_eq is symmetric and satisfies interval axioms
 -/
 
-import Lego.Cubical.Core
+import Cubical.Core
 
 namespace Lego.Cubical.Cofibration
 

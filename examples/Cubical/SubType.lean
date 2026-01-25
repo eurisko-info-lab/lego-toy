@@ -23,7 +23,7 @@
   Reference: cooltt's Sub type (D.Sub in Domain.ml, S.Sub in Syntax.ml)
 -/
 
-import Lego.Cubical.Core
+import Cubical.Core
 
 namespace Lego.Cubical.SubType
 

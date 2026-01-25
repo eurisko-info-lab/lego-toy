@@ -16,11 +16,11 @@
   Based on redtt's Elaborator.ml
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.GlobalEnv
-import Lego.Cubical.Unify
-import Lego.Cubical.Quote
-import Lego.Cubical.Datatype
+import Cubical.Core
+import Cubical.GlobalEnv
+import Cubical.Unify
+import Cubical.Quote
+import Cubical.Datatype
 
 namespace Lego.Cubical.Elaborate
 

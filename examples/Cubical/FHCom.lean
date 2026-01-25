@@ -26,9 +26,9 @@
   - This enables the universe to be Kan (have fillers)
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.Kan
-import Lego.Cubical.Visitor
+import Cubical.Core
+import Cubical.Kan
+import Cubical.Visitor
 
 namespace Lego.Cubical.FHCom
 

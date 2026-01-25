@@ -18,7 +18,7 @@
   - Empty signature is the terminal object (Unit)
 -/
 
-import Lego.Cubical.Core
+import Cubical.Core
 
 namespace Lego.Cubical.Signature
 

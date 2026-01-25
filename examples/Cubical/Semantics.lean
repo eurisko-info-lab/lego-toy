@@ -14,11 +14,11 @@
    according to the specific type constructor (Pi, Sigma, Path, etc.)."
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.Cofibration
-import Lego.Cubical.Conversion
-import Lego.Cubical.TermBuilder
-import Lego.Cubical.Visitor
+import Cubical.Core
+import Cubical.Cofibration
+import Cubical.Conversion
+import Cubical.TermBuilder
+import Cubical.Visitor
 
 namespace Lego.Cubical.Semantics
 

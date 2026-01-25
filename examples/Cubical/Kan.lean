@@ -15,9 +15,9 @@
   Based on redtt's Val.ml Kan operations and CCHM cubical type theory.
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.Quote
-import Lego.Cubical.Visitor
+import Cubical.Core
+import Cubical.Quote
+import Cubical.Visitor
 
 namespace Lego.Cubical.Kan
 

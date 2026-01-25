@@ -18,8 +18,8 @@
   Based on cooltt's Semantics.ml and redtt's Desc.ml HIT handling
 -/
 
-import Lego.Cubical.Core
-import Lego.Cubical.FHCom
+import Cubical.Core
+import Cubical.FHCom
 
 namespace Lego.Cubical.HIT
 

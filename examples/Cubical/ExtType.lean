@@ -22,7 +22,7 @@
   - ExtApp: elimination form
 -/
 
-import Lego.Cubical.Core
+import Cubical.Core
 
 namespace Lego.Cubical.ExtType
 

@@ -23,3 +23,10 @@ tmp/
 *.o
 *.a
 .cache/
+
+# Build artifacts
+src/Runtime/Cubical/Rust/target/
+src/Runtime/Cubical/Rust/Cargo.lock
+src/Runtime/Cubical/Haskell/*.hi
+src/Runtime/Cubical/Haskell/*.o
+src/Runtime/Cubical/Haskell/test_runner

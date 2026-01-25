@@ -29,17 +29,6 @@ lean_lib «CubicalRuntime» where
   srcDir := "src"
   roots := #[`Runtime.Cubical.Lean.Runtime]
 
--- Cubical type theory implementation (examples/Cubical)
-lean_lib «LegoCubical» where
-  srcDir := "examples"
-  roots := #[`Cubical.Core, `Cubical.TypeAttrs, `Cubical.GlobalEnv, `Cubical.Unify,
-             `Cubical.Quote, `Cubical.Datatype, `Cubical.Elaborate, `Cubical.Module,
-             `Cubical.Kan, `Cubical.VType, `Cubical.FHCom, `Cubical.ExtType,
-             `Cubical.SubType, `Cubical.HIT, `Cubical.Signature, `Cubical.Cofibration,
-             `Cubical.Splice, `Cubical.Tactic, `Cubical.Domain, `Cubical.Conversion,
-             `Cubical.RefineMonad, `Cubical.TermBuilder, `Cubical.Semantics, `Cubical.Visitor,
-             `Cubical.TestRunner]
-
 -- Rosetta code generation pipeline
 lean_lib «Rosetta» where
   srcDir := "src"
@@ -114,11 +103,6 @@ lean_exe «lego-test-parse» where
   root := `test.lean.TestParseAll
   moreLinkArgs := #["-lInit"]
 
--- Embedded .lego tests: run tests defined inside .lego files
-lean_exe «lego-test-embedded» where
-  root := `test.lean.TestLegoEmbedded
-  moreLinkArgs := #["-lInit"]
-
 -- Tools executables
 
 lean_exe «toantlr» where
@@ -146,8 +130,3 @@ lean_exe «rosetta-pipeline» where
 -- Multi-Target Pipeline: .lego → Rosetta IR → Lean/Scala/Haskell/Rust
 lean_exe «multi-target» where
   root := `tools.MultiTargetPipeline
-
--- Comparison test: hand-written vs generated Cubical
-lean_exe «cubical-compare» where
-  root := `test.lean.TestCubicalComparison
-  moreLinkArgs := #["-lInit"]

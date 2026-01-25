@@ -121,10 +121,12 @@ def loadLanguage (baseGrammar : Loader.LoadedGrammar) (_name : String) (config :
       let mergedProds := prods ++ baseGrammar.productions
       let mergedTokenProds := tokenProds ++ baseGrammar.tokenProductions
       let symbols := Loader.extractAllSymbols mergedProds
+      let keywords := Loader.extractKeywords mergedProds
       let grammar : Loader.LoadedGrammar := {
         productions := mergedProds
         tokenProductions := mergedTokenProds
         symbols := symbols
+        keywords := keywords
         startProd := config.startProduction
       }
       return .ok { config := config, grammar := grammar }

@@ -65,11 +65,13 @@ def loadBootstrapOnly (path : String := defaultBootstrapPath) : IO (Except Strin
       let prods := Loader.extractAllProductions ast
       let tokenProds := Loader.extractTokenProductions ast
       let symbols := Loader.extractAllSymbols prods
+      let keywords := Loader.extractKeywords prods
       let validation := Loader.validateProductions prods
       let grammar : Loader.LoadedGrammar := {
         productions := prods
         tokenProductions := tokenProds
         symbols := symbols
+        keywords := keywords
         startProd := "File.legoFile"
         validation := validation
       }
@@ -101,10 +103,12 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
         let mergedLegoProds := legoProds ++ bootstrapGrammar.productions
         let mergedLegoTokenProds := legoTokenProds ++ bootstrapGrammar.tokenProductions
         let mergedLegoSymbols := Loader.extractAllSymbols mergedLegoProds
+        let mergedLegoKeywords := Loader.extractKeywords mergedLegoProds
         let legoGrammar : Loader.LoadedGrammar := {
           productions := mergedLegoProds
           tokenProductions := mergedLegoTokenProds
           symbols := mergedLegoSymbols
+          keywords := mergedLegoKeywords
           startProd := "File.legoFile"
         }
         -- Step 4: Parse Rosetta.lego with Lego's grammar
@@ -120,10 +124,12 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
           let mergedRosettaProds := rosettaProds ++ mergedLegoProds
           let mergedRosettaTokenProds := rosettaTokenProds ++ mergedLegoTokenProds
           let mergedRosettaSymbols := Loader.extractAllSymbols mergedRosettaProds
+          let mergedRosettaKeywords := Loader.extractKeywords mergedRosettaProds
           let rosettaGrammar : Loader.LoadedGrammar := {
             productions := mergedRosettaProds
             tokenProductions := mergedRosettaTokenProds
             symbols := mergedRosettaSymbols
+            keywords := mergedRosettaKeywords
             startProd := "File.rosettaFile"  -- Rosetta files use rosettaFile start
           }
           -- Step 6: Parse Lean.lego with Lego's grammar
@@ -139,10 +145,12 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
             let mergedLeanProds := leanProds ++ mergedLegoProds
             let mergedLeanTokenProds := leanTokenProds ++ mergedLegoTokenProds
             let mergedLeanSymbols := Loader.extractAllSymbols mergedLeanProds
+            let mergedLeanKeywords := Loader.extractKeywords mergedLeanProds
             let leanGrammar : Loader.LoadedGrammar := {
               productions := mergedLeanProds
               tokenProductions := mergedLeanTokenProds
               symbols := mergedLeanSymbols
+              keywords := mergedLeanKeywords
               startProd := "Module.module"  -- Lean files use module start
             }
             let runtime : Runtime := {
@@ -287,10 +295,12 @@ where
             inheritedProds := parentGrammar.productions ++ inheritedProds
 
     -- Now parse with the merged grammar (parents + bootstrap)
+    let mergedProds := inheritedProds ++ rt.grammar.productions
     let parsingGrammar : Loader.LoadedGrammar := {
-      productions := inheritedProds ++ rt.grammar.productions
+      productions := mergedProds
       tokenProductions := inheritedTokenProds ++ rt.grammar.tokenProductions
-      symbols := Loader.extractAllSymbols (inheritedProds ++ rt.grammar.productions)
+      symbols := Loader.extractAllSymbols mergedProds
+      keywords := Loader.extractKeywords mergedProds
       startProd := "File.legoFile"
     }
 
@@ -307,6 +317,7 @@ where
     let mergedTokenProds := rt.grammar.tokenProductions ++ inheritedTokenProds ++ childTokenProds
 
     let symbols := Loader.extractAllSymbols mergedProds
+    let keywords := Loader.extractKeywords mergedProds
     let validation := Loader.validateProductions mergedProds
 
     -- Keep File.legoFile as start so merged grammar can parse .lego files
@@ -314,6 +325,7 @@ where
       productions := mergedProds
       tokenProductions := mergedTokenProds
       symbols := symbols
+      keywords := keywords
       startProd := "File.legoFile"
       validation := validation
     }

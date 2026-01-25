@@ -148,7 +148,8 @@ def main (args : List String) : IO UInt32 := do
       "./test/lego/Bootstrap.lego",
       "./src/Lego/Lego.lego",
       "./src/Rosetta/Rosetta.lego",
-      "./src/Rosetta/Lean.lego"
+      "./src/Rosetta/Lean.lego",
+      "./examples/*"
     ]
     let (p, t, f) ← testFileType "lego" legoFiles
       (fun path => do
@@ -163,7 +164,9 @@ def main (args : List String) : IO UInt32 := do
 
   -- Test .rosetta files
   if cfg.testRosetta then
-    let rosettaFiles ← findFiles "*.rosetta" []
+    let rosettaFiles ← findFiles "*.rosetta" [
+      "./examples/*"
+    ]
     let (p, t, f) ← testFileType "rosetta" rosettaFiles
       (fun path => do
         let content ← IO.FS.readFile path
@@ -180,7 +183,8 @@ def main (args : List String) : IO UInt32 := do
     let leanFiles ← findFiles "*.lean" [
       "./.lake/*",
       "./tmp/*",
-      "./.cache/*"
+      "./.cache/*",
+      "./examples/*"
     ]
     let (p, t, f) ← testFileType "lean" leanFiles
       (fun path => do

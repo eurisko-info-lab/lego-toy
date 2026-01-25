@@ -683,8 +683,33 @@ def extractKeywords (prods : Productions) : List String :=
   -- Step 2: Filter to pairs where the ref can transitively end with star
   let conflictingLits := refFollows.filterMap fun (refName, lit) =>
     if canEndWithStar starEndingProds refName then some lit else none
-  -- Step 3: Filter to keyword-like strings
-  conflictingLits.filter isKeywordLike |>.eraseDups
+  -- Step 3: Find control-flow starters that appear in the grammar
+  -- These need to be keywords if they appear as literals in the grammar
+  let controlFlowStarters := ["for", "while", "repeat", "unless", "return"]
+  let presentControlFlow := controlFlowStarters.filter fun kw =>
+    prods.any fun (_, g) => containsLiteral g kw
+  -- Step 4: Filter to keyword-like strings and combine
+  (conflictingLits.filter isKeywordLike ++ presentControlFlow) |>.eraseDups
+where
+  /-- Check if a grammar contains a specific literal -/
+  containsLiteral (g : GrammarExpr) (lit : String) : Bool :=
+    -- Use fold to avoid termination issues
+    let allLits := extractAllLiterals g
+    allLits.contains lit
+  extractAllLiterals (g : GrammarExpr) : List String :=
+    match g with
+    | .mk .empty => []
+    | .mk (.lit s) => [s]
+    | .mk (.ref _) => []
+    | .mk (.seq g1 g2) => extractAllLiterals g1 ++ extractAllLiterals g2
+    | .mk (.alt g1 g2) => extractAllLiterals g1 ++ extractAllLiterals g2
+    | .mk (.star g') => extractAllLiterals g'
+    | .mk (.bind _ g') => extractAllLiterals g'
+    | .mk (.node _ g') => extractAllLiterals g'
+    | .mk (.cut g') => extractAllLiterals g'
+    | .mk (.ordered g1 g2) => extractAllLiterals g1 ++ extractAllLiterals g2
+    | .mk (.longest gs) => gs.flatMap extractAllLiterals
+    | .mk (.layout _) => []
 
 /-! ## Validation Helpers -/
 
@@ -709,7 +734,8 @@ def validatePiece (prods : Productions) (rules : List Rule) : ValidationResult :
 structure LoadedGrammar where
   productions : Productions
   tokenProductions : Productions  -- Token-level (lexer) productions
-  symbols : List String           -- Keywords/reserved words
+  symbols : List String           -- All literal symbols
+  keywords : List String          -- Reserved keywords (identifiers that must be tokenized as symbols)
   startProd : String
   validation : ValidationResult := ValidationResult.empty
   deriving Repr
@@ -719,8 +745,9 @@ def loadGrammarFromAST (ast : Term) (startProd : String) : LoadedGrammar :=
   let prods := extractAllProductions ast
   let tokenProds := extractTokenProductions ast
   let symbols := extractAllSymbols prods
+  let keywords := extractKeywords prods
   let validationResult := validateProductions prods
-  { productions := prods, tokenProductions := tokenProds, symbols := symbols, startProd := startProd, validation := validationResult }
+  { productions := prods, tokenProductions := tokenProds, symbols := symbols, keywords := keywords, startProd := startProd, validation := validationResult }
 
 /-! ## Parsing with Loaded Grammar -/
 
@@ -733,9 +760,9 @@ def tokenizeForGrammar (grammar : LoadedGrammar) (input : String) : List Token :
     -- Return empty for now (parser will fail with clear error)
     []
   else
-    -- Use grammar-driven tokenizer
+    -- Use grammar-driven tokenizer with keyword reservation
     let mainProds := getMainTokenProds grammar.tokenProductions
-    tokenizeWithGrammar defaultFuel grammar.tokenProductions mainProds input []
+    tokenizeWithGrammar defaultFuel grammar.tokenProductions mainProds input grammar.keywords
 
 /-- Parse input using a loaded grammar (uses grammar-driven tokenizer) -/
 def parseWithGrammar (grammar : LoadedGrammar) (input : String) : Option Term :=

@@ -1,16 +1,13 @@
 -----------------------------------------------------
--- Lean.lego: Lean 4 AST Definition for Rosetta
+-- Lean.lego: Lean 4 Grammar Definition
 --
--- This defines the Lean 4 abstract syntax tree as a Lego specification.
--- It serves as the TARGET representation for rosetta2lean transformation.
+-- This defines the Lean 4 syntax as a Lego grammar specification.
+-- Used for:
+-- 1. Parsing .lean files
+-- 2. Code generation target (pretty-printing Lean code)
 --
--- Structure follows the Rosetta design pattern:
--- - Term syntax via 'term ::=' grammar
--- - Type syntax via 'type ::=' grammar  
--- - Declaration syntax via 'decl ::=' grammar
--- - No transformation rules here - those go in rosetta2lean.lego
---
--- This is the "what Lean code looks like" specification.
+-- Note: Reserved keywords (def, end, namespace, etc.) are automatically
+-- detected from the grammar literals and tokenized as symbols.
 -----------------------------------------------------
 lang Lean :=
 
@@ -165,7 +162,7 @@ piece CoreTerms
   -- Includes postfix operators like projections
   appExpr ::= primaryExpr postfixOp*              → appExpr ;
   postfixOp ::= "@" primaryExpr                   → explicitArg
-              | primaryExpr                       → appArg
+              | argExpr                           → appArg
               | ".1"                              → fstOp
               | ".2"                              → sndOp
               | ".fst"                            → fstOp
@@ -176,6 +173,40 @@ piece CoreTerms
               | "<|" term                         → pipeLeftOp
               | "with" "{" fieldAssign* "}"       → structUpdateOp
               ;
+
+  -- Argument expressions: subset of primaryExpr that doesn't include
+  -- control-flow keywords (do, if, match, by, fun, let)
+  -- This prevents greedy consumption in contexts like "for x in xs do ..."
+  argExpr ::=
+    -- Universes
+    "Type" level?                                 → typeUniv
+    | "Prop"                                      → propUniv
+    | "Sort" level?                               → sortUniv
+    -- Variables and literals
+    | <ident>                                     → var
+    | <number>                                    → numLit
+    | <string>                                    → strLit
+    | "true"                                      → trueLit
+    | "false"                                     → falseLit
+    | "()"                                        → unitLit
+    | "Unit.unit"                                 → unitLit
+    -- Lists and arrays
+    | "[" termList? "]"                           → listLit
+    | "#[" termList? "]"                          → arrayLit
+    -- Option
+    | "none"                                      → noneLit
+    | "some" argExpr                              → someLit
+    | "Option" argExpr                            → optionTy
+    -- Parenthesized expressions (can contain anything)
+    | "(" term ")"                                → paren
+    | "(" term "," term ")"                       → pair
+    -- Anonymous constructors
+    | "⟨" termList "⟩"                            → anonCtor
+    -- Structure literals
+    | "{" fieldAssign* "}"                        → structLit
+    -- Hole
+    | "_"                                         → hole
+    ;
   
   -- Primary expressions (no left recursion)
   primaryExpr ::= 
@@ -280,7 +311,7 @@ piece DoNotation
            | "return" term                        → doReturn
            | "pure" term                          → doPure
            | "if" term "then" doElem+ "else"? doElem* → doIf
-           | "for" <ident> "in" term "do" doElem+ → doFor
+           | "for" <ident> "in" appExpr "do" doElem+ → doFor
            | term                                 → doExpr
            ;
 
@@ -311,60 +342,62 @@ piece Tactics
 -----------------------------------------------------
 -- Declarations
 -- Top-level declarations
+-- Note: Layout markers (@nl, @indent, @dedent) are for pretty-printing only.
+-- During parsing, they are ignored - block structure is determined by keywords.
 -----------------------------------------------------
 piece Declarations
   decl ::= 
     -- Inductive types
-    "inductive" <ident> param* whereCtors? derivingClause? @nl
+    "inductive" <ident> param* whereCtors? derivingClause?
       → inductiveDecl
-    -- Structures
-    | "structure" <ident> param* extendsClause? "where" @nl @indent fieldDecl* @dedent derivingClause?
+    -- Structures  
+    | "structure" <ident> param* extendsClause? "where" fieldDecl* derivingClause?
       → structureDecl
     -- Classes
-    | "class" <ident> param* extendsClause? "where" @nl @indent fieldDecl* @dedent
+    | "class" <ident> param* extendsClause? "where" fieldDecl*
       → classDecl
     -- Instances
-    | "instance" instName? ":" term "where" @nl @indent fieldDef* @dedent
+    | "instance" instName? ":" term "where" fieldDef*
       → instanceDecl
-    -- Definitions
-    | "def" <ident> param* typeAnn? whereClause? ":=" term @nl
+    -- Definitions - these are the key ones
+    | "def" <ident> param* typeAnn? whereClause? ":=" term
       → defDecl
-    | "partial" "def" <ident> param* typeAnn? ":=" term @nl
+    | "partial" "def" <ident> param* typeAnn? ":=" term
       → partialDefDecl
-    | "abbrev" <ident> param* typeAnn? ":=" term @nl
+    | "abbrev" <ident> param* typeAnn? ":=" term
       → abbrevDecl
     -- Theorems
-    | "theorem" <ident> param* ":" term ":=" term @nl
+    | "theorem" <ident> param* ":" term ":=" term
       → theoremDecl
-    | "lemma" <ident> param* ":" term ":=" term @nl
+    | "lemma" <ident> param* ":" term ":=" term
       → lemmaDecl
-    | "example" ":" term ":=" term @nl
+    | "example" ":" term ":=" term
       → exampleDecl
-    -- Namespaces
-    | "namespace" modulePath @nl @indent decl* @dedent "end" modulePath @nl
+    -- Namespaces - use 'end' keyword as explicit delimiter
+    | "namespace" modulePath nsBody "end" modulePath
       → namespaceDecl
-    | "section" <ident>? @nl @indent decl* @dedent "end" <ident>? @nl
+    | "section" <ident>? nsBody "end" <ident>?
       → sectionDecl
     -- Imports and opens  
-    | "import" modulePath @nl
+    | "import" modulePath
       → importDecl
-    | "open" modulePath inClause? @nl
+    | "open" modulePath inClause?
       → openDecl
     -- Variables
-    | "variable" varDecl+ @nl
+    | "variable" varDecl+
       → variableDecl
     -- Attributes
-    | "attribute" "[" <ident> "]" <ident> @nl
+    | "attribute" "[" <ident> "]" <ident>
       → attributeDecl
     -- Set options
-    | "set_option" modulePath term @nl
+    | "set_option" modulePath term
       → setOptionDecl
     -- Notation and macros
-    | "macro" <ident> param* ":" <ident> ":=" term @nl
+    | "macro" <ident> param* ":" <ident> ":=" term
       → macroDecl
-    | "notation" <string> ":=" term @nl
+    | "notation" <string> ":=" term
       → notationDecl
-    | "syntax" term* ":" <ident> @nl
+    | "syntax" term* ":" <ident>
       → syntaxDecl
     -- Private/protected modifiers
     | "private" decl
@@ -375,9 +408,9 @@ piece Declarations
     | "@[" <ident> "]" decl
       → attrDecl
     -- #check, #eval, #print commands
-    | "#check" term @nl
+    | "#check" term
       → checkCmd
-    | "#eval" term @nl
+    | "#eval" term
       → evalCmd
     | "#print" <ident> @nl
       → printCmd
@@ -404,6 +437,8 @@ piece Declarations
             ;
   whereClause ::= "where" letDecl*                → whereClause ;
   letDecl ::= <ident> ":=" term                   → letDecl ;
+  -- Namespace body: declarations until 'end' keyword
+  nsBody ::= decl*                                → nsBody ;
 
 -----------------------------------------------------
 -- Module

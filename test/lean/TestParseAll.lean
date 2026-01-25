@@ -34,6 +34,7 @@ structure TestConfig where
   testRed : Bool := false
   testCooltt : Bool := false
   verbose : Bool := false
+  explicitFiles : List String := []
   deriving Repr
 
 def parseArgs (args : List String) : TestConfig :=
@@ -49,7 +50,12 @@ def parseArgs (args : List String) : TestConfig :=
     | "--all" :: rest => go { cfg with testLego := true, testRosetta := true, testLean := true, testRed := true, testCooltt := true } rest
     | "--help" :: _ => { testLego := false, testRosetta := false, testLean := false, testRed := false, testCooltt := false }
     | "-h" :: _ => { testLego := false, testRosetta := false, testLean := false, testRed := false, testCooltt := false }
-    | _ :: rest => go cfg rest
+    | arg :: rest =>
+      -- Check if this looks like a file path (contains . or /)
+      if arg.contains '.' || arg.contains '/' then
+        go { cfg with explicitFiles := cfg.explicitFiles ++ [arg] } rest
+      else
+        go cfg rest
   -- If any specific flag was given, start with all false
   let hasSpecific := args.any fun a => a == "--lego" || a == "--rosetta" || a == "--lean" || a == "--red" || a == "--cooltt"
   let initial := if hasSpecific then { testLego := false, testRosetta := false, testLean := false, testRed := false, testCooltt := false } else {}
@@ -206,6 +212,38 @@ def main (args : List String) : IO UInt32 := do
   -- Initialize runtime
   let rt ← Lego.Runtime.init
   IO.println ""
+
+  -- Handle explicit files mode
+  if !cfg.explicitFiles.isEmpty then
+    let mut passed := 0
+    let mut failed := 0
+    IO.println s!"Testing {cfg.explicitFiles.length} explicit file(s)..."
+    IO.println ""
+    for path in cfg.explicitFiles do
+      let ext := path.dropWhile (· ≠ '.') |>.drop 1
+      let result ← match ext with
+        | "lego" =>
+          let content ← IO.FS.readFile path
+          pure (Lego.Runtime.parseLegoFileE rt content)
+        | "rosetta" =>
+          let content ← IO.FS.readFile path
+          pure (Lego.Runtime.parseRosettaFileE rt content)
+        | "lean" =>
+          let content ← IO.FS.readFile path
+          pure (Lego.Runtime.parseLeanFileE rt content)
+        | _ =>
+          pure (.error { message := s!"Unknown extension: {ext}", tokenPos := 0, production := "unknown", expected := [], actual := none, remaining := [] })
+      match result with
+      | .ok _ =>
+        passed := passed + 1
+        IO.println s!"  ✓ {path}"
+      | .error e =>
+        failed := failed + 1
+        IO.println s!"  ✗ {path}"
+        IO.println s!"    {e}"
+    IO.println ""
+    IO.println s!"Total: {passed}/{passed + failed} passed"
+    return if failed > 0 then 1 else 0
 
   -- Collect results
   let mut totalPassed := 0

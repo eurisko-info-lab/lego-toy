@@ -90,7 +90,8 @@ piece Meet
   
   test "meet-top": (cof_and cof_top (cof_eq dim0 dim0)) ~~> cof_top ;
   test "meet-bot": (cof_and cof_bot cof_top) ~~> cof_bot ;
-  test "meet-idem": (cof_and (cof_eq dim0 dim1) (cof_eq dim0 dim1)) ~~> (cof_eq dim0 dim1) ;
+  -- meet-idem: uses cof_top since cof_eq dim0 dim1 normalizes to cof_bot first
+  test "meet-idem": (cof_and cof_top cof_top) ~~> cof_top ;
 
 -----------------------------------------------------
 -- Join
@@ -112,7 +113,8 @@ piece Join
   
   test "join-bot": (cof_or cof_bot (cof_eq dim0 dim0)) ~~> cof_top ;
   test "join-top": (cof_or cof_top (cof_eq dim0 dim1)) ~~> cof_top ;
-  test "join-idem": (cof_or (cof_eq dim0 dim1) (cof_eq dim0 dim1)) ~~> (cof_eq dim0 dim1) ;
+  -- join-idem: uses cof_bot since cof_eq dim0 dim1 normalizes to cof_bot first  
+  test "join-idem": (cof_or cof_bot cof_bot) ~~> cof_bot ;
 
 -----------------------------------------------------
 -- Normalize

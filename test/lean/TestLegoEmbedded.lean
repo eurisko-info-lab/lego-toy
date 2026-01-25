@@ -20,8 +20,12 @@ def parseLegoFile (rt : Runtime) (path : String) : IO (Option Term) := do
 
 /-- List of Cubical .lego files to test -/
 def cubicalLegoFiles : List String := [
-  "examples/Cubical/Lego/Core.lego"
-  -- Add more files as needed
+  "examples/Cubical/Lego/Core.lego",
+  "examples/Cubical/Lego/Cofibration.lego",
+  "examples/Cubical/Lego/Kan.lego",
+  "examples/Cubical/Lego/Domain.lego",
+  "examples/Cubical/Lego/Quote.lego",
+  "examples/Cubical/Lego/TermBuilder.lego"
 ]
 
 /-- Main: run all embedded tests -/

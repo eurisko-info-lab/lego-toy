@@ -686,6 +686,9 @@ partial def step : Expr → Option Expr
   -- coe through Circle: coe r r' S¹ x → x (Circle is coercion-stable)
   | coe _ _ (plam circle) a => some a
 
+  -- coe through Universe: coe r r' (λi. U l) A → A (Universe is coercion-stable)
+  | coe _ _ (plam (univ _)) a => some a
+
   -- hcom reflexivity: hcom r r A φ cap → cap (when r = r')
   | hcom dim0 dim0 _ _ cap => some cap
   | hcom dim1 dim1 _ _ cap => some cap

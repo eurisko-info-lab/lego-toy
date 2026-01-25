@@ -60,8 +60,7 @@ lean_lib «LegoGenerated» where
 -- Code generation tools and pipelines (tools/)
 lean_lib «ToolsLib» where
   srcDir := "tools"
-  roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GrammarDrivenPipeline,
-             `ToLean, `ToAntlr, `ToTreeSitter]
+  roots := #[`MultiTargetPipeline, `GrammarDrivenPipeline, `ToLean]
 
 lean_exe «test-grammar-driven» where
   root := `test.lean.TestGrammarDriven
@@ -101,23 +100,10 @@ lean_exe «lego-test-parse» where
 
 -- Tools executables
 
-lean_exe «toantlr» where
-  root := `tools.ToAntlr
-
-lean_exe «totreesitter» where
-  root := `tools.ToTreeSitter
-
 lean_exe «tolean» where
   root := `tools.ToLean
 
--- Pipeline: CubicalTT → cubical2rosetta → rosetta2lean
-lean_exe «cubical-pipeline» where
-  root := `tools.Pipeline
-
--- Rosetta Pipeline: .rosetta → Rosetta.lego → rosetta2lean → Lean
-lean_exe «rosetta-pipeline» where
-  root := `tools.RosettaPipeline
-
--- Multi-Target Pipeline: .lego → Rosetta IR → Lean/Scala/Haskell/Rust
+-- Multi-target pipeline: .lego/.rosetta → Lean/Rust/Haskell/Scala
 lean_exe «multi-target» where
   root := `tools.MultiTargetPipeline
+

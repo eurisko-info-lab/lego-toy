@@ -197,7 +197,7 @@ def coolttFuel : Nat := 50000
 /-- Debug parsing for a single CoolTT declaration, returning details -/
 def debugCoolttParse (rt : Runtime) (decl : String) : IO Unit := do
   try
-    let content ← IO.FS.readFile "./test/Cooltt.lego"
+    let content ← IO.FS.readFile "./examples/Cubical/test/Cooltt.lego"
     match Runtime.parseLegoFile rt content with
     | none => IO.println "Failed to load Cooltt.lego"
     | some ast =>
@@ -297,7 +297,7 @@ partial def findCoolttFiles (dir : String) : IO (List String) := do
 def runCoolttParsingTests (rt : Runtime) : IO (List TestResult) := do
   let grammarResult ← do
     try
-      let content ← IO.FS.readFile "./test/lego/Cooltt.lego"
+      let content ← IO.FS.readFile "./examples/Cubical/test/Cooltt.lego"
       pure (Runtime.parseLegoFile rt content)
     catch _ =>
       pure none

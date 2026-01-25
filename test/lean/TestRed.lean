@@ -4544,7 +4544,7 @@ def runAttrGrammarTypeCheckTests : IO (List TestResult) := do
 def runRedttParsingTests (rt : Lego.Runtime.Runtime) : IO (List TestResult) := do
   let grammarResult ← do
     try
-      let content ← IO.FS.readFile "./test/lego/Redtt.lego"
+      let content ← IO.FS.readFile "./examples/Cubical/test/Redtt.lego"
       pure (Lego.Runtime.parseLegoFile rt content)
     catch _ =>
       pure none

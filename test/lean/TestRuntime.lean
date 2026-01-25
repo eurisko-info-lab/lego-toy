@@ -56,7 +56,7 @@ def main : IO Unit := do
 
     -- Step 4: Parse Redtt.lego (cubical type theory!)
     IO.println "Step 4: Parsing Redtt.lego with RUNTIME grammar..."
-    match ← parseLegoFilePath rt "./test/lego/Redtt.lego" with
+    match ← parseLegoFilePath rt "./examples/Cubical/test/Redtt.lego" with
     | none =>
       IO.println "  ✗ Failed to parse Redtt.lego"
     | some ast =>

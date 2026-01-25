@@ -4682,7 +4682,7 @@ def parseWithRedttAST (prods : List (String × GrammarExpr))
 def runRedttASTTests (rt : Lego.Runtime.Runtime) : IO (List TestResult) := do
   let grammarResult ← do
     try
-      let content ← IO.FS.readFile "./test/RedttAST.lego"
+      let content ← IO.FS.readFile "./examples/Cubical/test/RedttAST.lego"
       pure (Lego.Runtime.parseLegoFile rt content)
     catch _ =>
       pure none
@@ -4751,7 +4751,7 @@ def parseWithAnnotatedGrammar (prods : List (String × GrammarExpr))
 def runAnnotatedGrammarTypeCheckTests (rt : Lego.Runtime.Runtime) : IO (List TestResult) := do
   let grammarResult ← do
     try
-      let content ← IO.FS.readFile "./test/RedttTyped.lego"
+      let content ← IO.FS.readFile "./examples/Cubical/test/RedttTyped.lego"
       pure (Lego.Runtime.parseLegoFile rt content)
     catch _ =>
       pure none

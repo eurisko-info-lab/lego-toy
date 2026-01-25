@@ -1253,9 +1253,10 @@ def extractAttributes (ast : Term) : List AttrDef :=
 
 /-- A test case extracted from a .lego file -/
 structure TestCase where
-  name     : String
-  input    : Term
-  expected : Option Term  -- None if test just checks parsing
+  name      : String
+  input     : Term
+  expected  : Option Term  -- None if test just checks parsing
+  pieceName : String := ""  -- The piece this test belongs to (for type dispatch)
   deriving Repr, Inhabited
 
 /-- Extract a test case from a DTest AST node.
@@ -1282,17 +1283,25 @@ def extractTestCase (testDecl : Term) : Option TestCase :=
 
 /-- Extract all test cases from a parsed .lego file AST -/
 partial def extractTests (ast : Term) : List TestCase :=
-  go ast
+  go "" ast
 where
-  go (t : Term) : List TestCase :=
+  go (currentPiece : String) (t : Term) : List TestCase :=
     match t with
+    | .con "DPiece" args =>
+      -- Extract piece name and recurse with it
+      let pieceName := args.findSome? fun a =>
+        match a with
+        | .con "ident" [.var n] => some n
+        | _ => none
+      let piece := pieceName.getD currentPiece
+      args.flatMap (go piece)
     | .con "DTest" _ =>
       match extractTestCase t with
-      | some tc => [tc]
+      | some tc => [{ tc with pieceName := currentPiece }]
       | none => []
     | .con "DTestsBlock" args =>
       -- Tests block: tests { testCase+ }
-      args.flatMap go
+      args.flatMap (go currentPiece)
     | .con "testCase" args =>
       -- Individual test case within a tests block
       -- testCase [string "name", lit "~~>", expected]
@@ -1300,14 +1309,13 @@ where
         t != .lit "~~>" && t != .lit ";"
       match filtered with
       | [.con "string" [.lit name], expected] =>
-        [{ name := name, input := .con "unit" [], expected := some expected }]
+        [{ name := name, input := .con "unit" [], expected := some expected, pieceName := currentPiece }]
       | [.lit name, expected] =>
-        [{ name := name, input := .con "unit" [], expected := some expected }]
+        [{ name := name, input := .con "unit" [], expected := some expected, pieceName := currentPiece }]
       | _ => []
-    | .con "DLang" ts => ts.flatMap go
-    | .con "DPiece" ts => ts.flatMap go
-    | .con "seq" ts => ts.flatMap go
-    | .con _ ts => ts.flatMap go
+    | .con "DLang" ts => ts.flatMap (go currentPiece)
+    | .con "seq" ts => ts.flatMap (go currentPiece)
+    | .con _ ts => ts.flatMap (go currentPiece)
     | _ => []
 
 /-- Extract test cases grouped by piece name -/

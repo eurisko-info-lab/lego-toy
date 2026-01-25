@@ -191,7 +191,9 @@ partial def termToExpr : Term → Option Expr
     let body' ← termToExpr body
     some (Expr.subst idx val' body')
 
-  -- Fallback: unknown constructor - just fail
+  -- Fallback: unknown nullary constructor treated as literal (for bare names like P, z, s)
+  | .con name [] => some (.lit name)
+  -- Other unknown constructors fail
   | .con _ _ => none
   | .var _ => none
 
@@ -204,6 +206,9 @@ def normalizeExpr (fuel : Nat) (e : Expr) : Expr :=
 /-- Compare two expressions for equality -/
 def exprEq (e1 e2 : Expr) : Bool := e1 == e2
 
+/-- Compare two levels for equality -/
+def levelEq (l1 l2 : Level) : Bool := l1 == l2
+
 /-- Result of running a single test -/
 inductive TestResult
   | pass : TestResult
@@ -211,32 +216,52 @@ inductive TestResult
   | skip (reason : String) : TestResult
   deriving Repr, Inhabited
 
-/-- Run a single test case -/
-def runTest (tc : Lego.Loader.TestCase) (fuel : Nat := 100) : IO TestResult := do
-  -- Normalize the AST first (raw Term → clean Term)
+/-- Run a Level test (for piece "Level") -/
+def runLevelTest (tc : Lego.Loader.TestCase) : IO TestResult := do
   let normalizedInput := normalizeAst tc.input
-  -- Convert input
+  match termToLevel normalizedInput with
+  | none => return .skip s!"Failed to convert Level input: {repr normalizedInput}"
+  | some inputLevel =>
+    match tc.expected with
+    | some expectedTerm =>
+      let normalizedExpected := normalizeAst expectedTerm
+      match termToLevel normalizedExpected with
+      | none => return .skip s!"Failed to convert Level expected: {repr normalizedExpected}"
+      | some expectedLevel =>
+        let result := Level.normalize inputLevel
+        if levelEq result expectedLevel then
+          pure .pass
+        else
+          pure (.fail s!"Expected: {repr expectedLevel}\nGot: {repr result}")
+    | none => pure .pass
+
+/-- Run an Expr test (default) -/
+def runExprTest (tc : Lego.Loader.TestCase) (fuel : Nat := 100) : IO TestResult := do
+  let normalizedInput := normalizeAst tc.input
   match termToExpr normalizedInput with
   | none => return .skip s!"Failed to convert input: {repr normalizedInput}"
   | some inputExpr =>
     match tc.expected with
     | some expectedTerm =>
-      -- Normalize and convert expected
       let normalizedExpected := normalizeAst expectedTerm
       match termToExpr normalizedExpected with
       | none => return .skip s!"Failed to convert expected: {repr normalizedExpected}"
       | some expectedExpr =>
-        -- Normalize input expression using Core.Expr.normalize
         let result := normalizeExpr fuel inputExpr
-        -- Compare
         if exprEq result expectedExpr then
           pure .pass
         else
           pure (.fail s!"Expected: {repr expectedExpr}\nGot: {repr result}")
     | none =>
-      -- No expected value - just check that it parses and normalizes without error
       let _ := normalizeExpr fuel inputExpr
       pure .pass
+
+/-- Run a single test case, dispatching by piece type -/
+def runTest (tc : Lego.Loader.TestCase) (fuel : Nat := 100) : IO TestResult := do
+  if tc.pieceName == "Level" then
+    runLevelTest tc
+  else
+    runExprTest tc fuel
 
 /-- Run all tests from a list of test cases -/
 def runTests (tests : List Lego.Loader.TestCase) (verbose : Bool := false) : IO (Nat × Nat × Nat) := do

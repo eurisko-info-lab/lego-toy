@@ -55,20 +55,20 @@ partial def termToPatternFrag (cfg : LangConfig) (t : Term) (st : PatGenState)
         (.Ident varName, { st with seen := st.seen.insert varName })
     else
       -- Literal match
-      (.FSeq [.Raw ".Lit \"", .Raw (cfg.escapeString n), .Raw "\""], st)
+      (.FSeq [.Raw cfg.termLit, .Raw "\"", .Raw (cfg.escapeString n), .Raw "\"", .Raw cfg.termLitEnd], st)
   | .lit s =>
-    (.FSeq [.Raw ".Lit \"", .Raw (cfg.escapeString s), .Raw "\""], st)
+    (.FSeq [.Raw cfg.termLit, .Raw "\"", .Raw (cfg.escapeString s), .Raw "\"", .Raw cfg.termLitEnd], st)
   | .con name args =>
     if args.isEmpty then
-      (.FSeq [.Raw ".Con \"", .Raw (cfg.escapeString name), .Raw "\" ", .Raw cfg.listEmpty], st)
+      (.FSeq [.Raw cfg.termCon, .Raw "\"", .Raw (cfg.escapeString name), .Raw "\"", .Raw cfg.termConMid, .Raw cfg.listEmpty, .Raw cfg.termConEnd], st)
     else
       let (argFrags, finalSt) := args.foldl (fun (accFrags, accSt) arg =>
         let (f, newSt) := termToPatternFrag cfg arg accSt
         (accFrags ++ [f], newSt)
       ) ([], st)
       let frag := Frag.FSeq [
-        .Raw ".Con \"", .Raw (cfg.escapeString name), .Raw "\" ",
-        .Raw cfg.listStart, .Sep ", " argFrags, .Raw cfg.listEnd
+        .Raw cfg.termCon, .Raw "\"", .Raw (cfg.escapeString name), .Raw "\"", .Raw cfg.termConMid,
+        .Raw cfg.listStart, .Sep ", " argFrags, .Raw cfg.listEnd, .Raw cfg.termConEnd
       ]
       (frag, finalSt)
 
@@ -82,19 +82,19 @@ partial def termToExprFrag (cfg : LangConfig) (t : Term) (boundVars : List Strin
       if boundVars.contains varName then
         .Ident (sanitizeVar cfg varName)  -- Use as variable reference
       else
-        .FSeq [.Raw ".Var \"", .Raw (cfg.escapeString varName), .Raw "\""]  -- Free var
+        .FSeq [.Raw cfg.termVar, .Raw "\"", .Raw (cfg.escapeString varName), .Raw "\"", .Raw cfg.termVarEnd]  -- Free var
     else
-      .FSeq [.Raw ".Lit \"", .Raw (cfg.escapeString n), .Raw "\""]
+      .FSeq [.Raw cfg.termLit, .Raw "\"", .Raw (cfg.escapeString n), .Raw "\"", .Raw cfg.termLitEnd]
   | .lit s =>
-    .FSeq [.Raw ".Lit \"", .Raw (cfg.escapeString s), .Raw "\""]
+    .FSeq [.Raw cfg.termLit, .Raw "\"", .Raw (cfg.escapeString s), .Raw "\"", .Raw cfg.termLitEnd]
   | .con name args =>
     if args.isEmpty then
-      .FSeq [.Raw ".Con \"", .Raw (cfg.escapeString name), .Raw "\" ", .Raw cfg.listEmpty]
+      .FSeq [.Raw cfg.termCon, .Raw "\"", .Raw (cfg.escapeString name), .Raw "\"", .Raw cfg.termConMid, .Raw cfg.listEmpty, .Raw cfg.termConEnd]
     else
       let argFrags := args.map (fun a => termToExprFrag cfg a boundVars)
       .FSeq [
-        .Raw ".Con \"", .Raw (cfg.escapeString name), .Raw "\" ",
-        .Raw cfg.listStart, .Sep ", " argFrags, .Raw cfg.listEnd
+        .Raw cfg.termCon, .Raw "\"", .Raw (cfg.escapeString name), .Raw "\"", .Raw cfg.termConMid,
+        .Raw cfg.listStart, .Sep ", " argFrags, .Raw cfg.listEnd, .Raw cfg.termConEnd
       ]
 
 /-! ## Lean-Specific Emission -/

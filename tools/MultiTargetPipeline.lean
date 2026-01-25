@@ -637,17 +637,7 @@ def runSeparate (rt : Runtime) (args : Args) : IO (Except String (List TargetRes
     for r in moduleResults do
       let header := genModuleHeader lang r.moduleName [] packagePrefix
 
-      -- Add Rust helper if needed
-      let rustHelper := if lang == .Rust then
-        "// Helper function to extract argument from Term\n" ++
-        "fn get_arg(t: &Term, i: usize) -> &Term {\n" ++
-        "    match t {\n" ++
-        "        Term::Con(_, args) => &*args[i],\n" ++
-        "        _ => panic!(\"get_arg called on non-Con\")\n" ++
-        "    }\n}\n\n"
-      else ""
-
-      let finalCode := header ++ rustHelper ++ r.code
+      let finalCode := header ++ r.code
       allResults := allResults ++ [{ lang := r.lang, code := finalCode, outPath := r.outPath }]
       unless quiet do IO.println s!"      ✓ {lang}/{r.moduleName}"
 

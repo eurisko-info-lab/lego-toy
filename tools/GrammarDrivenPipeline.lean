@@ -1096,7 +1096,7 @@ where
         -- Use unified code generation via CodeGen AST
         let frag := UnifiedCodeGen.emitRewriteRule lang.toUnified name lhsTerm rhsTerm
         let code := CodeGen.render frag
-        st.emit code
+        st.emit code |>.noSpace  -- Don't add space before next item
       | _ => st.emit s!"-- rewriteRule({args.length})\n"
 
     | "DTest" =>
@@ -1599,14 +1599,7 @@ def runForTarget (rt : Runtime) (sourceAst : Term) (lang : TargetLang) (outDir :
   let finalCode := match lang with
     | .Haskell => "module Generated where\n\n" ++ code
     | .Scala => "package generated\n\n" ++ code
-    | .Rust => "#![allow(dead_code)]\n#![allow(unused_variables)]\n\n" ++
-               "// Helper function to extract argument from Term (returns reference into boxed term)\n" ++
-               "fn get_arg(t: &Term, i: usize) -> &Term {\n" ++
-               "    match t {\n" ++
-               "        Term::Con(_, args) => &*args[i],\n" ++
-               "        _ => panic!(\"get_arg called on non-Con\")\n" ++
-               "    }\n" ++
-               "}\n\n" ++ code
+    | .Rust => "#![allow(dead_code)]\n#![allow(unused_variables)]\n\n" ++ code
     | .Lean => code
 
   -- 6. Build result

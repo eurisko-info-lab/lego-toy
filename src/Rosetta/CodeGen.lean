@@ -120,6 +120,14 @@ structure LangConfig where
   listEmpty : String                    -- e.g., "[]" or "Nil"
   optionSome : String                   -- e.g., "some" or "Some" or "Just"
   optionNone : String                   -- e.g., "none" or "None" or "Nothing"
+  -- Term construction syntax
+  termCon : String := ".Con "           -- e.g., ".Con " or "Term::Con(" or "Con "
+  termConMid : String := " "            -- e.g., " " or ", " (between name and args)
+  termConEnd : String := ""             -- e.g., "" or ")"
+  termLit : String := ".Lit "           -- e.g., ".Lit " or "Term::Lit("
+  termLitEnd : String := ""             -- e.g., "" or ")"
+  termVar : String := ".Var "           -- e.g., ".Var " or "Term::Var("
+  termVarEnd : String := ""             -- e.g., "" or ")"
 
 /-- Lean 4 configuration -/
 def leanConfig : LangConfig := {
@@ -158,6 +166,14 @@ def scalaConfig : LangConfig := {
   listEmpty := "Nil"
   optionSome := "Some"
   optionNone := "None"
+  -- Scala uses Con("name", List(...))
+  termCon := "Con("
+  termConMid := ", "
+  termConEnd := ")"
+  termLit := "Lit("
+  termLitEnd := ")"
+  termVar := "Var("
+  termVarEnd := ")"
 }
 
 /-- Haskell configuration -/
@@ -177,6 +193,14 @@ def haskellConfig : LangConfig := {
   listEmpty := "[]"
   optionSome := "Just"
   optionNone := "Nothing"
+  -- Haskell uses Con "name" [...]
+  termCon := "Con "
+  termConMid := " "
+  termConEnd := ""
+  termLit := "Lit "
+  termLitEnd := ""
+  termVar := "Var "
+  termVarEnd := ""
 }
 
 /-- Rust configuration -/
@@ -198,6 +222,14 @@ def rustConfig : LangConfig := {
   listEmpty := "vec![]"
   optionSome := "Some"
   optionNone := "None"
+  -- Rust uses Term::Con("name", vec![...])
+  termCon := "Term::Con("
+  termConMid := ".to_string(), "
+  termConEnd := ")"
+  termLit := "Term::Lit("
+  termLitEnd := ".to_string())"
+  termVar := "Term::Var("
+  termVarEnd := ".to_string())"
 }
 
 /-- Sanitize a variable name for a target language -/

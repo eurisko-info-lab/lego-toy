@@ -106,4 +106,3 @@ lean_exe «tolean» where
 -- Multi-target pipeline: .lego/.rosetta → Lean/Rust/Haskell/Scala
 lean_exe «multi-target» where
   root := `tools.MultiTargetPipeline
-

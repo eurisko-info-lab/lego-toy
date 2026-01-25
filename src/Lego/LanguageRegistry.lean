@@ -1,9 +1,9 @@
 /-
   Lego.LanguageRegistry: Dynamic Language Registration System
-  
+
   This module provides a flexible way to register and load grammar files
   for different target languages without modifying Runtime.lean.
-  
+
   Usage:
     -- Register a new language
     let registry := LanguageRegistry.empty
@@ -12,10 +12,10 @@
           fileExtension := ".py"
           startProduction := "Module.module"
         }
-    
+
     -- Load all registered grammars
     let (rt, grammars) ← registry.loadAll rt
-    
+
     -- Parse a file with the appropriate grammar
     let result ← registry.parseFile grammars "example.py"
 -/
@@ -108,7 +108,7 @@ def defaultRegistry : Registry :=
 abbrev LoadedGrammars := List (String × LoadedLanguage)
 
 /-- Load a single language grammar using the base Lego grammar -/
-def loadLanguage (baseGrammar : Loader.LoadedGrammar) (_name : String) (config : LanguageConfig) 
+def loadLanguage (baseGrammar : Loader.LoadedGrammar) (_name : String) (config : LanguageConfig)
     : IO (Except String LoadedLanguage) := do
   try
     let content ← IO.FS.readFile config.grammarPath
@@ -155,7 +155,7 @@ def parseFile (grammars : LoadedGrammars) (path : String) : IO (Except String Te
              else if path.endsWith ".rosetta" then ".rosetta"
              else if path.endsWith ".lean" then ".lean"
              else System.FilePath.extension (System.FilePath.mk path) |>.getD ""
-  
+
   match getGrammarByExtension grammars ext with
   | none => return .error s!"No grammar registered for extension: {ext}"
   | some (_, lang) =>
@@ -170,9 +170,9 @@ def parseFileE (grammars : LoadedGrammars) (path : String) : IO (Except ParseErr
              else if path.endsWith ".rosetta" then ".rosetta"
              else if path.endsWith ".lean" then ".lean"
              else System.FilePath.extension (System.FilePath.mk path) |>.getD ""
-  
+
   match getGrammarByExtension grammars ext with
-  | none => return .error { 
+  | none => return .error {
       message := s!"No grammar registered for extension: {ext}"
       tokenPos := 0
       production := ""

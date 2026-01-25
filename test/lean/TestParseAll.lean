@@ -1,6 +1,6 @@
 /-
   TestParseAll: Comprehensive file parsing test for all Lego language grammars
-  
+
   Usage:
     lake exe lego-test-parse              # Test all file types
     lake exe lego-test-parse --lego       # Test only .lego files
@@ -76,24 +76,24 @@ def testFile (parser : String → IO (Except Lego.ParseError Lego.Term)) (path :
   | .error e => return some { path := path, reason := toString e }
 
 /-- Run tests for a file type and return results -/
-def testFileType (name : String) (files : List String) (parser : String → IO (Except Lego.ParseError Lego.Term)) 
+def testFileType (name : String) (files : List String) (parser : String → IO (Except Lego.ParseError Lego.Term))
     (verbose : Bool) : IO (Nat × Nat × Array FailedFile) := do
   if files.isEmpty then
     return (0, 0, #[])
-  
+
   IO.println s!"Testing {files.length} .{name} files..."
   let mut failed : Array FailedFile := #[]
   let mut passed := 0
-  
+
   for path in files do
     match ← testFile parser path with
-    | none => 
+    | none =>
       passed := passed + 1
       if verbose then IO.println s!"  ✓ {path}"
-    | some f => 
+    | some f =>
       failed := failed.push f
       if verbose then IO.println s!"  ✗ {path}"
-  
+
   return (passed, files.length, failed)
 
 /-- Print failed files section -/
@@ -109,25 +109,25 @@ def printFailedFiles (fileType : String) (failed : Array FailedFile) : IO Unit :
 
 def main (args : List String) : IO UInt32 := do
   let cfg := parseArgs args
-  
+
   -- Show help if requested or no tests selected
   if args.contains "--help" || args.contains "-h" then
     showHelp
     return 0
-  
+
   if !cfg.testLego && !cfg.testRosetta && !cfg.testLean then
     showHelp
     return 0
-  
+
   IO.println "═══════════════════════════════════════════════════════════════"
   IO.println "Lego File Parsing Test Suite"
   IO.println "═══════════════════════════════════════════════════════════════"
   IO.println ""
-  
+
   -- Initialize runtime
   let rt ← Lego.Runtime.init
   IO.println ""
-  
+
   -- Collect results
   let mut totalPassed := 0
   let mut totalFiles := 0
@@ -140,7 +140,7 @@ def main (args : List String) : IO UInt32 := do
   let mut rosettaTotal := 0
   let mut leanPassed := 0
   let mut leanTotal := 0
-  
+
   -- Test .lego files
   if cfg.testLego then
     let legoFiles ← findFiles "*.lego" [
@@ -150,7 +150,7 @@ def main (args : List String) : IO UInt32 := do
       "./src/Rosetta/Rosetta.lego",
       "./src/Rosetta/Lean.lego"
     ]
-    let (p, t, f) ← testFileType "lego" legoFiles 
+    let (p, t, f) ← testFileType "lego" legoFiles
       (fun path => do
         let content ← IO.FS.readFile path
         return Lego.Runtime.parseLegoFileE rt content)
@@ -160,7 +160,7 @@ def main (args : List String) : IO UInt32 := do
     legoFailed := f
     totalPassed := totalPassed + p
     totalFiles := totalFiles + t
-  
+
   -- Test .rosetta files
   if cfg.testRosetta then
     let rosettaFiles ← findFiles "*.rosetta" []
@@ -174,7 +174,7 @@ def main (args : List String) : IO UInt32 := do
     rosettaFailed := f
     totalPassed := totalPassed + p
     totalFiles := totalFiles + t
-  
+
   -- Test .lean files
   if cfg.testLean then
     let leanFiles ← findFiles "*.lean" [
@@ -192,29 +192,29 @@ def main (args : List String) : IO UInt32 := do
     leanFailed := f
     totalPassed := totalPassed + p
     totalFiles := totalFiles + t
-  
+
   -- Print summary
   IO.println ""
   IO.println "═══════════════════════════════════════════════════════════════"
   IO.println "RESULTS"
   IO.println "═══════════════════════════════════════════════════════════════"
   IO.println ""
-  
+
   if cfg.testLego then
     IO.println s!".lego files:    {legoPassed}/{legoTotal} passed"
   if cfg.testRosetta then
     IO.println s!".rosetta files: {rosettaPassed}/{rosettaTotal} passed"
   if cfg.testLean then
     IO.println s!".lean files:    {leanPassed}/{leanTotal} passed"
-  
+
   IO.println ""
   IO.println s!"Total: {totalPassed}/{totalFiles} passed"
-  
+
   -- Print failures
   if cfg.testLego then printFailedFiles "lego" legoFailed
   if cfg.testRosetta then printFailedFiles "rosetta" rosettaFailed
   if cfg.testLean then printFailedFiles "lean" leanFailed
-  
+
   -- Return exit code
   let totalFailed := legoFailed.size + rosettaFailed.size + leanFailed.size
   if totalFailed > 0 then return 1 else return 0

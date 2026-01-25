@@ -92,6 +92,10 @@ token Token
       '⟩',           -- angle bracket close
       '↑',           -- coercion
       '#' '[',       -- array literal
+      '#' 'c' 'h' 'e' 'c' 'k',  -- #check
+      '#' 'e' 'v' 'a' 'l',       -- #eval
+      '#' 'p' 'r' 'i' 'n' 't',   -- #print
+      '@' '[',       -- attribute start
       '@',           -- explicit
       '$',           -- dollar
       '+', '-', '*', '/', '%',
@@ -103,101 +107,134 @@ token Token
 -----------------------------------------------------
 -- Core Terms
 -- Basic Lean expressions
+-- Grammar is structured to avoid left-recursion:
+--   term -> arrowExpr -> orExpr -> andExpr -> cmpExpr -> addExpr -> mulExpr -> unaryExpr -> appExpr -> atomExpr
 -----------------------------------------------------
 piece CoreTerms
-  term ::= 
+  -- Top level: arrow types (right-associative)
+  term ::= arrowExpr                              → term ;
+  
+  arrowExpr ::= orExpr "→" arrowExpr              → arrowTy
+              | orExpr "×" arrowExpr              → prodTy
+              | orExpr                            → arrowExpr
+              ;
+  
+  -- Logical or
+  orExpr ::= andExpr "||" orExpr                  → or
+           | andExpr                              → orExpr
+           ;
+  
+  -- Logical and
+  andExpr ::= cmpExpr "&&" andExpr                → and
+            | cmpExpr                             → andExpr
+            ;
+  
+  -- Comparison operators (non-associative)
+  cmpExpr ::= addExpr "==" addExpr                → beq
+            | addExpr "!=" addExpr                → bne
+            | addExpr "<" addExpr                 → lt
+            | addExpr ">" addExpr                 → gt
+            | addExpr "<=" addExpr                → le
+            | addExpr ">=" addExpr                → ge
+            | addExpr                             → cmpExpr
+            ;
+  
+  -- Additive operators (left-to-right via iteration)
+  addExpr ::= mulExpr addOp*                      → addExpr ;
+  addOp ::= "+" mulExpr                           → addOp
+          | "-" mulExpr                           → subOp
+          | "++" mulExpr                          → appendOp
+          | "::" mulExpr                          → consOp
+          ;
+  
+  -- Multiplicative operators
+  mulExpr ::= unaryExpr mulOp*                    → mulExpr ;
+  mulOp ::= "*" unaryExpr                         → mulOp
+          | "/" unaryExpr                         → divOp
+          | "%" unaryExpr                         → modOp
+          ;
+  
+  -- Unary operators
+  unaryExpr ::= "-" unaryExpr                     → neg
+              | "!" unaryExpr                     → not
+              | "↑" unaryExpr                     → coeUp
+              | appExpr                           → unaryExpr
+              ;
+  
+  -- Application (juxtaposition, left-associative via iteration)
+  -- Includes postfix operators like projections
+  appExpr ::= primaryExpr postfixOp*              → appExpr ;
+  postfixOp ::= "@" primaryExpr                   → explicitArg
+              | primaryExpr                       → appArg
+              | ".1"                              → fstOp
+              | ".2"                              → sndOp
+              | ".fst"                            → fstOp
+              | ".snd"                            → sndOp
+              | "." <ident>                       → projOp
+              | "$" term                          → dollarOp
+              | "|>" term                         → pipeRightOp
+              | "<|" term                         → pipeLeftOp
+              | "with" "{" fieldAssign* "}"       → structUpdateOp
+              ;
+  
+  -- Primary expressions (no left recursion)
+  primaryExpr ::= 
     -- Universes
-    "Type" level?                       → typeUniv
-    | "Prop"                            → propUniv
-    | "Sort" level?                     → sortUniv
+    "Type" level?                                 → typeUniv
+    | "Prop"                                      → propUniv
+    | "Sort" level?                               → sortUniv
     -- Variables and literals
-    | <ident>                           → var
-    | <number>                          → numLit
-    | <string>                          → strLit
-    | "true"                            → trueLit
-    | "false"                           → falseLit
-    | "()" | "Unit.unit"                → unitLit
-    -- Application
-    | term term                         → app
-    | term "@" term                     → explicitApp
+    | <ident>                                     → var
+    | <number>                                    → numLit
+    | <string>                                    → strLit
+    | "true"                                      → trueLit
+    | "false"                                     → falseLit
+    | "()"                                        → unitLit
+    | "Unit.unit"                                 → unitLit
     -- Lambda and function
-    | "fun" binder+ "=>" term           → lam
-    | "λ" binder+ "=>" term             → lamUnicode
-    -- Pi and arrow types
-    | "∀" binder+ "," term              → forallTy
-    | "Π" binder+ "," term              → piTy
-    | term "→" term                     → arrowTy
-    -- Sigma and product types
-    | "Σ" binder+ "," term              → sigmaTy
-    | term "×" term                     → prodTy
-    -- Pairs and projections
-    | "(" term "," term ")"             → pair
-    | "⟨" termList "⟩"                  → anonCtor
-    | term ".1" | term ".fst"           → fst
-    | term ".2" | term ".snd"           → snd
-    | term "." <ident>                  → proj
+    | "fun" binder+ "=>" term                     → lam
+    | "λ" binder+ "=>" term                       → lamUnicode
+    -- Pi/forall/sigma types
+    | "∀" binder+ "," term                        → forallTy
+    | "Π" binder+ "," term                        → piTy
+    | "Σ" binder+ "," term                        → sigmaTy
     -- Let expressions
     | "let" <ident> typeAnn? ":=" term "in"? term → letExpr
     | "let" "rec" <ident> typeAnn? ":=" term "in"? term → letRecExpr
     -- Conditionals
-    | "if" term "then" term "else" term → ifExpr
+    | "if" term "then" term "else" term           → ifExpr
     | "if" "let" pattern ":=" term "then" term "else" term → ifLetExpr
     -- Match
-    | "match" termList "with" matchAlt* → matchExpr
+    | "match" termList "with" matchAlt*           → matchExpr
     -- Lists and arrays
-    | "[" termList "]"                  → listLit
-    | "#[" termList "]"                 → arrayLit
-    | term "::" term                    → cons
-    | term "++" term                    → append
+    | "[" termList? "]"                           → listLit
+    | "#[" termList? "]"                          → arrayLit
     -- Option
-    | "none"                            → noneLit
-    | "some" term                       → someLit
-    | "Option" term                     → optionTy
-    -- Operators (arithmetic)
-    | term "+" term                     → add
-    | term "-" term                     → sub
-    | term "*" term                     → mul
-    | term "/" term                     → div
-    | term "%" term                     → mod
-    | "-" term                          → neg
-    -- Operators (comparison)
-    | term "==" term                    → beq
-    | term "!=" term                    → bne
-    | term "<" term                     → lt
-    | term ">" term                     → gt
-    | term "<=" term                    → le
-    | term ">=" term                    → ge
-    -- Operators (logical)
-    | term "&&" term                    → and
-    | term "||" term                    → or
-    | "!" term                          → not
+    | "none"                                      → noneLit
+    | "some" primaryExpr                          → someLit
+    | "Option" primaryExpr                        → optionTy
     -- Do notation
-    | "do" doElem+                      → doBlock
+    | "do" doElem+                                → doBlock
     -- Tactics
-    | "by" tactic+                      → byTactic
-    -- Parentheses and hole
-    | "(" term ")"                      → paren
-    | "_"                               → hole
-    -- Coercion
-    | "↑" term                          → coeUp
-    -- Dollar application
-    | term "$" term                     → dollarApp
-    -- Pipe operators  
-    | term "|>" term                    → pipeRight
-    | term "<|" term                    → pipeLeft
-    -- Structure literal
-    | "{" fieldAssign* "}"              → structLit
-    | term "with" "{" fieldAssign* "}"  → structUpdate
-    -- Error/stuck
-    | "panic!" <string>                 → panic
-    | "sorry"                           → sorryTerm
+    | "by" tactic+                                → byTactic
+    -- Parenthesized expressions
+    | "(" term ")"                                → paren
+    | "(" term "," term ")"                       → pair
+    -- Anonymous constructors
+    | "⟨" termList "⟩"                            → anonCtor
+    -- Structure literals
+    | "{" fieldAssign* "}"                        → structLit
+    -- Hole and sorry
+    | "_"                                         → hole
+    | "sorry"                                     → sorryTerm
+    | "panic!" <string>                           → panic
     ;
 
-  termList ::= term ("," term)*         → termList ;
-  level ::= <number>                    → levelLit
-          | "max" level level           → levelMax
-          | "imax" level level          → levelIMax
-          | level "+" <number>          → levelSucc
+  termList ::= term ("," term)*                   → termList ;
+  level ::= <number>                              → levelLit
+          | "max" level level                     → levelMax
+          | "imax" level level                    → levelIMax
+          | level "+" <number>                    → levelSucc
           ;
 
 -----------------------------------------------------
@@ -304,11 +341,11 @@ piece Declarations
     | "example" ":" term ":=" term @nl
       → exampleDecl
     -- Namespaces
-    | "namespace" <ident> @nl @indent decl* @dedent "end" <ident> @nl
+    | "namespace" modulePath @nl @indent decl* @dedent "end" modulePath @nl
       → namespaceDecl
     | "section" <ident>? @nl @indent decl* @dedent "end" <ident>? @nl
       → sectionDecl
-    -- Imports and opens
+    -- Imports and opens  
     | "import" modulePath @nl
       → importDecl
     | "open" modulePath inClause? @nl
@@ -319,6 +356,31 @@ piece Declarations
     -- Attributes
     | "attribute" "[" <ident> "]" <ident> @nl
       → attributeDecl
+    -- Set options
+    | "set_option" modulePath term @nl
+      → setOptionDecl
+    -- Notation and macros
+    | "macro" <ident> param* ":" <ident> ":=" term @nl
+      → macroDecl
+    | "notation" <string> ":=" term @nl
+      → notationDecl
+    | "syntax" term* ":" <ident> @nl
+      → syntaxDecl
+    -- Private/protected modifiers
+    | "private" decl
+      → privateDecl
+    | "protected" decl
+      → protectedDecl
+    -- @[simp] style attributes
+    | "@[" <ident> "]" decl
+      → attrDecl
+    -- #check, #eval, #print commands
+    | "#check" term @nl
+      → checkCmd
+    | "#eval" term @nl
+      → evalCmd
+    | "#print" <ident> @nl
+      → printCmd
     ;
 
   param ::= <ident>                               → simpleParam

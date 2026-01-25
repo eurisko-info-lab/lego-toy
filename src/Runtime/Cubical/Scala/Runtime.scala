@@ -322,4 +322,139 @@ object Runtime {
   def sub(a: Int, b: Int): Int = a - b
   def gt(a: Int, b: Int): Boolean = a > b
   def geq(a: Int, b: Int): Boolean = a >= b
+
+  //============================================================================
+  // Test Infrastructure
+  //============================================================================
+
+  /** A test case: name, input term, expected output */
+  case class TestCase(name: String, input: Term, expected: Term)
+
+  /** Result of running a test */
+  sealed trait TestResult
+  case class Pass(name: String) extends TestResult
+  case class Fail(name: String, got: Term, expected: Term) extends TestResult
+
+  /** Run a single test case */
+  def runTest(rules: List[(Term, Term)], fuel: Int, tc: TestCase): TestResult = {
+    val result = normalize(fuel, rules, tc.input)
+    if (result == tc.expected) Pass(tc.name)
+    else Fail(tc.name, result, tc.expected)
+  }
+
+  /** Run all test cases */
+  def runTests(rules: List[(Term, Term)], fuel: Int, tests: List[TestCase]): List[TestResult] =
+    tests.map(runTest(rules, fuel, _))
+
+  /** Count passed and failed tests */
+  def countResults(results: List[TestResult]): (Int, Int) =
+    results.foldLeft((0, 0)) { case ((p, f), r) =>
+      r match {
+        case Pass(_) => (p + 1, f)
+        case Fail(_, _, _) => (p, f + 1)
+      }
+    }
+
+  /** Print test results */
+  def printResults(results: List[TestResult]): Unit = {
+    var passed = 0
+    var failed = 0
+    results.foreach {
+      case Pass(name) =>
+        println(s"✓ $name")
+        passed += 1
+      case Fail(name, got, expected) =>
+        println(s"✗ $name")
+        println(s"  Expected: $expected")
+        println(s"  Got:      $got")
+        failed += 1
+    }
+    println()
+    println(s"Results: $passed/${passed + failed} passed")
+  }
+
+  //============================================================================
+  // Standard Cubical Tests
+  //============================================================================
+
+  /** All standard Cubical tests */
+  def standardTests: List[TestCase] = List(
+    // Cofibration tests
+    TestCase("eq-refl", Con("cof_eq", List(Con("dim0", Nil), Con("dim0", Nil))), Con("cof_top", Nil)),
+    TestCase("eq-01", Con("cof_eq", List(Con("dim0", Nil), Con("dim1", Nil))), Con("cof_bot", Nil)),
+    TestCase("eq-10", Con("cof_eq", List(Con("dim1", Nil), Con("dim0", Nil))), Con("cof_bot", Nil)),
+    TestCase("and-top", Con("cof_and", List(Con("cof_top", Nil), Con("cof_top", Nil))), Con("cof_top", Nil)),
+    TestCase("and-bot", Con("cof_and", List(Con("cof_bot", Nil), Con("cof_top", Nil))), Con("cof_bot", Nil)),
+    TestCase("or-top", Con("cof_or", List(Con("cof_top", Nil), Con("cof_bot", Nil))), Con("cof_top", Nil)),
+    TestCase("or-bot", Con("cof_or", List(Con("cof_bot", Nil), Con("cof_bot", Nil))), Con("cof_bot", Nil)),
+    
+    // Level tests
+    TestCase("max-idem",
+      Con("lmax", List(Con("lsuc", List(Con("lzero", Nil))), Con("lsuc", List(Con("lzero", Nil))))),
+      Con("lsuc", List(Con("lzero", Nil)))),
+    TestCase("max-zero-l",
+      Con("lmax", List(Con("lzero", Nil), Con("lsuc", List(Con("lzero", Nil))))),
+      Con("lsuc", List(Con("lzero", Nil)))),
+    
+    // Beta reduction tests
+    TestCase("beta",
+      Con("app", List(Con("lam", List(Con("ix", List(Lit("0"))))), Lit("x"))),
+      Lit("x")),
+    TestCase("fst",
+      Con("fst", List(Con("pair", List(Lit("a"), Lit("b"))))),
+      Lit("a")),
+    TestCase("snd",
+      Con("snd", List(Con("pair", List(Lit("a"), Lit("b"))))),
+      Lit("b")),
+    
+    // Path tests
+    TestCase("refl-app",
+      Con("papp", List(Con("refl", List(Lit("a"))), Con("dim0", Nil))),
+      Lit("a")),
+    
+    // Kan operation tests
+    TestCase("coe-refl",
+      Con("coe", List(Con("dim0", Nil), Con("dim0", Nil), Con("univ", List(Con("lzero", Nil))), Lit("A"))),
+      Lit("A")),
+    
+    // V-type tests
+    TestCase("vin-0",
+      Con("vin", List(Con("dim0", Nil), Lit("a"), Lit("b"))),
+      Lit("a")),
+    TestCase("vin-1",
+      Con("vin", List(Con("dim1", Nil), Lit("a"), Lit("b"))),
+      Lit("b")),
+    
+    // Natural number tests
+    TestCase("nat-elim-zero",
+      Con("natElim", List(Var("P"), Var("z"), Var("s"), Con("zero", Nil))),
+      Var("z")),
+    
+    // Circle tests
+    TestCase("loop-0", Con("loop", List(Con("dim0", Nil))), Con("base", Nil)),
+    TestCase("loop-1", Con("loop", List(Con("dim1", Nil))), Con("base", Nil)),
+    TestCase("circle-elim-base",
+      Con("circleElim", List(Var("P"), Var("b"), Var("l"), Con("base", Nil))),
+      Var("b")),
+    
+    // Subtype tests
+    TestCase("sub-beta",
+      Con("subOut", List(Con("subIn", List(Lit("x"))))),
+      Lit("x"))
+  )
+
+  /** Run all standard Cubical tests */
+  def runStandardTests(): Unit = {
+    println("Running Cubical Standard Tests (Scala Runtime)")
+    println("===============================================")
+    val results = runTests(Nil, 1000, standardTests)
+    printResults(results)
+  }
+
+  /** Check if all standard tests pass */
+  def allTestsPass: Boolean = {
+    val results = runTests(Nil, 1000, standardTests)
+    val (_, failed) = countResults(results)
+    failed == 0
+  }
 }

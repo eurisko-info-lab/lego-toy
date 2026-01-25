@@ -531,6 +531,235 @@ pub fn conv(rules: &[(Term, Term)], fuel: usize, t1: &Term, t2: &Term) -> bool {
 // Tests
 //============================================================================
 
+/// A test case: name, input term, expected output
+#[derive(Debug, Clone)]
+pub struct TestCase {
+    pub name: String,
+    pub input: Term,
+    pub expected: Term,
+}
+
+/// Result of running a test
+#[derive(Debug)]
+pub enum TestResult {
+    Pass(String),
+    Fail(String, Term, Term),  // name, got, expected
+}
+
+/// Run a single test case
+pub fn run_test(rules: &[(Term, Term)], fuel: usize, tc: &TestCase) -> TestResult {
+    let result = normalize(fuel, rules, &tc.input);
+    if result == tc.expected {
+        TestResult::Pass(tc.name.clone())
+    } else {
+        TestResult::Fail(tc.name.clone(), result, tc.expected.clone())
+    }
+}
+
+/// Run all test cases
+pub fn run_tests(rules: &[(Term, Term)], fuel: usize, tests: &[TestCase]) -> Vec<TestResult> {
+    tests.iter().map(|tc| run_test(rules, fuel, tc)).collect()
+}
+
+/// Count passed and failed tests
+pub fn count_results(results: &[TestResult]) -> (usize, usize) {
+    let mut passed = 0;
+    let mut failed = 0;
+    for r in results {
+        match r {
+            TestResult::Pass(_) => passed += 1,
+            TestResult::Fail(_, _, _) => failed += 1,
+        }
+    }
+    (passed, failed)
+}
+
+/// Print test results
+pub fn print_results(results: &[TestResult]) {
+    let mut passed = 0;
+    let mut failed = 0;
+    for r in results {
+        match r {
+            TestResult::Pass(name) => {
+                println!("✓ {}", name);
+                passed += 1;
+            }
+            TestResult::Fail(name, got, expected) => {
+                println!("✗ {}", name);
+                println!("  Expected: {:?}", expected);
+                println!("  Got:      {:?}", got);
+                failed += 1;
+            }
+        }
+    }
+    println!();
+    println!("Results: {}/{} passed", passed, passed + failed);
+}
+
+/// Standard Cubical tests
+pub fn standard_tests() -> Vec<TestCase> {
+    vec![
+        // Cofibration tests
+        TestCase {
+            name: "eq-refl".into(),
+            input: Term::con("cof_eq", vec![Term::con("dim0", vec![]), Term::con("dim0", vec![])]),
+            expected: Term::con("cof_top", vec![]),
+        },
+        TestCase {
+            name: "eq-01".into(),
+            input: Term::con("cof_eq", vec![Term::con("dim0", vec![]), Term::con("dim1", vec![])]),
+            expected: Term::con("cof_bot", vec![]),
+        },
+        TestCase {
+            name: "eq-10".into(),
+            input: Term::con("cof_eq", vec![Term::con("dim1", vec![]), Term::con("dim0", vec![])]),
+            expected: Term::con("cof_bot", vec![]),
+        },
+        TestCase {
+            name: "and-top".into(),
+            input: Term::con("cof_and", vec![Term::con("cof_top", vec![]), Term::con("cof_top", vec![])]),
+            expected: Term::con("cof_top", vec![]),
+        },
+        TestCase {
+            name: "and-bot".into(),
+            input: Term::con("cof_and", vec![Term::con("cof_bot", vec![]), Term::con("cof_top", vec![])]),
+            expected: Term::con("cof_bot", vec![]),
+        },
+        TestCase {
+            name: "or-top".into(),
+            input: Term::con("cof_or", vec![Term::con("cof_top", vec![]), Term::con("cof_bot", vec![])]),
+            expected: Term::con("cof_top", vec![]),
+        },
+        TestCase {
+            name: "or-bot".into(),
+            input: Term::con("cof_or", vec![Term::con("cof_bot", vec![]), Term::con("cof_bot", vec![])]),
+            expected: Term::con("cof_bot", vec![]),
+        },
+        
+        // Level tests
+        TestCase {
+            name: "max-idem".into(),
+            input: Term::con("lmax", vec![
+                Term::con("lsuc", vec![Term::con("lzero", vec![])]),
+                Term::con("lsuc", vec![Term::con("lzero", vec![])])
+            ]),
+            expected: Term::con("lsuc", vec![Term::con("lzero", vec![])]),
+        },
+        TestCase {
+            name: "max-zero-l".into(),
+            input: Term::con("lmax", vec![
+                Term::con("lzero", vec![]),
+                Term::con("lsuc", vec![Term::con("lzero", vec![])])
+            ]),
+            expected: Term::con("lsuc", vec![Term::con("lzero", vec![])]),
+        },
+        
+        // Beta reduction tests
+        TestCase {
+            name: "beta".into(),
+            input: Term::con("app", vec![
+                Term::con("lam", vec![Term::con("ix", vec![Term::lit("0")])]),
+                Term::lit("x")
+            ]),
+            expected: Term::lit("x"),
+        },
+        TestCase {
+            name: "fst".into(),
+            input: Term::con("fst", vec![Term::con("pair", vec![Term::lit("a"), Term::lit("b")])]),
+            expected: Term::lit("a"),
+        },
+        TestCase {
+            name: "snd".into(),
+            input: Term::con("snd", vec![Term::con("pair", vec![Term::lit("a"), Term::lit("b")])]),
+            expected: Term::lit("b"),
+        },
+        
+        // Path tests
+        TestCase {
+            name: "refl-app".into(),
+            input: Term::con("papp", vec![
+                Term::con("refl", vec![Term::lit("a")]),
+                Term::con("dim0", vec![])
+            ]),
+            expected: Term::lit("a"),
+        },
+        
+        // Kan operation tests
+        TestCase {
+            name: "coe-refl".into(),
+            input: Term::con("coe", vec![
+                Term::con("dim0", vec![]),
+                Term::con("dim0", vec![]),
+                Term::con("univ", vec![Term::con("lzero", vec![])]),
+                Term::lit("A")
+            ]),
+            expected: Term::lit("A"),
+        },
+        
+        // V-type tests
+        TestCase {
+            name: "vin-0".into(),
+            input: Term::con("vin", vec![Term::con("dim0", vec![]), Term::lit("a"), Term::lit("b")]),
+            expected: Term::lit("a"),
+        },
+        TestCase {
+            name: "vin-1".into(),
+            input: Term::con("vin", vec![Term::con("dim1", vec![]), Term::lit("a"), Term::lit("b")]),
+            expected: Term::lit("b"),
+        },
+        
+        // Natural number tests
+        TestCase {
+            name: "nat-elim-zero".into(),
+            input: Term::con("natElim", vec![
+                Term::var("P"),
+                Term::var("z"),
+                Term::var("s"),
+                Term::con("zero", vec![])
+            ]),
+            expected: Term::var("z"),
+        },
+        
+        // Circle tests
+        TestCase {
+            name: "loop-0".into(),
+            input: Term::con("loop", vec![Term::con("dim0", vec![])]),
+            expected: Term::con("base", vec![]),
+        },
+        TestCase {
+            name: "loop-1".into(),
+            input: Term::con("loop", vec![Term::con("dim1", vec![])]),
+            expected: Term::con("base", vec![]),
+        },
+        TestCase {
+            name: "circle-elim-base".into(),
+            input: Term::con("circleElim", vec![
+                Term::var("P"),
+                Term::var("b"),
+                Term::var("l"),
+                Term::con("base", vec![])
+            ]),
+            expected: Term::var("b"),
+        },
+        
+        // Subtype tests
+        TestCase {
+            name: "sub-beta".into(),
+            input: Term::con("subOut", vec![Term::con("subIn", vec![Term::lit("x")])]),
+            expected: Term::lit("x"),
+        },
+    ]
+}
+
+/// Run standard Cubical tests
+pub fn run_standard_tests() {
+    println!("Running Cubical Standard Tests (Rust Runtime)");
+    println!("==============================================");
+    let tests = standard_tests();
+    let results = run_tests(&[], 1000, &tests);
+    print_results(&results);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,5 +790,22 @@ mod tests {
         ]);
         let simplified = simplify_cof(&cof);
         assert_eq!(simplified, Term::Con("cof_top".into(), vec![]));
+    }
+
+    #[test]
+    fn test_all_standard_cubical_tests() {
+        let tests = standard_tests();
+        let results = run_tests(&[], 1000, &tests);
+        let (passed, failed) = count_results(&results);
+        
+        // Print failures for debugging
+        for r in &results {
+            if let TestResult::Fail(name, got, expected) = r {
+                println!("FAIL: {} - got {:?}, expected {:?}", name, got, expected);
+            }
+        }
+        
+        assert_eq!(failed, 0, "Expected all tests to pass, but {} failed", failed);
+        println!("All {} standard Cubical tests passed!", passed);
     }
 }

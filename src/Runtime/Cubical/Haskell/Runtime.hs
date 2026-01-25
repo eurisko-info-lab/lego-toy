@@ -48,10 +48,21 @@ module Cubical.Runtime
   , conv
     -- * Arithmetic
   , add, sub, gt, geq
+    -- * Testing
+  , TestCase(..)
+  , TestResult(..)
+  , runTest
+  , runTests
+  , countResults
+  , printResults
+  , standardTests
+  , runStandardTests
+  , allTestsPass
   ) where
 
 import qualified Data.Map.Strict as Map
 import Data.List (find)
+import Control.Monad (foldM)
 
 --------------------------------------------------------------------------------
 -- Core Types
@@ -361,3 +372,139 @@ gt = (>)
 
 geq :: Int -> Int -> Bool
 geq = (>=)
+
+--------------------------------------------------------------------------------
+-- Test Infrastructure
+--------------------------------------------------------------------------------
+
+-- | A test case: name, input term, expected output
+data TestCase = TestCase
+  { testName :: String
+  , testInput :: Term
+  , testExpected :: Term
+  } deriving (Eq, Show)
+
+-- | Result of running a test
+data TestResult
+  = Pass String
+  | Fail String Term Term  -- name, got, expected
+  deriving (Eq, Show)
+
+-- | Run a single test case
+runTest :: [(Term, Term)] -> Int -> TestCase -> TestResult
+runTest rules fuel tc =
+  let result = normalize fuel rules (testInput tc)
+  in if result == testExpected tc
+     then Pass (testName tc)
+     else Fail (testName tc) result (testExpected tc)
+
+-- | Run all test cases
+runTests :: [(Term, Term)] -> Int -> [TestCase] -> [TestResult]
+runTests rules fuel = map (runTest rules fuel)
+
+-- | Count passed and failed tests
+countResults :: [TestResult] -> (Int, Int)
+countResults = foldr count (0, 0)
+  where
+    count (Pass _) (p, f) = (p + 1, f)
+    count (Fail _ _ _) (p, f) = (p, f + 1)
+
+-- | Print test results
+printResults :: [TestResult] -> IO ()
+printResults results = do
+  mapM_ printOne results
+  putStrLn ""
+  let (passed, failed) = countResults results
+  putStrLn $ "Results: " ++ show passed ++ "/" ++ show (passed + failed) ++ " passed"
+  where
+    printOne (Pass name) = putStrLn $ "✓ " ++ name
+    printOne (Fail name got expected) = do
+      putStrLn $ "✗ " ++ name
+      putStrLn $ "  Expected: " ++ show expected
+      putStrLn $ "  Got:      " ++ show got
+
+--------------------------------------------------------------------------------
+-- Standard Cubical Tests
+--------------------------------------------------------------------------------
+
+-- | All standard Cubical tests
+standardTests :: [TestCase]
+standardTests =
+  -- Cofibration tests
+  [ TestCase "eq-refl" (Con "cof_eq" [Con "dim0" [], Con "dim0" []]) (Con "cof_top" [])
+  , TestCase "eq-01" (Con "cof_eq" [Con "dim0" [], Con "dim1" []]) (Con "cof_bot" [])
+  , TestCase "eq-10" (Con "cof_eq" [Con "dim1" [], Con "dim0" []]) (Con "cof_bot" [])
+  , TestCase "and-top" (Con "cof_and" [Con "cof_top" [], Con "cof_top" []]) (Con "cof_top" [])
+  , TestCase "and-bot" (Con "cof_and" [Con "cof_bot" [], Con "cof_top" []]) (Con "cof_bot" [])
+  , TestCase "or-top" (Con "cof_or" [Con "cof_top" [], Con "cof_bot" []]) (Con "cof_top" [])
+  , TestCase "or-bot" (Con "cof_or" [Con "cof_bot" [], Con "cof_bot" []]) (Con "cof_bot" [])
+  
+  -- Level tests
+  , TestCase "max-idem"
+      (Con "lmax" [Con "lsuc" [Con "lzero" []], Con "lsuc" [Con "lzero" []]])
+      (Con "lsuc" [Con "lzero" []])
+  , TestCase "max-zero-l"
+      (Con "lmax" [Con "lzero" [], Con "lsuc" [Con "lzero" []]])
+      (Con "lsuc" [Con "lzero" []])
+  
+  -- Beta reduction tests
+  , TestCase "beta"
+      (Con "app" [Con "lam" [Con "ix" [Lit "0"]], Lit "x"])
+      (Lit "x")
+  , TestCase "fst"
+      (Con "fst" [Con "pair" [Lit "a", Lit "b"]])
+      (Lit "a")
+  , TestCase "snd"
+      (Con "snd" [Con "pair" [Lit "a", Lit "b"]])
+      (Lit "b")
+  
+  -- Path tests
+  , TestCase "refl-app"
+      (Con "papp" [Con "refl" [Lit "a"], Con "dim0" []])
+      (Lit "a")
+  
+  -- Kan operation tests
+  , TestCase "coe-refl"
+      (Con "coe" [Con "dim0" [], Con "dim0" [], Con "univ" [Con "lzero" []], Lit "A"])
+      (Lit "A")
+  
+  -- V-type tests
+  , TestCase "vin-0"
+      (Con "vin" [Con "dim0" [], Lit "a", Lit "b"])
+      (Lit "a")
+  , TestCase "vin-1"
+      (Con "vin" [Con "dim1" [], Lit "a", Lit "b"])
+      (Lit "b")
+  
+  -- Natural number tests
+  , TestCase "nat-elim-zero"
+      (Con "natElim" [Var "P", Var "z", Var "s", Con "zero" []])
+      (Var "z")
+  
+  -- Circle tests
+  , TestCase "loop-0" (Con "loop" [Con "dim0" []]) (Con "base" [])
+  , TestCase "loop-1" (Con "loop" [Con "dim1" []]) (Con "base" [])
+  , TestCase "circle-elim-base"
+      (Con "circleElim" [Var "P", Var "b", Var "l", Con "base" []])
+      (Var "b")
+  
+  -- Subtype tests
+  , TestCase "sub-beta"
+      (Con "subOut" [Con "subIn" [Lit "x"]])
+      (Lit "x")
+  ]
+
+-- | Run all standard Cubical tests
+runStandardTests :: IO ()
+runStandardTests = do
+  putStrLn "Running Cubical Standard Tests (Haskell Runtime)"
+  putStrLn "================================================="
+  let results = runTests [] 1000 standardTests
+  printResults results
+
+-- | Check if all standard tests pass (for use in test suites)
+allTestsPass :: Bool
+allTestsPass =
+  let results = runTests [] 1000 standardTests
+      (_, failed) = countResults results
+  in failed == 0

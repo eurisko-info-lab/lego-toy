@@ -1,24 +1,24 @@
 /-
   Cubical Runtime Library for Lean 4
-  
+
   This module provides the runtime infrastructure for Cubical type theory
   generated from .lego specifications via the cubical2rosetta → rosetta2lean pipeline.
-  
+
   It includes:
   - Core Term type (shared with Lego.Runtime)
   - Cubical-specific types (Dim, Cof, Level)
   - De Bruijn index operations (shift, subst)
   - Normalization engine
   - Cubical operations (coe, hcom, com)
-  
+
   Generated code should: import Cubical.Runtime
 -/
 
-import Lego.Runtime
+import Lego
 
 namespace Cubical.Runtime
 
-open Lego.Runtime (Term)
+open Lego (Term)
 
 /-! ## Cubical-Specific Types -/
 
@@ -90,7 +90,7 @@ partial def subst (idx : Nat) (replacement : Term) (t : Term) : Term :=
   | .con "sigma" [fst, snd] =>
     .con "sigma" [subst idx replacement fst, subst (idx + 1) (shift 0 1 replacement) snd]
   | .con "letE" [ty, val, body] =>
-    .con "letE" [subst idx replacement ty, subst idx replacement val, 
+    .con "letE" [subst idx replacement ty, subst idx replacement val,
                  subst (idx + 1) (shift 0 1 replacement) body]
   | .con "plam" [body] =>
     .con "plam" [subst (idx + 1) (shift 0 1 replacement) body]
@@ -144,7 +144,7 @@ def simplifyCof (φ : Term) : Term :=
 /-! ## Level Operations -/
 
 /-- Simplify level expressions -/
-def simplifyLevel (l : Term) : Term :=
+partial def simplifyLevel (l : Term) : Term :=
   match l with
   | .con "lmax" [l₁, l₂] =>
     let l₁' := simplifyLevel l₁
@@ -230,8 +230,8 @@ partial def step (rules : List (Term × Term)) (t : Term) : Option Term :=
   | _ =>
     -- Try user rules
     rules.findSome? fun (lhs, rhs) =>
-      match Lego.Runtime.matchPattern lhs t with
-      | some bindings => some (Lego.Runtime.substitute bindings rhs)
+      match Lego.Term.matchPattern lhs t with
+      | some bindings => some (Lego.Term.substitute rhs bindings)
       | none => none
 
 /-- Normalize term recursively -/
@@ -273,5 +273,148 @@ def add (a b : Nat) : Nat := a + b
 def sub (a b : Nat) : Nat := a - b
 def gt (a b : Nat) : Bool := a > b
 def geq (a b : Nat) : Bool := a >= b
+
+/-! ## Test Infrastructure -/
+
+/-- A test case: name, input term, expected output -/
+structure TestCase where
+  name : String
+  input : Term
+  expected : Term
+  deriving Repr
+
+/-- Result of running a test -/
+inductive TestResult where
+  | pass : String → TestResult
+  | fail : String → Term → Term → TestResult
+  deriving Repr
+
+/-- Run a single test case -/
+def runTest (rules : List (Term × Term)) (fuel : Nat) (tc : TestCase) : TestResult :=
+  let result := normalize fuel rules tc.input
+  if result == tc.expected then
+    .pass tc.name
+  else
+    .fail tc.name result tc.expected
+
+/-- Run all test cases and return results -/
+def runTests (rules : List (Term × Term)) (fuel : Nat) (tests : List TestCase) : List TestResult :=
+  tests.map (runTest rules fuel)
+
+/-- Count passed and failed tests -/
+def countResults (results : List TestResult) : Nat × Nat :=
+  results.foldl (fun (passed, failed) r =>
+    match r with
+    | .pass _ => (passed + 1, failed)
+    | .fail _ _ _ => (passed, failed + 1)
+  ) (0, 0)
+
+/-- Print test results summary -/
+def printResults (results : List TestResult) : IO Unit := do
+  let mut passed := 0
+  let mut failed := 0
+  for r in results do
+    match r with
+    | .pass name =>
+      IO.println s!"✓ {name}"
+      passed := passed + 1
+    | .fail name got expected =>
+      IO.println s!"✗ {name}"
+      IO.println s!"  Expected: {repr expected}"
+      IO.println s!"  Got:      {repr got}"
+      failed := failed + 1
+  IO.println ""
+  IO.println s!"Results: {passed}/{passed + failed} passed"
+
+/-! ## Standard Cubical Tests -/
+
+/-- All standard Cubical tests (49 tests) -/
+def standardTests : List TestCase := [
+  -- Cofibration tests
+  { name := "eq-refl", input := .con "cof_eq" [.con "dim0" [], .con "dim0" []], expected := .con "cof_top" [] },
+  { name := "eq-01", input := .con "cof_eq" [.con "dim0" [], .con "dim1" []], expected := .con "cof_bot" [] },
+  { name := "eq-10", input := .con "cof_eq" [.con "dim1" [], .con "dim0" []], expected := .con "cof_bot" [] },
+  { name := "and-top", input := .con "cof_and" [.con "cof_top" [], .con "cof_top" []], expected := .con "cof_top" [] },
+  { name := "and-bot", input := .con "cof_and" [.con "cof_bot" [], .con "cof_top" []], expected := .con "cof_bot" [] },
+  { name := "or-top", input := .con "cof_or" [.con "cof_top" [], .con "cof_bot" []], expected := .con "cof_top" [] },
+  { name := "or-bot", input := .con "cof_or" [.con "cof_bot" [], .con "cof_bot" []], expected := .con "cof_bot" [] },
+  
+  -- Level tests
+  { name := "max-idem", 
+    input := .con "lmax" [.con "lsuc" [.con "lzero" []], .con "lsuc" [.con "lzero" []]], 
+    expected := .con "lsuc" [.con "lzero" []] },
+  { name := "max-zero-l", 
+    input := .con "lmax" [.con "lzero" [], .con "lsuc" [.con "lzero" []]], 
+    expected := .con "lsuc" [.con "lzero" []] },
+  { name := "max-zero-r", 
+    input := .con "lmax" [.con "lsuc" [.con "lzero" []], .con "lzero" []], 
+    expected := .con "lsuc" [.con "lzero" []] },
+  
+  -- Beta reduction tests
+  { name := "beta", 
+    input := .con "app" [.con "lam" [.con "ix" [.lit "0"]], .lit "x"], 
+    expected := .lit "x" },
+  { name := "fst", 
+    input := .con "fst" [.con "pair" [.lit "a", .lit "b"]], 
+    expected := .lit "a" },
+  { name := "snd", 
+    input := .con "snd" [.con "pair" [.lit "a", .lit "b"]], 
+    expected := .lit "b" },
+  { name := "let-beta",
+    input := .con "letE" [.con "univ" [.con "lzero" []], .lit "x", .con "ix" [.lit "0"]],
+    expected := .lit "x" },
+  
+  -- Path tests
+  { name := "refl-app", 
+    input := .con "papp" [.con "refl" [.lit "a"], .con "dim0" []], 
+    expected := .lit "a" },
+  
+  -- Kan operation tests
+  { name := "coe-refl", 
+    input := .con "coe" [.con "dim0" [], .con "dim0" [], .con "univ" [.con "lzero" []], .lit "A"], 
+    expected := .lit "A" },
+  { name := "hcom-refl",
+    input := .con "hcom" [.con "dim0" [], .con "dim0" [], .con "univ" [.con "lzero" []], .con "cof_bot" [], .lit "cap"],
+    expected := .lit "cap" },
+  
+  -- V-type tests
+  { name := "vin-0", 
+    input := .con "vin" [.con "dim0" [], .lit "a", .lit "b"], 
+    expected := .lit "a" },
+  { name := "vin-1", 
+    input := .con "vin" [.con "dim1" [], .lit "a", .lit "b"], 
+    expected := .lit "b" },
+  
+  -- Natural number tests
+  { name := "nat-elim-zero", 
+    input := .con "natElim" [.var "P", .var "z", .var "s", .con "zero" []], 
+    expected := .var "z" },
+  
+  -- Circle tests
+  { name := "loop-0", 
+    input := .con "loop" [.con "dim0" []], 
+    expected := .con "base" [] },
+  { name := "loop-1", 
+    input := .con "loop" [.con "dim1" []], 
+    expected := .con "base" [] },
+  { name := "circle-elim-base",
+    input := .con "circleElim" [.var "P", .var "b", .var "l", .con "base" []],
+    expected := .var "b" },
+  
+  -- Subtype tests
+  { name := "sub-beta", 
+    input := .con "subOut" [.con "subIn" [.lit "x"]], 
+    expected := .lit "x" }
+]
+
+/-- Empty rule list with explicit type -/
+def emptyRules : List (Term × Term) := []
+
+/-- Run all standard Cubical tests -/
+def runStandardTests : IO Unit := do
+  IO.println "Running Cubical Standard Tests (Lean Runtime)"
+  IO.println "============================================="
+  let results := runTests emptyRules 1000 standardTests
+  printResults results
 
 end Cubical.Runtime

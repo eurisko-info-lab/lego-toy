@@ -1,0 +1,13 @@
+[package]
+name = "cubical_runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Cubical Type Theory Runtime for Rust"
+
+[lib]
+name = "cubical_runtime"
+path = "runtime.rs"
+
+[[test]]
+name = "cubical_tests"
+path = "runtime.rs"

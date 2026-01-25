@@ -24,6 +24,11 @@ package «lego» where
 lean_lib «Lego» where
   srcDir := "src"
 
+-- Cubical Runtime library (multi-target runtime for generated code)
+lean_lib «CubicalRuntime» where
+  srcDir := "src"
+  roots := #[`Runtime.Cubical.Lean.Runtime]
+
 -- Cubical type theory implementation (examples/Cubical)
 lean_lib «LegoCubical» where
   srcDir := "examples"

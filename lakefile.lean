@@ -32,7 +32,8 @@ lean_lib «LegoCubical» where
              `Cubical.Kan, `Cubical.VType, `Cubical.FHCom, `Cubical.ExtType,
              `Cubical.SubType, `Cubical.HIT, `Cubical.Signature, `Cubical.Cofibration,
              `Cubical.Splice, `Cubical.Tactic, `Cubical.Domain, `Cubical.Conversion,
-             `Cubical.RefineMonad, `Cubical.TermBuilder, `Cubical.Semantics, `Cubical.Visitor]
+             `Cubical.RefineMonad, `Cubical.TermBuilder, `Cubical.Semantics, `Cubical.Visitor,
+             `Cubical.TestRunner]
 
 -- Rosetta code generation pipeline
 lean_lib «Rosetta» where
@@ -106,6 +107,11 @@ lean_exe «lego-test-minimal» where
 -- Parse all files test: verifies all .lego, .rosetta, .lean files parse correctly
 lean_exe «lego-test-parse» where
   root := `test.lean.TestParseAll
+  moreLinkArgs := #["-lInit"]
+
+-- Embedded .lego tests: run tests defined inside .lego files
+lean_exe «lego-test-embedded» where
+  root := `test.lean.TestLegoEmbedded
   moreLinkArgs := #["-lInit"]
 
 -- Tools executables

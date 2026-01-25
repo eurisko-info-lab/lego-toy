@@ -787,6 +787,16 @@ partial def step : Expr → Option Expr
   -- vproj r A B equiv (vin r' a b) → b when r = r' (extract second component)
   | vproj _ _ _ _ (vin _ _ b) => some b
 
+  -- ===== Sub type computation rules =====
+  -- subOut (subIn e) → e (β-like reduction for Sub types)
+  | subOut (subIn e) => some e
+
+  -- ===== Circle loop computation =====
+  -- loop 0 → base (boundary of the loop)
+  | loop dim0 => some base
+  -- loop 1 → base (boundary of the loop)
+  | loop dim1 => some base
+
   -- No reduction at this level
   | _ => none
 

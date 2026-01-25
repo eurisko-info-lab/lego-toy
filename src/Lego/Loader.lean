@@ -1249,4 +1249,94 @@ def extractAttributes (ast : Term) : List AttrDef :=
   let rules := extractAttrRules ast
   combineAttrsWithRules defs rules
 
+/-! ## Test Extraction -/
+
+/-- A test case extracted from a .lego file -/
+structure TestCase where
+  name     : String
+  input    : Term
+  expected : Option Term  -- None if test just checks parsing
+  deriving Repr, Inhabited
+
+/-- Extract a test case from a DTest AST node.
+    Syntax: test "name" : input ~~> expected ; -/
+def extractTestCase (testDecl : Term) : Option TestCase :=
+  match testDecl with
+  | .con "DTest" args =>
+    -- DTest [lit "test", string "name", lit ":", input, lit "~~>", expected, lit ";"]
+    -- or     [lit "test", string "name", lit ":", input, lit ";"]
+    -- Filter out punctuation and extract parts
+    let filtered := args.filter fun t =>
+      t != .lit "test" && t != .lit ":" && t != .lit "~~>" && t != .lit ";"
+    match filtered with
+    | [.con "string" [.lit name], input, expected] =>
+      some { name := name, input := input, expected := some expected }
+    | [.con "string" [.lit name], input] =>
+      some { name := name, input := input, expected := none }
+    | [.lit name, input, expected] =>  -- Direct lit for name
+      some { name := name, input := input, expected := some expected }
+    | [.lit name, input] =>
+      some { name := name, input := input, expected := none }
+    | _ => none
+  | _ => none
+
+/-- Extract all test cases from a parsed .lego file AST -/
+partial def extractTests (ast : Term) : List TestCase :=
+  go ast
+where
+  go (t : Term) : List TestCase :=
+    match t with
+    | .con "DTest" _ =>
+      match extractTestCase t with
+      | some tc => [tc]
+      | none => []
+    | .con "DTestsBlock" args =>
+      -- Tests block: tests { testCase+ }
+      args.flatMap go
+    | .con "testCase" args =>
+      -- Individual test case within a tests block
+      -- testCase [string "name", lit "~~>", expected]
+      let filtered := args.filter fun t =>
+        t != .lit "~~>" && t != .lit ";"
+      match filtered with
+      | [.con "string" [.lit name], expected] =>
+        [{ name := name, input := .con "unit" [], expected := some expected }]
+      | [.lit name, expected] =>
+        [{ name := name, input := .con "unit" [], expected := some expected }]
+      | _ => []
+    | .con "DLang" ts => ts.flatMap go
+    | .con "DPiece" ts => ts.flatMap go
+    | .con "seq" ts => ts.flatMap go
+    | .con _ ts => ts.flatMap go
+    | _ => []
+
+/-- Extract test cases grouped by piece name -/
+partial def extractTestsByPiece (ast : Term) : List (String × List TestCase) :=
+  go "" ast
+where
+  go (currentPiece : String) (t : Term) : List (String × List TestCase) :=
+    match t with
+    | .con "DPiece" (.lit _ :: .con "ident" [.var pieceName] :: rest) =>
+      -- Recursively extract tests from this piece
+      let tests := rest.flatMap (go pieceName)
+      let directTests := rest.flatMap fun r =>
+        match r with
+        | .con "DTest" _ =>
+          match extractTestCase r with
+          | some tc => [tc]
+          | none => []
+        | _ => []
+      if directTests.isEmpty then tests
+      else (pieceName, directTests) :: tests
+    | .con "DTest" _ =>
+      if currentPiece.isEmpty then []
+      else
+        match extractTestCase t with
+        | some tc => [(currentPiece, [tc])]
+        | none => []
+    | .con "DLang" ts => ts.flatMap (go currentPiece)
+    | .con "seq" ts => ts.flatMap (go currentPiece)
+    | .con _ ts => ts.flatMap (go currentPiece)
+    | _ => []
+
 end Lego.Loader

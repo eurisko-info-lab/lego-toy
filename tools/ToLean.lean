@@ -191,16 +191,18 @@ def generateTokenizerModule (langName : String) (tokenProds : Productions) : Str
   -- Build main productions in priority order:
   -- 1. comment (skip before anything else)
   -- 2. ws (whitespace - skip)
-  -- 3. op3 (3-char operators like ::=)
-  -- 4. op2 (2-char operators like ~>, :=)
-  -- 5. string (before ident to handle "...")
-  -- 6. char (before ident to handle '...')
-  -- 7. special (before ident to handle <...>)
-  -- 8. hashident (before ident to handle #longest etc)
-  -- 9. ident
-  -- 10. number
-  -- 11. sym (single symbol fallback)
-  let priorityOrder := ["comment", "ws", "op3", "op2", "string", "char", "special", "hashident", "ident", "number", "sym"]
+  -- 3. hashident (before operator - operator's symch fallback would only match '#')
+  -- 4. special (before operator - operator's symch fallback would only match '<')
+  -- 5. operator (multi-char operators with #longest - includes symch fallback)
+  -- 6. op3 (3-char operators like ::= - legacy separate rules)
+  -- 7. op2 (2-char operators like ~>, := - legacy separate rules)
+  -- 8. layout (pretty-print annotations - legacy separate rules)
+  -- 9. string (before ident to handle "...")
+  -- 10. char (before ident to handle '...')
+  -- 11. ident
+  -- 12. number
+  -- 13. sym (single symbol fallback - legacy separate rule)
+  let priorityOrder := ["comment", "ws", "hashident", "special", "operator", "op3", "op2", "layout", "string", "char", "ident", "number", "sym"]
   let mainProds := priorityOrder.filterMap fun shortName =>
     -- Find the production with this short name
     tokenProds.find? (fun (name, _) =>

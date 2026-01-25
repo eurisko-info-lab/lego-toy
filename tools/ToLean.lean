@@ -123,6 +123,9 @@ partial def exprToLean (pieceName : String) (g : GrammarExpr) : String :=
   | .mk (.longest gs) =>
     let exprs := gs.map (exprToLean pieceName) |> String.intercalate ", "
     s!"(longest [{exprs}])"
+  -- Layout annotations
+  | .mk (.layout kind) =>
+    s!"(layout \"{kind}\")"
 
 /-- Convert a single production to Lean tuple -/
 def prodToLean (pieceName : String) (name : String) (expr : GrammarExpr) : String :=

@@ -214,7 +214,8 @@ abbrev TokenStream := List Token
     PEG-style operators for lexer support:
     - cut: commit point (no backtracking past this)
     - ordered: PEG ordered choice (first match wins, left-biased)
-    - longest: maximal munch (try all alternatives, pick longest match) -/
+    - longest: maximal munch (try all alternatives, pick longest match)
+    - layout: layout annotations for pretty-printing (@nl, @indent, @dedent, @sp, @nsp) -/
 inductive GrammarF (α : Type) where
   | empty   : GrammarF α                    -- ε (identity for alt)
   | lit     : String → GrammarF α           -- literal string
@@ -228,6 +229,8 @@ inductive GrammarF (α : Type) where
   | cut     : α → GrammarF α                -- commit point: !g (no backtrack on success)
   | ordered : α → α → GrammarF α            -- ordered choice: g1 / g2 (PEG-style, first wins)
   | longest : List α → GrammarF α           -- maximal munch: try all, pick longest
+  -- Layout annotations (for pretty-printing, ignored during parsing)
+  | layout  : String → GrammarF α           -- layout annotation: nl, indent, dedent, sp, nsp
   deriving Repr, BEq
 
 /-- Fixed point of GrammarF -/
@@ -250,6 +253,8 @@ def node (n : String) (g : GrammarExpr) : GrammarExpr := mk (.node n g)
 def cut (g : GrammarExpr) : GrammarExpr := mk (.cut g)           -- commit: !g
 def ordered (a b : GrammarExpr) : GrammarExpr := mk (.ordered a b)  -- ordered choice: a / b
 def longest (gs : List GrammarExpr) : GrammarExpr := mk (.longest gs)  -- maximal munch
+-- Layout annotations
+def layout (kind : String) : GrammarExpr := mk (.layout kind)    -- @nl, @indent, @dedent, @sp, @nsp
 
 -- Infix notation
 infixr:65 " ⬝ " => seq   -- sequence

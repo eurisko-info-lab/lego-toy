@@ -301,6 +301,10 @@ def lexGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (st : LexSta
           else some (bestAcc, bestSt)
       ) none
 
+  | .mk (.layout _) =>
+    -- Layout annotations are no-op for lexing
+    some (st.acc, st)
+
 /-! ## Grammar-Driven Tokenizer -/
 
 /-- Try to lex a token using a specific production -/
@@ -621,6 +625,10 @@ partial def parseGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (s
       ) none
       (best, st.memo)
 
+  | .mk (.layout _) =>
+    -- Layout annotations are ignored during parsing (succeed with empty match)
+    (some (.con "unit" [], st), st.memo)
+
 /-- Interpret a GrammarExpr for printing (backward direction).
     Uses fuel for termination. -/
 def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term) (acc : List Token) : Option (List Token) :=
@@ -701,6 +709,16 @@ def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term)
   | .mk (.longest gs) =>
     -- For printing, longest is like trying alternatives
     gs.findSome? (printGrammar fuel' prods · t acc)
+
+  | .mk (.layout kind) =>
+    -- Layout annotations produce special tokens for pretty-printing
+    match kind with
+    | "nl"     => some (acc ++ [.sym "\n"])
+    | "indent" => some (acc ++ [.sym "⟨indent⟩"])  -- Placeholder - actual indent handled by formatter
+    | "dedent" => some (acc ++ [.sym "⟨dedent⟩"])
+    | "sp"     => some (acc ++ [.sym " "])
+    | "nsp"    => some acc  -- No space - just succeed without adding anything
+    | _        => some acc  -- Unknown layout, ignore
 
 /-! ## Parameterized Grammar Interpretation (AST typeclass) -/
 
@@ -810,6 +828,10 @@ def parseGrammarT [AST α] (fuel : Nat) (prods : Productions) (g : GrammarExpr)
             if st'.tokens.length < bestSt.tokens.length then some (t, st')  -- fewer remaining = more consumed
             else some (bestT, bestSt)
         ) none
+
+    | .mk (.layout _) =>
+      -- Layout annotations are ignored during parsing
+      some (AST.unit, st)
 termination_by fuel
 
 /-- Helper: parse a star (zero or more) with fuel -/

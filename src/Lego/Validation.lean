@@ -168,6 +168,8 @@ partial def extractRefs : GrammarExpr → HashSet String
     | .cut g => extractRefs g
     | .ordered g1 g2 => extractRefs g1 |>.insertMany (extractRefs g2)
     | .longest gs => gs.foldl (fun acc g => acc.insertMany (extractRefs g)) HashSet.emptyWithCapacity
+    -- Layout annotations
+    | .layout _ => HashSet.emptyWithCapacity
 
 /-- Check for undefined production references -/
 def checkUndefinedRefs (grammar : HashMap String GrammarExpr) : ValidationResult :=

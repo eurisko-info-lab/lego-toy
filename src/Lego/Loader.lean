@@ -286,12 +286,12 @@ partial def astToGrammarExpr (nameMap : HashMap String String := HashMap.emptyWi
     | none => none  -- malformed annotated
 
   -- Layout annotations: @nl, @indent, @dedent, @sp, @nsp
-  -- These are purely for pretty-printing - ignore during parsing (treat as empty)
-  | .con "layoutNl" _ => some GrammarExpr.empty
-  | .con "layoutIndent" _ => some GrammarExpr.empty
-  | .con "layoutDedent" _ => some GrammarExpr.empty
-  | .con "layoutSpace" _ => some GrammarExpr.empty
-  | .con "layoutNoSpace" _ => some GrammarExpr.empty
+  -- These are for pretty-printing - generate layout expressions
+  | .con "layoutNl" _ => some (GrammarExpr.layout "nl")
+  | .con "layoutIndent" _ => some (GrammarExpr.layout "indent")
+  | .con "layoutDedent" _ => some (GrammarExpr.layout "dedent")
+  | .con "layoutSpace" _ => some (GrammarExpr.layout "sp")
+  | .con "layoutNoSpace" _ => some (GrammarExpr.layout "nsp")
 
   -- Fallback for unrecognized patterns
   | _ => none
@@ -516,6 +516,8 @@ partial def extractSymbols (g : GrammarExpr) : List String :=
   | .mk (.cut g') => extractSymbols g'
   | .mk (.ordered g1 g2) => extractSymbols g1 ++ extractSymbols g2
   | .mk (.longest gs) => gs.flatMap extractSymbols
+  -- Layout annotations
+  | .mk (.layout _) => []
 
 /-- Extract all symbols from productions -/
 def extractAllSymbols (prods : Productions) : List String :=
@@ -540,6 +542,8 @@ partial def extractStartLiterals (g : GrammarExpr) : List String :=
   | .mk (.cut g') => extractStartLiterals g'
   | .mk (.ordered g1 g2) => extractStartLiterals g1 ++ extractStartLiterals g2
   | .mk (.longest gs) => gs.flatMap extractStartLiterals
+  -- Layout annotations
+  | .mk (.layout _) => []
 
 /-- Check if a grammar expression ends with a star (greedy) -/
 partial def endsWithStar : GrammarExpr → Bool
@@ -555,6 +559,8 @@ partial def endsWithStar : GrammarExpr → Bool
   | .mk (.cut g') => endsWithStar g'
   | .mk (.ordered g1 g2) => endsWithStar g1 || endsWithStar g2
   | .mk (.longest gs) => gs.any endsWithStar
+  -- Layout annotations
+  | .mk (.layout _) => false
 
 /-- Helper: check if a grammar can end via ref to a star-ending production -/
 partial def canEndViaRef (starEnds : List String) (g : GrammarExpr) : Bool :=
@@ -571,6 +577,8 @@ partial def canEndViaRef (starEnds : List String) (g : GrammarExpr) : Bool :=
   | .mk (.cut g') => canEndViaRef starEnds g'
   | .mk (.ordered g1 g2) => canEndViaRef starEnds g1 || canEndViaRef starEnds g2
   | .mk (.longest gs) => gs.any (canEndViaRef starEnds ·)
+  -- Layout annotations
+  | .mk (.layout _) => false
 
 /-- Compute which productions can transitively end with a star.
     Returns a set of production names that can end with star.
@@ -626,6 +634,8 @@ partial def extractEndRef : GrammarExpr → Option String
     match gs.filterMap extractEndRef |>.eraseDups with
     | [r] => some r
     | _ => none
+  -- Layout annotations
+  | .mk (.layout _) => none
 
 /-- Find literals that follow a reference in a grammar.
     Returns pairs of (refName, literalThatFollows).
@@ -651,6 +661,8 @@ partial def findRefFollows (g : GrammarExpr) : List (String × String) :=
   | .mk (.cut g') => findRefFollows g'
   | .mk (.ordered g1 g2) => findRefFollows g1 ++ findRefFollows g2
   | .mk (.longest gs) => gs.flatMap findRefFollows
+  -- Layout annotations
+  | .mk (.layout _) => []
 
 /-- Extract keywords that need to be reserved.
 

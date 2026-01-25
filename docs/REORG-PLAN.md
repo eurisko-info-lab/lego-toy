@@ -416,7 +416,8 @@ For full interchangeability:
 3. [x] Document the swap process in `docs/BOOTSTRAP.md`
 4. [x] Fixed `bootstrap.sh` path after test/ split (test/lego/Bootstrap.lego)
 5. [x] Disabled `cubical-compare` target (depends on removed Cubical impl)
-   **Note**: Bootstrap is not canonical - generated files need regeneration
+6. [x] Fixed bootstrap fixpoint - added `operator` to tokenizer priority order
+   **Status**: Bootstrap reaches fixpoint: `tolean_{V_n}(Bootstrap.lego) = V_n`
 
 ### Phase 5: Merge tools/ and pipelines/ ✅ DONE
 Both directories contained code generation/transformation executables.

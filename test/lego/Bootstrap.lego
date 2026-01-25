@@ -392,7 +392,10 @@ piece File
                | effectDecl | opticsDecl | adjunctionDecl | kanDecl | operadDecl | natDecl 
                | macroDecl | lawsDecl ;
   prodDecl   ::= ident "::=" expr ";" → DGrammar ;
-  ruleDecl   ::= "rule" ident ":"? pattern ruleArrow template ruleGuard? ";" → DRule ;
+  -- Rule declarations with optional annotation (@file, @decl, @expr, @type, @entry)
+  ruleDecl   ::= ruleAnnot? "rule" ident ":"? pattern ruleArrow template ruleGuard? ";" → DRule ;
+  ruleAnnot  ::= "@" ruleAnnotKind → annot ;
+  ruleAnnotKind ::= "file" → file | "decl" → decl | "expr" → expr | "type" → type | "entry" → entry ;
   ruleArrow  ::= "~~>" | "~>" ;
   ruleGuard  ::= "when" sideCondition ("," sideCondition)* → guard ;
   -- Derive operations from grammar (algebraic recursion schemes)

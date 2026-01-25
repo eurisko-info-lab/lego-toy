@@ -1,23 +1,29 @@
 # Copilot Instructions for Lego-Toy
 
+## HARD RULES (NO EXCEPTIONS)
+
+1. **Grammar Loading Order is FIXED**: The hardcoded bootstrap grammar is used ONLY to load Bootstrap.lego. Once loaded, Bootstrap.lego's grammar REPLACES the hardcoded version. Then Lego.lego is loaded, providing the full grammar to parse any other .lego file. This order is immutable across ALL execution paths including tests.
+
+2. **Use ./tmp NOT /tmp**: Always use the local `./tmp` directory for temporary files, never system `/tmp`.
+
 ## Project Overview
 
 Lego is a self-hosting meta-language for defining domain-specific languages (DSLs) using grammar-driven rewriting. It compiles to multiple target languages (Lean, Scala, Haskell, Rust).
 
 ## Architecture
 
-### Bootstrap Chain
+### Bootstrap Chain (FIXED ORDER - NO EXCEPTIONS)
 ```
 Hardcoded Grammar (generated/*.lean)
-    → parses test/lego/Bootstrap.lego
-    → defines core syntax (lang, piece, token, rule, type, test)
+    → parses test/lego/Bootstrap.lego ONLY
+    → Bootstrap.lego grammar REPLACES hardcoded
     
 Bootstrap.lego grammar
     → parses src/Lego/Lego.lego  
-    → extends with semantic constructs (ADT, Judgments, etc.)
+    → Lego.lego grammar becomes the active grammar
     
 Lego.lego grammar
-    → parses all other *.lego files
+    → parses ALL other *.lego files
 ```
 
 **Critical**: Bootstrap.lego defines SYNTAX. Lego.lego defines SEMANTICS.

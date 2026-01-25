@@ -61,7 +61,7 @@ lean_lib «LegoGenerated» where
 lean_lib «ToolsLib» where
   srcDir := "tools"
   roots := #[`Pipeline, `RosettaPipeline, `MultiTargetPipeline, `GrammarDrivenPipeline,
-             `ToLean, `ToAntlr, `ToTreeSitter, `LegoGen]
+             `ToLean, `ToAntlr, `ToTreeSitter]
 
 lean_exe «test-grammar-driven» where
   root := `test.lean.TestGrammarDriven
@@ -76,10 +76,6 @@ lean_exe «lego» where
 lean_exe «lego-test» where
   root := `test.lean.Test
   -- Ensure proper linking with Init library
-  moreLinkArgs := #["-lInit"]
-
-lean_exe «lego-test-red» where
-  root := `test.lean.TestRed
   moreLinkArgs := #["-lInit"]
 
 lean_exe «lego-test-cool» where
@@ -113,11 +109,6 @@ lean_exe «totreesitter» where
 
 lean_exe «tolean» where
   root := `tools.ToLean
-
--- Code Generation (Single Source of Truth)
--- Generates RedTT, CoolTT, and Lean from Grammar.sexpr
-lean_exe «lego-gen» where
-  root := `tools.LegoGen
 
 -- Pipeline: CubicalTT → cubical2rosetta → rosetta2lean
 lean_exe «cubical-pipeline» where

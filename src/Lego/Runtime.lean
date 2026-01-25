@@ -28,10 +28,14 @@ open Lego
 
 /-! ## Runtime State -/
 
-/-- The runtime holds the loaded bootstrap grammar -/
+/-- The runtime holds the loaded grammars from the bootstrap chain -/
 structure Runtime where
-  /-- The loaded grammar from Bootstrap.lego -/
+  /-- The loaded grammar from Lego.lego (extends Bootstrap) for .lego files -/
   grammar : Loader.LoadedGrammar
+  /-- The loaded grammar from Rosetta.lego (extends Lego) for .rosetta files -/
+  rosettaGrammar : Loader.LoadedGrammar
+  /-- The loaded grammar from Lean.lego for .lean files -/
+  leanGrammar : Loader.LoadedGrammar
   /-- Loaded rules for normalization -/
   rules : List Rule
 
@@ -40,22 +44,27 @@ structure Runtime where
 /-- Default path to Bootstrap.lego -/
 def defaultBootstrapPath : String := "./test/lego/Bootstrap.lego"
 
-/-- Load Bootstrap.lego using the hardcoded grammar, return the full grammar -/
-def loadBootstrap (path : String := defaultBootstrapPath) : IO (Except String Runtime) := do
+/-- Default path to Lego.lego -/
+def defaultLegoPath : String := "./src/Lego/Lego.lego"
+
+/-- Default path to Rosetta.lego -/
+def defaultRosettaPath : String := "./src/Rosetta/Rosetta.lego"
+
+/-- Default path to Lean.lego -/
+def defaultLeanPath : String := "./src/Rosetta/Lean.lego"
+
+/-- Load Bootstrap.lego using the hardcoded grammar, return Bootstrap's grammar -/
+def loadBootstrapOnly (path : String := defaultBootstrapPath) : IO (Except String Loader.LoadedGrammar) := do
   try
     let content ← IO.FS.readFile path
-    -- Verify this is actually Bootstrap.lego
     if !path.endsWith "Bootstrap.lego" then
-      return Except.error s!"loadBootstrap only accepts Bootstrap.lego, got: {path}"
-    -- Step 1: Parse Bootstrap.lego with hardcoded grammar
+      return Except.error s!"loadBootstrapOnly only accepts Bootstrap.lego, got: {path}"
     match Bootstrap.parseLegoFile content with
     | none => return Except.error s!"Failed to parse {path} with hardcoded grammar"
     | some ast =>
-      -- Step 2: Extract the full grammar from parsed Bootstrap.lego
       let prods := Loader.extractAllProductions ast
       let tokenProds := Loader.extractTokenProductions ast
       let symbols := Loader.extractAllSymbols prods
-      let rules := Loader.extractRules ast
       let validation := Loader.validateProductions prods
       let grammar : Loader.LoadedGrammar := {
         productions := prods
@@ -64,28 +73,104 @@ def loadBootstrap (path : String := defaultBootstrapPath) : IO (Except String Ru
         startProd := "File.legoFile"
         validation := validation
       }
-      -- Step 3: Create runtime with loaded grammar
-      let runtime : Runtime := {
-        grammar := grammar
-        rules := rules
-      }
-      return Except.ok runtime
+      return Except.ok grammar
   catch e =>
     return Except.error s!"Error loading {path}: {e}"
 
-/-- Load bootstrap, failing if Bootstrap.lego cannot be loaded.
-    Lego does not use fallbacks - if Bootstrap.lego fails, that's a fatal error. -/
-def loadBootstrapOrError (path : String := defaultBootstrapPath) : IO Runtime := do
-  match ← loadBootstrap path with
+/-- Load the full bootstrap chain: Hardcoded → Bootstrap.lego → Lego.lego → Rosetta.lego → Lean.lego
+    Returns a Runtime with grammars for parsing .lego, .rosetta, and .lean files -/
+def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
+                  (legoPath : String := defaultLegoPath)
+                  (rosettaPath : String := defaultRosettaPath)
+                  (leanPath : String := defaultLeanPath) : IO (Except String Runtime) := do
+  -- Step 1: Load Bootstrap.lego with hardcoded grammar
+  match ← loadBootstrapOnly bootstrapPath with
+  | .error e => return Except.error s!"Failed to load Bootstrap.lego: {e}"
+  | .ok bootstrapGrammar =>
+    -- Step 2: Parse Lego.lego with Bootstrap's grammar
+    try
+      let legoContent ← IO.FS.readFile legoPath
+      match Loader.parseWithGrammarE bootstrapGrammar legoContent with
+      | .error e => return Except.error s!"Failed to parse {legoPath} with Bootstrap grammar: {e}"
+      | .ok legoAst =>
+        -- Step 3: Extract Lego.lego's productions and merge with Bootstrap
+        let legoProds := Loader.extractAllProductions legoAst
+        let legoTokenProds := Loader.extractTokenProductions legoAst
+        let legoRules := Loader.extractRules legoAst
+        -- Merge: Lego productions + Bootstrap productions (Lego overrides)
+        let mergedLegoProds := legoProds ++ bootstrapGrammar.productions
+        let mergedLegoTokenProds := legoTokenProds ++ bootstrapGrammar.tokenProductions
+        let mergedLegoSymbols := Loader.extractAllSymbols mergedLegoProds
+        let legoGrammar : Loader.LoadedGrammar := {
+          productions := mergedLegoProds
+          tokenProductions := mergedLegoTokenProds
+          symbols := mergedLegoSymbols
+          startProd := "File.legoFile"
+        }
+        -- Step 4: Parse Rosetta.lego with Lego's grammar
+        let rosettaContent ← IO.FS.readFile rosettaPath
+        match Loader.parseWithGrammarE legoGrammar rosettaContent with
+        | .error e => return Except.error s!"Failed to parse {rosettaPath} with Lego grammar: {e}"
+        | .ok rosettaAst =>
+          -- Step 5: Extract Rosetta.lego's productions and merge with Lego
+          let rosettaProds := Loader.extractAllProductions rosettaAst
+          let rosettaTokenProds := Loader.extractTokenProductions rosettaAst
+          let rosettaRules := Loader.extractRules rosettaAst
+          -- Merge: Rosetta productions + Lego productions
+          let mergedRosettaProds := rosettaProds ++ mergedLegoProds
+          let mergedRosettaTokenProds := rosettaTokenProds ++ mergedLegoTokenProds
+          let mergedRosettaSymbols := Loader.extractAllSymbols mergedRosettaProds
+          let rosettaGrammar : Loader.LoadedGrammar := {
+            productions := mergedRosettaProds
+            tokenProductions := mergedRosettaTokenProds
+            symbols := mergedRosettaSymbols
+            startProd := "File.rosettaFile"  -- Rosetta files use rosettaFile start
+          }
+          -- Step 6: Parse Lean.lego with Lego's grammar
+          let leanContent ← IO.FS.readFile leanPath
+          match Loader.parseWithGrammarE legoGrammar leanContent with
+          | .error e => return Except.error s!"Failed to parse {leanPath} with Lego grammar: {e}"
+          | .ok leanAst =>
+            -- Step 7: Extract Lean.lego's productions and merge with Lego
+            let leanProds := Loader.extractAllProductions leanAst
+            let leanTokenProds := Loader.extractTokenProductions leanAst
+            let leanRules := Loader.extractRules leanAst
+            -- Merge: Lean productions + Lego productions
+            let mergedLeanProds := leanProds ++ mergedLegoProds
+            let mergedLeanTokenProds := leanTokenProds ++ mergedLegoTokenProds
+            let mergedLeanSymbols := Loader.extractAllSymbols mergedLeanProds
+            let leanGrammar : Loader.LoadedGrammar := {
+              productions := mergedLeanProds
+              tokenProductions := mergedLeanTokenProds
+              symbols := mergedLeanSymbols
+              startProd := "Module.module"  -- Lean files use module start
+            }
+            let runtime : Runtime := {
+              grammar := legoGrammar
+              rosettaGrammar := rosettaGrammar
+              leanGrammar := leanGrammar
+              rules := legoRules ++ rosettaRules ++ leanRules
+            }
+            return Except.ok runtime
+    catch e =>
+      return Except.error s!"Error loading: {e}"
+
+/-- Load bootstrap chain, failing if any grammar file cannot be loaded.
+    Lego does not use fallbacks - if any fails, that's a fatal error. -/
+def loadBootstrapOrError (bootstrapPath : String := defaultBootstrapPath)
+                         (legoPath : String := defaultLegoPath)
+                         (rosettaPath : String := defaultRosettaPath)
+                         (leanPath : String := defaultLeanPath) : IO Runtime := do
+  match ← loadBootstrap bootstrapPath legoPath rosettaPath leanPath with
   | Except.ok rt => return rt
   | Except.error e =>
     IO.eprintln s!"FATAL: {e}"
-    IO.eprintln "Bootstrap.lego must be loadable for Lego to function."
+    IO.eprintln "Bootstrap.lego, Lego.lego, Rosetta.lego and Lean.lego must be loadable for Lego to function."
     IO.Process.exit 1
 
 /-! ## Parsing with Runtime Grammar -/
 
-/-- Parse a .lego file using a runtime-loaded grammar (NOT the hardcoded one) -/
+/-- Parse a .lego file using Lego.lego's grammar (NOT hardcoded or Bootstrap alone) -/
 def parseLegoFile (rt : Runtime) (content : String) : Option Term :=
   Loader.parseWithGrammar rt.grammar content
 
@@ -102,6 +187,42 @@ def parseLegoFilePath (rt : Runtime) (path : String) : IO (Option Term) := do
 def parseLegoFilePathE (rt : Runtime) (path : String) : IO (Except ParseError Term) := do
   let content ← IO.FS.readFile path
   return parseLegoFileE rt content
+
+/-- Parse a .rosetta file using Rosetta.lego's grammar -/
+def parseRosettaFile (rt : Runtime) (content : String) : Option Term :=
+  Loader.parseWithGrammar rt.rosettaGrammar content
+
+/-- Parse a .rosetta file with detailed error reporting -/
+def parseRosettaFileE (rt : Runtime) (content : String) : Except ParseError Term :=
+  Loader.parseWithGrammarE rt.rosettaGrammar content
+
+/-- Parse a .rosetta file from path -/
+def parseRosettaFilePath (rt : Runtime) (path : String) : IO (Option Term) := do
+  let content ← IO.FS.readFile path
+  return parseRosettaFile rt content
+
+/-- Parse a .rosetta file from path with detailed error reporting -/
+def parseRosettaFilePathE (rt : Runtime) (path : String) : IO (Except ParseError Term) := do
+  let content ← IO.FS.readFile path
+  return parseRosettaFileE rt content
+
+/-- Parse a .lean file using Lean.lego's grammar -/
+def parseLeanFile (rt : Runtime) (content : String) : Option Term :=
+  Loader.parseWithGrammar rt.leanGrammar content
+
+/-- Parse a .lean file with detailed error reporting -/
+def parseLeanFileE (rt : Runtime) (content : String) : Except ParseError Term :=
+  Loader.parseWithGrammarE rt.leanGrammar content
+
+/-- Parse a .lean file from path -/
+def parseLeanFilePath (rt : Runtime) (path : String) : IO (Option Term) := do
+  let content ← IO.FS.readFile path
+  return parseLeanFile rt content
+
+/-- Parse a .lean file from path with detailed error reporting -/
+def parseLeanFilePathE (rt : Runtime) (path : String) : IO (Except ParseError Term) := do
+  let content ← IO.FS.readFile path
+  return parseLeanFileE rt content
 
 /-- Load a language from a .lego file with grammar inheritance.
     When a language declares `lang X (Parent) :=`, we:
@@ -278,33 +399,67 @@ def lego2lean (rt : Runtime) (sourcePath : String) (rosettaPath : String := "./s
 
 /-! ## Global Initialization -/
 
-/-- Initialize the Lego runtime by loading Bootstrap.lego.
-    This MUST be called before parsing any user .lego files.
+/-- Initialize the Lego runtime by loading Bootstrap.lego → Lego.lego → Rosetta.lego → Lean.lego.
+    This MUST be called before parsing any user .lego, .rosetta, or .lean files.
     Returns the runtime that should be used for all subsequent parsing.
 
     The bootstrap chain is:
-      Hardcoded Grammar → parses → Bootstrap.lego → Full Grammar → parses → *.lego
+      Hardcoded Grammar → parses → Bootstrap.lego
+      Bootstrap Grammar → parses → Lego.lego
+      Lego Grammar → parses → Rosetta.lego
+      Lego Grammar → parses → Lean.lego
+      Lego Grammar → parses → *.lego files
+      Rosetta Grammar → parses → *.rosetta files
+      Lean Grammar → parses → *.lean files
 
-    IMPORTANT: Only Bootstrap.lego should be parsed with the hardcoded grammar.
-    All other .lego files must use the runtime returned by this function. -/
-def init (bootstrapPath : String := defaultBootstrapPath) : IO Runtime := do
+    IMPORTANT: Only Bootstrap.lego is parsed with hardcoded grammar.
+    Only Lego.lego is parsed with Bootstrap grammar.
+    Only Rosetta.lego and Lean.lego are parsed with Lego grammar.
+    All other .lego files are parsed with Lego.lego's grammar.
+    All .rosetta files are parsed with Rosetta.lego's grammar.
+    All .lean files are parsed with Lean.lego's grammar. -/
+def init (bootstrapPath : String := defaultBootstrapPath)
+         (legoPath : String := defaultLegoPath)
+         (rosettaPath : String := defaultRosettaPath)
+         (leanPath : String := defaultLeanPath) : IO Runtime := do
   IO.println s!"[Lego] Loading Bootstrap.lego from {bootstrapPath}..."
-  let rt ← loadBootstrapOrError bootstrapPath
-  IO.println s!"[Lego] Runtime initialized with {rt.grammar.productions.length} productions"
+  IO.println s!"[Lego] Loading Lego.lego from {legoPath}..."
+  IO.println s!"[Lego] Loading Rosetta.lego from {rosettaPath}..."
+  IO.println s!"[Lego] Loading Lean.lego from {leanPath}..."
+  let rt ← loadBootstrapOrError bootstrapPath legoPath rosettaPath leanPath
+  IO.println s!"[Lego] Runtime initialized with {rt.grammar.productions.length} lego, {rt.rosettaGrammar.productions.length} rosetta, {rt.leanGrammar.productions.length} lean productions"
   return rt
 
 /-- Convenience: Initialize and parse a file in one step.
     Use this when you just need to parse a single file. -/
-def initAndParse (path : String) (bootstrapPath : String := defaultBootstrapPath) : IO (Except String Term) := do
-  let rt ← init bootstrapPath
+def initAndParse (path : String)
+                 (bootstrapPath : String := defaultBootstrapPath)
+                 (legoPath : String := defaultLegoPath)
+                 (rosettaPath : String := defaultRosettaPath)
+                 (leanPath : String := defaultLeanPath) : IO (Except String Term) := do
+  let rt ← init bootstrapPath legoPath rosettaPath leanPath
   let content ← IO.FS.readFile path
-  match parseLegoFileE rt content with
-  | .error e => return .error (toString e)
-  | .ok ast => return .ok ast
+  -- Choose grammar based on file extension
+  if path.endsWith ".rosetta" then
+    match parseRosettaFileE rt content with
+    | .error e => return .error (toString e)
+    | .ok ast => return .ok ast
+  else if path.endsWith ".lean" then
+    match parseLeanFileE rt content with
+    | .error e => return .error (toString e)
+    | .ok ast => return .ok ast
+  else
+    match parseLegoFileE rt content with
+    | .error e => return .error (toString e)
+    | .ok ast => return .ok ast
 
 /-- Convenience: Initialize and load a language in one step -/
-def initAndLoadLanguage (path : String) (bootstrapPath : String := defaultBootstrapPath) : IO (Except String (Runtime × Loader.LoadedGrammar)) := do
-  let rt ← init bootstrapPath
+def initAndLoadLanguage (path : String)
+                        (bootstrapPath : String := defaultBootstrapPath)
+                        (legoPath : String := defaultLegoPath)
+                        (rosettaPath : String := defaultRosettaPath)
+                        (leanPath : String := defaultLeanPath) : IO (Except String (Runtime × Loader.LoadedGrammar)) := do
+  let rt ← init bootstrapPath legoPath rosettaPath leanPath
   match ← loadLanguage rt path with
   | .error e => return .error e
   | .ok grammar => return .ok (rt, grammar)

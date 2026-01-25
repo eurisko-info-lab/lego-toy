@@ -413,8 +413,8 @@ piece File
   macroParams ::= ident+ → macroParams ;
   -- Algebra laws: named equations for a sort
   lawsDecl   ::= "algebra" ident "for" ident "{" lawItem* "}" → DAlgebra ;
-  lawItem    ::= ident ":" expr "=" expr ";" → lawEq
-               | ident ":" expr "=" expr "," expr "=" expr ";" → lawEq2 ;
+  lawItem    ::= ident ":" term "=" term ";" → lawEq
+               | ident ":" term "=" term "," term "=" term ";" → lawEq2 ;
   -- Grammar algebra: pushout, pullback, quotient
   algebraDecl ::= "pushout" ident ident "along" ident ";" → DPushout
                 | "pullback" ident ident "over" ident ";" → DPullback

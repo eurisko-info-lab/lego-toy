@@ -76,10 +76,13 @@ piece ADTDef
 -----------------------------------------------------
 -- Rewrite Rules
 -- Pattern → template transformations
+-- Annotations specify rule scope: @file, @decl, @expr, @type, @entry
 -----------------------------------------------------
 
 piece RewriteRules
-  decl ::= "rewrite" <ident> ":" pattern "~>" term → rewriteRule ;
+  decl ::= ruleAnnot? "rewrite" <ident> ":" pattern "~>" term → rewriteRule ;
+  ruleAnnot ::= "@" ruleAnnotKind → annot ;
+  ruleAnnotKind ::= "file" → file | "decl" → decl | "expr" → expr | "type" → type | "entry" → entry ;
   pattern ::= term                       → termPat
             | "_"                        → wildcard ;
 

@@ -439,7 +439,80 @@ def builtinStep (t : Term) : Option Term :=
   | .con "fromOption" [.con "some" [x], _] => some x
   | .con "fromOption" [.con "none" [], dflt] => some dflt
 
+  -- HOAS: Beta reduction for fun expressions
+  -- (con [fun args..., arg1, arg2, ...]) → body[params := args]
+  | .con "con" (.con "fun" funArgs :: appArgs) =>
+    if appArgs.isEmpty then none
+    else hoasBeta funArgs appArgs
+
+  -- HOAS: Application flattening
+  -- ((f args...) newArg) → (f args... newArg)
+  -- This handles cases like ((buildLam k) ctx) → (buildLam k ctx)
+  | .con "con" [.con name args, newArg] =>
+    some (.con name (args ++ [newArg]))
+
+  -- HOAS: Multi-arg beta reduction
+  -- (fun x y => body) applied to args
+  | .con "fun" funArgs =>
+    -- Check if this is a saturated application (all params have args)
+    hoasReduce funArgs
+
   | _ => none
+where
+  /-- Extract parameter names and body from fun args.
+      fun [x, y, con ["=>"], body] → (["x", "y"], body) -/
+  extractFunParams (args : List Term) : Option (List String × Term) :=
+    let rec go (acc : List String) (rest : List Term) : Option (List String × Term) :=
+      match rest with
+      | [] => none
+      | [body] => some (acc.reverse, body)
+      | .con "con" [.lit "=>"] :: body :: _ => some (acc.reverse, body)
+      | .lit "=>" :: body :: _ => some (acc.reverse, body)
+      | .con name [] :: rest' => go (name :: acc) rest'
+      | _ => none
+    go [] args
+
+  /-- Substitute a variable in a term -/
+  substVar (varName : String) (replacement : Term) (t : Term) : Term :=
+    match t with
+    | .con name [] => if name == varName then replacement else t
+    | .con name args => .con name (args.map (substVar varName replacement))
+    | .var name => if name == varName then replacement else t
+    | .lit _ => t
+
+  /-- Apply HOAS beta reduction: (fun x y ... => body) arg1 arg2 ... -/
+  hoasBeta (funArgs : List Term) (appArgs : List Term) : Option Term :=
+    match extractFunParams funArgs with
+    | none => none
+    | some (params, body) =>
+      if appArgs.length < params.length then
+        -- Partial application: return a new fun with remaining params
+        let appliedParams := params.take appArgs.length
+        let remainingParams := params.drop appArgs.length
+        let body' := appliedParams.zip appArgs |>.foldl
+          (fun acc (param, arg) => substVar param arg acc) body
+        if remainingParams.isEmpty then
+          some body'
+        else
+          -- Rebuild fun with remaining params
+          let paramTerms := remainingParams.map (fun p => Term.con p [])
+          some (.con "fun" (paramTerms ++ [.lit "=>", body']))
+      else if appArgs.length == params.length then
+        -- Exact application
+        let result := params.zip appArgs |>.foldl
+          (fun acc (param, arg) => substVar param arg acc) body
+        some result
+      else
+        -- Over-application: apply body to remaining args
+        let result := params.zip (appArgs.take params.length) |>.foldl
+          (fun acc (param, arg) => substVar param arg acc) body
+        let remaining := appArgs.drop params.length
+        some (.con "con" ([result] ++ remaining))
+
+  /-- Check if a fun can reduce (has no unbound params as immediate children) -/
+  hoasReduce (_ : List Term) : Option Term :=
+    -- This handles bare fun expressions - nothing to reduce without application
+    none
 
 /-- Apply built-in primitives recursively -/
 partial def applyBuiltinsDeep (t : Term) : Term :=

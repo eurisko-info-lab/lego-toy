@@ -1014,14 +1014,28 @@ partial def templateAstToTerm (t : Term) : Term :=
     let filtered := rest.filter (· != .lit "(") |>.filter (· != .lit ")")
     match filtered with
     | .con "ident" [.var conName] :: args =>
-      -- Flatten any con-wrapped siblings in the args
+      -- Convert args and flatten grouping cons (nullary idents adjacent to other terms)
+      -- but NOT application cons (var applied to args)
       let convertedArgs := args.map templateAstToTerm
       let flatArgs := convertedArgs.flatMap fun a =>
         match a with
-        | .con "con" children => children  -- Flatten con wrappers
+        -- Flatten grouping con: con [nullary, other...] → [nullary, other...]
+        -- But NOT application con: con [var, args...] → keep as con
+        | .con "con" children =>
+          match children with
+          | .var _ :: _ => [a]  -- Application - keep wrapped
+          | _ => children  -- Grouping - flatten
         | other => [other]
       .con conName flatArgs
-    | _ => .con "con" (rest.map templateAstToTerm)
+    | .con "var" _ :: _ =>
+      -- Application where function is a variable: ($ma args...)
+      -- This is HOAS application: (con [var, args...])
+      let convertedArgs := filtered.map templateAstToTerm
+      .con "con" convertedArgs
+    | _ =>
+      -- Other cases: filter and convert
+      let convertedArgs := filtered.map templateAstToTerm
+      .con "con" convertedArgs
   -- New clean format: (con (ident name) args...) → .con name [args...]
   | .con "con" (.con "ident" [.var conName] :: args) =>
     -- Check if the first arg is a parenthesized expression (starts with "(")

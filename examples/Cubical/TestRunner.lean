@@ -288,24 +288,9 @@ def isMetaRuleTest (tc : Lego.Loader.TestCase) : Bool :=
             "normCof", "evalCof", "substDim0'"]
   | _ => false
 
-/-- Check if a term contains a `fun` node (HOAS) -/
-partial def containsFun : Term → Bool
-  | .con "fun" _ => true
-  | .con _ args => args.any containsFun
-  | _ => false
-
-/-- Check if a test requires HOAS (higher-order function application) -/
-def requiresHOAS (tc : Lego.Loader.TestCase) : Bool :=
-  -- Tests with `fun x => ...` require HOAS evaluation
-  let normalizedInput := normalizeAst tc.input
-  containsFun normalizedInput
-
 /-- Run a single test case, dispatching by piece type and test kind -/
 def runTest (rules : List Lego.Rule) (tc : Lego.Loader.TestCase) (fuel : Nat := 100) : IO TestResult := do
-  -- Skip HOAS tests (require higher-order function application)
-  if requiresHOAS tc then
-    pure (.skip "requires HOAS evaluation")
-  else if tc.pieceName == "Level" then
+  if tc.pieceName == "Level" then
     runLevelTest tc
   else if isMetaRuleTest tc then
     runRuleTest rules tc fuel

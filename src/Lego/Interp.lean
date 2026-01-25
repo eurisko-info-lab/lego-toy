@@ -340,6 +340,19 @@ where
       some (skipToEol rest)
     | _ => none
 
+  /-- Skip a block comment: from "/-" to "-/" (may be nested) -/
+  skipBlockComment : CharStream → Option CharStream
+    | '/' :: '-' :: rest =>
+      let rec skipToClose (depth : Nat) : CharStream → Option CharStream
+        | [] => none  -- Unterminated
+        | '-' :: '/' :: rest =>
+          if depth == 1 then some rest
+          else skipToClose (depth - 1) rest
+        | '/' :: '-' :: rest => skipToClose (depth + 1) rest
+        | _ :: rest => skipToClose depth rest
+      skipToClose 1 rest
+    | _ => none
+
   /-- Try to lex a string literal: "..." with any unicode content -/
   lexString : CharStream → Option (String × CharStream)
     | '"' :: rest =>
@@ -366,8 +379,8 @@ where
     let shortName := match prodName.splitOn "." with
       | [_, n] => n
       | _ => prodName
-    -- Skip whitespace and comments
-    if shortName == "ws" || shortName == "comment" then none
+    -- Skip whitespace and comments (line and block)
+    if shortName == "ws" || shortName == "comment" || shortName == "blockComment" then none
     else if shortName == "ident" then
       -- Check if this identifier is a reserved keyword
       if keywords.contains value then some (Token.sym value)
@@ -391,26 +404,30 @@ where
     match skipWhitespace chars with
     | [] => acc.reverse
     | chars' =>
-      -- Handle comments specially (-- to EOL, any unicode)
+      -- Handle line comments specially (-- to EOL, any unicode)
       match skipComment chars' with
       | some rest => go fuel' prods mainProds keywords rest acc
       | none =>
-        -- Handle strings specially (any unicode content)
-        match lexString chars' with
-        | some (str, rest) => go fuel' prods mainProds keywords rest (Token.lit str :: acc)
+        -- Handle block comments specially (/- ... -/, nested)
+        match skipBlockComment chars' with
+        | some rest => go fuel' prods mainProds keywords rest acc
         | none =>
-          -- Handle char literals specially (any unicode content)
-          match lexChar chars' with
-          | some (ch, rest) => go fuel' prods mainProds keywords rest (Token.lit ch :: acc)
+          -- Handle strings specially (any unicode content)
+          match lexString chars' with
+          | some (str, rest) => go fuel' prods mainProds keywords rest (Token.lit str :: acc)
           | none =>
-            match tryTokenize prods mainProds keywords chars' with
-            | some (some tok, rest) => go fuel' prods mainProds keywords rest (tok :: acc)
-            | some (none, rest) => go fuel' prods mainProds keywords rest acc  -- ws: skip
+            -- Handle char literals specially (any unicode content)
+            match lexChar chars' with
+            | some (ch, rest) => go fuel' prods mainProds keywords rest (Token.lit ch :: acc)
             | none =>
-              -- Unknown char - skip it
-              match chars' with
-              | _ :: rest => go fuel' prods mainProds keywords rest acc
-              | [] => acc.reverse
+              match tryTokenize prods mainProds keywords chars' with
+              | some (some tok, rest) => go fuel' prods mainProds keywords rest (tok :: acc)
+              | some (none, rest) => go fuel' prods mainProds keywords rest acc  -- ws: skip
+              | none =>
+                -- Unknown char - skip it
+                match chars' with
+                | _ :: rest => go fuel' prods mainProds keywords rest acc
+                | [] => acc.reverse
 
 /-! ## Token-level Parsing State -/
 

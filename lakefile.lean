@@ -77,6 +77,11 @@ lean_exe «lego-test-minimal» where
   root := `test.lean.TestMinimalBootstrap
   moreLinkArgs := #["-lInit"]
 
+-- Parse all files test: verifies all .lego, .rosetta, .lean files parse correctly
+lean_exe «lego-test-parse» where
+  root := `test.lean.TestParseAll
+  moreLinkArgs := #["-lInit"]
+
 -- Tools executables
 
 lean_exe «toantlr» where

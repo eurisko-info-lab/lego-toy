@@ -478,18 +478,19 @@ where
     only used as building blocks for these main productions.
     Note: We support both old-style (op3, op2, sym) and new-style (operator). -/
 def mainTokenProdNames : List String :=
-  [ "Token.special"   -- <name> syntax
-  , "Token.hashident" -- Hash-prefixed keywords (#longest)
-  , "Token.ident"     -- Identifiers
-  , "Token.number"    -- Numbers
-  , "Token.string"    -- String literals
-  , "Token.char"      -- Character literals
-  , "Token.ws"        -- Whitespace (skipped)
-  , "Token.comment"   -- Comments (skipped)
-  , "Token.operator"  -- All operators (new-style, uses #longest)
-  , "Token.op3"       -- 3-char operators (old-style, for backwards compat)
-  , "Token.op2"       -- 2-char operators (old-style)
-  , "Token.sym"       -- Single symbol (old-style fallback)
+  [ "Token.special"       -- <name> syntax
+  , "Token.hashident"     -- Hash-prefixed keywords (#longest)
+  , "Token.ident"         -- Identifiers
+  , "Token.number"        -- Numbers
+  , "Token.string"        -- String literals
+  , "Token.char"          -- Character literals
+  , "Token.ws"            -- Whitespace (skipped)
+  , "Token.comment"       -- Line comments (skipped)
+  , "Token.blockComment"  -- Block comments /- ... -/ (skipped)
+  , "Token.operator"      -- All operators (new-style, uses #longest)
+  , "Token.op3"           -- 3-char operators (old-style, for backwards compat)
+  , "Token.op2"           -- 2-char operators (old-style)
+  , "Token.sym"           -- Single symbol (old-style fallback)
   ]
 
 /-- Get main token production names for tokenization.

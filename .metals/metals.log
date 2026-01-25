@@ -65,3 +65,10 @@ Some errors like unused import referring to a non-existent class might not be re
 2026.01.25 20:28:01 INFO  time: Imported build in 0.24s[0m
 2026.01.25 20:28:02 INFO  time: indexed workspace in 1.25s[0m
 2026.01.25 20:28:02 WARN  no build target for: /home/patrick/IdeaProjects/lego/toy/src/Runtime/Scala/Runtime.scala[0m
+2026.01.25 20:37:02 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.25 20:37:03 INFO  time: indexed workspace in 1.37s[0m
+2026.01.25 20:37:03 WARN  Invalid text document uri received from build server: file:///home/patrick/IdeaProjects/lego/toy/generated/Rosetta/Arith.scala[0m
+2026.01.25 20:37:03 INFO  time: compiled toy_a2f0c65cd7 in 1.5s[0m
+2026.01.25 20:37:03 WARN  no build target for: /home/patrick/IdeaProjects/lego/toy/src/Runtime/Scala/Runtime.scala[0m
+2026.01.25 20:37:03 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.25 20:37:03 INFO  time: compiled toy_a2f0c65cd7 in 0.62s[0m

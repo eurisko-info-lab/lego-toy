@@ -2,7 +2,7 @@
   Pipeline.lean
   cubical := parse CubicalTT.lego
   lifted := run rules cubical2rosetta.lego on cubical
-  lean := run rules rosetta2lean.lego on lifted
+  lean := run rules rosetta2target.lego on lifted
   print lean → generated/
 
   Now generates VALID Lean 4 code that uses Term pattern matching.
@@ -1300,9 +1300,9 @@ def main : IO Unit := do
     | .ok ast => pure ast
   let rules1 := extractRules c2rAst
 
-  let r2lContent ← IO.FS.readFile "./src/Rosetta/rosetta2lean.lego"
+  let r2lContent ← IO.FS.readFile "./src/Rosetta/rosetta2target.lego"
   let r2lAst ← match parseLegoFileE rt r2lContent with
-    | .error e => IO.eprintln s!"parse rosetta2lean failed: {e}"; return
+    | .error e => IO.eprintln s!"parse rosetta2target failed: {e}"; return
     | .ok ast => pure ast
   let rules2 := extractRules r2lAst
 

@@ -1,7 +1,7 @@
 /-
   RosettaPipeline.lean
   Parse .rosetta files via Rosetta.lego grammar,
-  transform via rosetta2lean.lego rules,
+  transform via rosetta2target.lego rules,
   print via Lean.lego grammar.
 -/
 
@@ -79,9 +79,9 @@ def main : IO Unit := do
     IO.println s!"  AST: {repr a}"
     pure a
 
-  -- Step 3: Load rosetta2lean rules
-  IO.println "\n[3] Loading rosetta2lean.lego rules..."
-  let rules ← match ← loadTransformRules rt "./src/Rosetta/rosetta2lean.lego" with
+  -- Step 3: Load rosetta2target rules
+  IO.println "\n[3] Loading rosetta2target.lego rules..."
+  let rules ← match ← loadTransformRules rt "./src/Rosetta/rosetta2target.lego" with
     | Except.error e => IO.eprintln s!"  ✗ {e}"; return
     | Except.ok r => IO.println s!"  ✓ {r.length} rules"; pure r
 

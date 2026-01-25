@@ -78,10 +78,7 @@ def TargetLang.grammarPath : TargetLang → String
 
 /-- Path to rosetta2<L>.lego transform file -/
 def TargetLang.transformPath : TargetLang → String
-  | .Lean => "./src/Rosetta/rosetta2lean.lego"
-  | .Scala => "./src/Rosetta/rosetta2scala.lego"
-  | .Haskell => "./src/Rosetta/rosetta2haskell.lego"
-  | .Rust => "./src/Rosetta/rosetta2rust.lego"
+  | _ => "./src/Rosetta/rosetta2target.lego"
 
 /-! ## Pretty-Printer State -/
 

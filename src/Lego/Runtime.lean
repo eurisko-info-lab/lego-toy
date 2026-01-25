@@ -408,11 +408,11 @@ where
     1. Load source .lego file
     2. Load lego2rosetta rules
     3. Transform to Rosetta IR
-    4. Load rosetta2lean rules
+    4. Load rosetta2target rules
     5. Transform to Lean AST
     6. Print using Lean grammar -/
 def lego2lean (rt : Runtime) (sourcePath : String) (rosettaPath : String := "./src/Rosetta/lego2rosetta.lego")
-    (leanPath : String := "./src/Rosetta/rosetta2lean.lego") : IO (Except String Term) := do
+    (leanPath : String := "./src/Rosetta/rosetta2target.lego") : IO (Except String Term) := do
   -- Step 1: Parse source
   match ← parseLegoFilePathE rt sourcePath with
   | .error e => return Except.error s!"Failed to parse {sourcePath}: {e}"

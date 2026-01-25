@@ -168,8 +168,10 @@ piece Term
             | ident ":=" term → assign
             | ident ":" term → labeledArg
             | ident "." term → objBinder
+            | "~~>" → con
             | "~>" → con
             | "→" → con
+            | "->" → con
             | "×" → con
             | "↦" → con
             | "=I=" → con
@@ -220,8 +222,10 @@ piece Pattern
                | ident ":=" pattern → assign
                | ident ":" pattern → labeledArg
                | ident "." pattern → objBinder
+               | "~~>" → con
                | "~>" → con
                | "→" → con
+               | "->" → con
                | "×" → con
                | "↦" → con
                | "=I=" → con
@@ -301,8 +305,10 @@ piece Template
                 | string ":" template → stringLabeledArg
                 | "(" template ":" template ")" → typed
                 | ident "." template → objBinder
+                | "~~>" → con
                 | "~>" → con
                 | "→" → con
+                | "->" → con
                 | "×" → con
                 | "↦" → con
                 | "=I=" → con
@@ -496,7 +502,22 @@ piece File
                   | "bound" pattern ":" pattern → bound
                   | pattern "=" pattern → eq
                   | pattern → sidePattern ;
-  testDecl   ::= "test" string ":" annotatedTerm ("~~>" annotatedTerm)? ";" → DTest ;
+  -- Parametric test: test[grammar] parses LHS/RHS using specified grammar production
+  -- e.g., test[ruleDecl] "name": rule foo: x ~~> y ; ~~> (DRule ...) ;
+  testDecl   ::= "test" "[" ident "]" string ":" testBody ";" → DTestParam
+               | "test" string ":" annotatedTerm ("~~>" annotatedTerm)? ";" → DTest ;
+  -- Test body: content parsed by the parametric grammar, delimited by ~~> or ;
+  testBody   ::= testInput ("~~>" testExpected)? → testBody ;
+  testInput  ::= testToken+ → input ;
+  testExpected ::= testToken+ → expected ;
+  -- Test tokens: any token except ~~> and ; at top level (track nesting)
+  testToken  ::= "(" testToken* ")" → paren
+               | "[" testToken* "]" → bracket  
+               | "{" testToken* "}" → brace
+               | <ident> → ident
+               | <string> → string
+               | <number> → number
+               | <sym> → sym ;
   annotatedTerm ::= term ":" term → ann | term ;
   -- Attribute Grammar section (groups syn/inh declarations and rules)
   attrsDecl  ::= "attrs" ident attrBody → DAttrs ;

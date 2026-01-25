@@ -20,338 +20,338 @@
 
 module Lego {
 
------------------------------------------------------
--- Core: Partial Isomorphism
--- The atomic unit of bidirectional computation
------------------------------------------------------
+  -----------------------------------------------------
+  -- Core: Partial Isomorphism
+  -- The atomic unit of bidirectional computation
+  -----------------------------------------------------
 
-module Iso {
-  -- Iso A B = { forward : A → Option B, backward : B → Option A }
-  -- Laws: forward ∘ backward = id, backward ∘ forward = id (when both succeed)
-  
-  adt Iso (A B : Univ) {
-    MkIso : (A → Option B) → (B → Option A) → Iso A B
+  module Iso {
+    -- iso A B = { forward : A → Option B, backward : B → Option A }
+    -- Laws: forward ∘ backward = id, backward ∘ forward = id (when both succeed)
+
+    adt iso (A B : Univ) {
+        MkIso : (A → Option B) → (B → Option A) → iso A B
+    }
+
+    -- Identity isomorphism
+    rewrite id: iso.id ~> 
+        (MkIso (Lam x . (Some x)) (Lam x . (Some x))) ;
+
+    -- Composition: (A ⇌ B) → (B ⇌ C) → (A ⇌ C)
+    rewrite comp: (iso.comp $f $g) ~>
+        (MkIso 
+        (Lam a . (bind (forward $f a) (Lam b . (forward $g b))))
+        (Lam c . (bind (backward $g c) (Lam b . (backward $f b))))) ;
+
+    -- Parallel: (A ⇌ B) → (C ⇌ D) → (A × C ⇌ B × D)
+    rewrite par: (iso.par $f $g) ~>
+        (MkIso
+        (Lam p . (bind (forward $f (Fst p)) (Lam b .
+                (bind (forward $g (Snd p)) (Lam d .
+                (Some (Pair b d)))))))
+        (Lam q . (bind (backward $f (Fst q)) (Lam a .
+                (bind (backward $g (Snd q)) (Lam c .
+                (Some (Pair a c)))))))) ;
+
+    -- Choice: (A ⇌ C) → (B ⇌ C) → (A + B ⇌ C)
+    rewrite choice: (iso.choice $f $g) ~>
+        (MkIso
+        (Lam s . (case s
+            (Inl a) => (forward $f a)
+            (Inr b) => (forward $g b)))
+        (Lam c . (orElse (map Inl (backward $f c))
+                        (map Inr (backward $g c))))) ;
+
+    -- Alternative: try first, fallback to second
+    rewrite orElse: (iso.orElse $f $g) ~>
+        (MkIso
+        (Lam a . (orElse (forward $f a) (forward $g a)))
+        (Lam b . (orElse (backward $f b) (backward $g b)))) ;
+
+    -- Symmetric: flip forward/backward
+    rewrite sym: (iso.sym $f) ~>
+        (MkIso (backward $f) (forward $f)) ;
   }
-  
-  -- Identity isomorphism
-  rewrite id: Iso.id ~> 
-    (MkIso (Lam x . (Some x)) (Lam x . (Some x))) ;
-  
-  -- Composition: (A ⇌ B) → (B ⇌ C) → (A ⇌ C)
-  rewrite comp: (Iso.comp $f $g) ~>
-    (MkIso 
-      (Lam a . (bind (forward $f a) (Lam b . (forward $g b))))
-      (Lam c . (bind (backward $g c) (Lam b . (backward $f b))))) ;
-  
-  -- Parallel: (A ⇌ B) → (C ⇌ D) → (A × C ⇌ B × D)
-  rewrite par: (Iso.par $f $g) ~>
-    (MkIso
-      (Lam p . (bind (forward $f (Fst p)) (Lam b .
-               (bind (forward $g (Snd p)) (Lam d .
-               (Some (Pair b d)))))))
-      (Lam q . (bind (backward $f (Fst q)) (Lam a .
-               (bind (backward $g (Snd q)) (Lam c .
-               (Some (Pair a c)))))))) ;
-  
-  -- Choice: (A ⇌ C) → (B ⇌ C) → (A + B ⇌ C)
-  rewrite choice: (Iso.choice $f $g) ~>
-    (MkIso
-      (Lam s . (case s
-        (Inl a) => (forward $f a)
-        (Inr b) => (forward $g b)))
-      (Lam c . (orElse (map Inl (backward $f c))
-                       (map Inr (backward $g c))))) ;
-  
-  -- Alternative: try first, fallback to second
-  rewrite orElse: (Iso.orElse $f $g) ~>
-    (MkIso
-      (Lam a . (orElse (forward $f a) (forward $g a)))
-      (Lam b . (orElse (backward $f b) (backward $g b)))) ;
-  
-  -- Symmetric: flip forward/backward
-  rewrite sym: (Iso.sym $f) ~>
-    (MkIso (backward $f) (forward $f)) ;
-}
 
------------------------------------------------------
--- Term: The Universal AST
------------------------------------------------------
+  -----------------------------------------------------
+  -- Term: The Universal AST
+  -----------------------------------------------------
 
-module Term {
-  adt Term {
-    Var : String → Term
-    Lit : String → Term  
-    Con : String → List Term → Term
+  module Term {
+    adt Term {
+        Var : String → Term,
+        Lit : String → Term,
+        Con : String → List Term → Term
+    }
+
+    -- Convenience constructors
+    rewrite app: (Term.app $f $args) ~> (Con $f $args) ;
+    rewrite atom: (Term.atom $s) ~> (Con $s Nil) ;
+
+    -- Pattern matching: returns Option (List (String × Term))
+    rewrite matchPattern: (Term.match (Var $name) $t) ~>
+        (if (String.startsWith $name "$")
+            (Some (Cons (Pair $name $t) Nil))
+            (if (eq $t (Var $name)) (Some Nil) None)) ;
+
+    rewrite matchLit: (Term.match (Lit $a) (Lit $b)) ~>
+        (if (eq $a $b) (Some Nil) None) ;
+
+    rewrite matchCon: (Term.match (Con $c1 $args1) (Con $c2 $args2)) ~>
+        (if (and (eq $c1 $c2) (eq (length $args1) (length $args2)))
+            (Term.matchList $args1 $args2)
+            None) ;
+
+    rewrite matchList: (Term.matchList Nil Nil) ~> (Some Nil) ;
+    rewrite matchListCons: (Term.matchList (Cons $p $ps) (Cons $t $ts)) ~>
+        (bind (Term.match $p $t) (Lam m1 .
+        (bind (Term.matchList $ps $ts) (Lam m2 .
+        (Some (append m1 m2)))))) ;
+
+    -- Substitution with bindings
+    rewrite substVar: (Term.subst (Var $name) $env) ~>
+        (if (String.startsWith $name "$")
+            (getOrElse (lookup $name $env) (Var $name))
+            (Var $name)) ;
+
+    rewrite substLit: (Term.subst (Lit $s) $env) ~> (Lit $s) ;
+
+    rewrite substCon: (Term.subst (Con $c $args) $env) ~>
+        (Con $c (map (Lam a . (Term.subst a $env)) $args)) ;
   }
-  
-  -- Convenience constructors
-  rewrite atom: (Term.atom $s) ~> (Con $s Nil) ;
-  rewrite app: (Term.app $f $args) ~> (Con $f $args) ;
-  
-  -- Pattern matching: returns Option (List (String × Term))
-  rewrite matchPattern: (Term.match (Var $name) $t) ~>
-    (if (String.startsWith $name "$")
-        (Some (Cons (Pair $name $t) Nil))
-        (if (eq $t (Var $name)) (Some Nil) None)) ;
-  
-  rewrite matchLit: (Term.match (Lit $a) (Lit $b)) ~>
-    (if (eq $a $b) (Some Nil) None) ;
-  
-  rewrite matchCon: (Term.match (Con $c1 $args1) (Con $c2 $args2)) ~>
-    (if (and (eq $c1 $c2) (eq (length $args1) (length $args2)))
-        (Term.matchList $args1 $args2)
-        None) ;
-  
-  rewrite matchList: (Term.matchList Nil Nil) ~> (Some Nil) ;
-  rewrite matchListCons: (Term.matchList (Cons $p $ps) (Cons $t $ts)) ~>
-    (bind (Term.match $p $t) (Lam m1 .
-     (bind (Term.matchList $ps $ts) (Lam m2 .
-      (Some (append m1 m2)))))) ;
-  
-  -- Substitution with bindings
-  rewrite substVar: (Term.subst (Var $name) $env) ~>
-    (if (String.startsWith $name "$")
-        (getOrElse (lookup $name $env) (Var $name))
-        (Var $name)) ;
-  
-  rewrite substLit: (Term.subst (Lit $s) $env) ~> (Lit $s) ;
-  
-  rewrite substCon: (Term.subst (Con $c $args) $env) ~>
-    (Con $c (map (Lam a . (Term.subst a $env)) $args)) ;
-}
 
------------------------------------------------------
--- Token: Lexical Unit
------------------------------------------------------
+  -----------------------------------------------------
+  -- Token: Lexical Unit
+  -----------------------------------------------------
 
-module Token {
-  adt Token {
-    Ident  : String → Token
-    TLit   : String → Token
-    Sym    : String → Token
-    Number : String → Token
+  module Token {
+    adt Token {
+        Ident  : String → Token,
+        TLit   : String → Token,
+        Sym    : String → Token,
+        Number : String → Token
+    }
+
+    rewrite toString: (Token.toString (Ident $s)) ~> $s ;
+    rewrite toStringLit: (Token.toString (TLit $s)) ~> $s ;
+    rewrite toStringSym: (Token.toString (Sym $s)) ~> $s ;
+    rewrite toStringNum: (Token.toString (Number $s)) ~> $s ;
   }
-  
-  rewrite toString: (Token.toString (Ident $s)) ~> $s ;
-  rewrite toStringLit: (Token.toString (TLit $s)) ~> $s ;
-  rewrite toStringSym: (Token.toString (Sym $s)) ~> $s ;
-  rewrite toStringNum: (Token.toString (Number $s)) ~> $s ;
-}
 
------------------------------------------------------
--- Grammar Algebra
--- *-semiring (Kleene algebra) with PEG extensions
------------------------------------------------------
+  -----------------------------------------------------
+  -- Grammar Algebra
+  -- *-semiring (Kleene algebra) with PEG extensions
+  -----------------------------------------------------
 
-module Grammar {
-  -- GrammarExpr: the free *-semiring
-  adt GrammarExpr {
-    Empty   : GrammarExpr                           -- ε (identity)
-    GLit    : String → GrammarExpr                  -- literal match
-    Ref     : String → GrammarExpr                  -- production reference
-    Seq     : GrammarExpr → GrammarExpr → GrammarExpr  -- sequence (monoidal)
-    Alt     : GrammarExpr → GrammarExpr → GrammarExpr  -- alternative (coproduct)
-    Star    : GrammarExpr → GrammarExpr             -- Kleene star
-    Bind    : String → GrammarExpr → GrammarExpr    -- capture binding
-    Node    : String → GrammarExpr → GrammarExpr    -- AST wrapper
-    -- PEG extensions
-    Cut     : GrammarExpr → GrammarExpr             -- commit (no backtrack)
-    Ordered : GrammarExpr → GrammarExpr → GrammarExpr  -- ordered choice
-    Longest : List GrammarExpr → GrammarExpr        -- maximal munch
+  module Grammar {
+    -- GrammarExpr: the free *-semiring
+    adt GrammarExpr {
+        Empty   : GrammarExpr,                          -- ε (identity)
+        GLit    : String → GrammarExpr,                 -- literal match
+        Ref     : String → GrammarExpr,                 -- production reference
+        Seq     : GrammarExpr → GrammarExpr → GrammarExpr,  -- sequence (monoidal)
+        Alt     : GrammarExpr → GrammarExpr → GrammarExpr,  -- alternative (coproduct)
+        Star    : GrammarExpr → GrammarExpr,            -- Kleene star
+        Bind    : String → GrammarExpr → GrammarExpr,   -- capture binding
+        Node    : String → GrammarExpr → GrammarExpr,   -- AST wrapper
+        -- PEG extensions
+        Cut     : GrammarExpr → GrammarExpr,            -- commit (no backtrack)
+        Ordered : GrammarExpr → GrammarExpr → GrammarExpr,  -- ordered choice
+        Longest : List GrammarExpr → GrammarExpr        -- maximal munch
+    }
+
+    -- Derived: plus = one or more
+    rewrite plus: (Grammar.plus $g) ~> (Seq $g (Star $g)) ;
+
+    -- Derived: opt = zero or one
+    rewrite opt: (Grammar.opt $g) ~> (Alt $g Empty) ;
+
+    -- Algebra laws
+    algebra KleeneAlgebra for GrammarExpr {
+      -- Monoid laws for Seq
+      seqAssoc   : (Seq (Seq $a $b) $c) = (Seq $a (Seq $b $c)) ;
+      seqIdLeft  : (Seq Empty $a) = $a ;
+      seqIdRight : (Seq $a Empty) = $a ;
+      
+      -- Semilattice laws for Alt
+      altAssoc : (Alt (Alt $a $b) $c) = (Alt $a (Alt $b $c)) ;
+      altComm  : (Alt $a $b) = (Alt $b $a) ;
+      altIdem  : (Alt $a $a) = $a ;
+      
+      -- Distributivity
+      distLeft  : (Seq $a (Alt $b $c)) = (Alt (Seq $a $b) (Seq $a $c)) ;
+      distRight : (Seq (Alt $a $b) $c) = (Alt (Seq $a $c) (Seq $b $c)) ;
+      
+      -- Star laws
+      starUnfold : (Star $a) = (Alt Empty (Seq $a (Star $a))) ;
+    }
   }
-  
-  -- Derived: plus = one or more
-  rewrite plus: (Grammar.plus $g) ~> (Seq $g (Star $g)) ;
-  
-  -- Derived: opt = zero or one
-  rewrite opt: (Grammar.opt $g) ~> (Alt $g Empty) ;
-  
-  -- Algebra laws
-  algebra KleeneAlgebra for GrammarExpr {
-    -- Monoid laws for Seq
-    seqAssoc   : (Seq (Seq $a $b) $c) = (Seq $a (Seq $b $c)) ;
-    seqIdLeft  : (Seq Empty $a) = $a ;
-    seqIdRight : (Seq $a Empty) = $a ;
-    
-    -- Semilattice laws for Alt
-    altAssoc : (Alt (Alt $a $b) $c) = (Alt $a (Alt $b $c)) ;
-    altComm  : (Alt $a $b) = (Alt $b $a) ;
-    altIdem  : (Alt $a $a) = $a ;
-    
-    -- Distributivity
-    distLeft  : (Seq $a (Alt $b $c)) = (Alt (Seq $a $b) (Seq $a $c)) ;
-    distRight : (Seq (Alt $a $b) $c) = (Alt (Seq $a $c) (Seq $b $c)) ;
-    
-    -- Star laws
-    starUnfold : (Star $a) = (Alt Empty (Seq $a (Star $a))) ;
+
+  -----------------------------------------------------
+  -- Rule: Pattern-based Rewriting
+  -----------------------------------------------------
+
+  module Rule {
+    adt Rule {
+        MkRule : String → Term → Term → Rule  -- name, pattern, replacement
+    }
+
+    -- Apply a single rule
+    rewrite applyRule: (Rule.apply (MkRule $name $pat $repl) $term) ~>
+        (bind (Term.match $pat $term) (Lam bindings .
+        (Some (Term.subst $repl bindings)))) ;
+
+    -- Apply first matching rule from a list
+    rewrite applyFirst: (Rule.applyFirst Nil $term) ~> None ;
+    rewrite applyFirstCons: (Rule.applyFirst (Cons $r $rs) $term) ~>
+        (orElse (Rule.apply $r $term)
+                (Rule.applyFirst $rs $term)) ;
+
+    -- Normalize: apply rules until fixpoint
+    rewrite normalize: (Rule.normalize $rules $term) ~>
+        (case (Rule.applyFirst $rules $term)
+        None => $term
+        (Some $t') => (Rule.normalize $rules $t')) ;
   }
-}
 
------------------------------------------------------
--- Rule: Pattern-based Rewriting
------------------------------------------------------
+  -----------------------------------------------------
+  -- Language: Composition of Pieces
+  -----------------------------------------------------
 
-module Rule {
-  adt Rule {
-    MkRule : String → Term → Term → Rule  -- name, pattern, replacement
+  module Language {
+    adt Piece {
+        MkPiece : String → List (String × GrammarExpr) → List Rule → Piece
+    }
+
+    adt Language {
+        MkLanguage : String → List Piece → Language
+    }
+
+    -- Combine all productions from all pieces
+    rewrite allProductions: (Language.productions (MkLanguage $name $pieces)) ~>
+        (flatMap (Lam p . (Piece.productions p)) $pieces) ;
+
+    -- Combine all rules from all pieces
+    rewrite allRules: (Language.rules (MkLanguage $name $pieces)) ~>
+        (flatMap (Lam p . (Piece.rules p)) $pieces) ;
+
+    -- Language composition via pushout
+    rewrite pushout: (Language.pushout $L1 $L2 $along) ~>
+        (MkLanguage 
+        (String.concat (Language.name $L1) "_" (Language.name $L2))
+        (append (Language.pieces $L1) (Language.pieces $L2))) ;
   }
-  
-  -- Apply a single rule
-  rewrite applyRule: (Rule.apply (MkRule $name $pat $repl) $term) ~>
-    (bind (Term.match $pat $term) (Lam bindings .
-      (Some (Term.subst $repl bindings)))) ;
-  
-  -- Apply first matching rule from a list
-  rewrite applyFirst: (Rule.applyFirst Nil $term) ~> None ;
-  rewrite applyFirstCons: (Rule.applyFirst (Cons $r $rs) $term) ~>
-    (orElse (Rule.apply $r $term)
-            (Rule.applyFirst $rs $term)) ;
-  
-  -- Normalize: apply rules until fixpoint
-  rewrite normalize: (Rule.normalize $rules $term) ~>
-    (case (Rule.applyFirst $rules $term)
-      None => $term
-      (Some $t') => (Rule.normalize $rules $t')) ;
-}
 
------------------------------------------------------
--- Language: Composition of Pieces
------------------------------------------------------
+  -----------------------------------------------------
+  -- Parser: Grammar Interpretation
+  -----------------------------------------------------
 
-module Language {
-  adt Piece {
-    MkPiece : String → List (String × GrammarExpr) → List Rule → Piece
+  module Parser {
+    -- Parse result: remaining tokens + parsed term
+    adt ParseResult {
+        Success : List Token → Term → ParseResult,
+        Failure : String → ParseResult
+    }
+
+    -- Parse with a grammar expression
+    rewrite parse: (Parser.parse Empty $tokens) ~>
+        (Success $tokens (Con "unit" Nil)) ;
+
+    rewrite parseLit: (Parser.parse (GLit $s) (Cons (Sym $t) $rest)) ~>
+        (if (eq $s $t) (Success $rest (Lit $s)) (Failure "literal mismatch")) ;
+
+    rewrite parseRef: (Parser.parse (Ref $name) $tokens $prods) ~>
+        (case (lookup $name $prods)
+        None => (Failure (String.concat "unknown production: " $name))
+        (Some $g) => (Parser.parse $g $tokens $prods)) ;
+
+    rewrite parseSeq: (Parser.parse (Seq $g1 $g2) $tokens $prods) ~>
+        (case (Parser.parse $g1 $tokens $prods)
+        (Failure $msg) => (Failure $msg)
+        (Success $rest1 $t1) =>
+            (case (Parser.parse $g2 $rest1 $prods)
+            (Failure $msg) => (Failure $msg)
+            (Success $rest2 $t2) => (Success $rest2 (combineSeq $t1 $t2)))) ;
+
+    rewrite parseAlt: (Parser.parse (Alt $g1 $g2) $tokens $prods) ~>
+        (case (Parser.parse $g1 $tokens $prods)
+        (Success $rest $t) => (Success $rest $t)
+        (Failure $_) => (Parser.parse $g2 $tokens $prods)) ;
+
+    rewrite parseStar: (Parser.parse (Star $g) $tokens $prods) ~>
+        (case (Parser.parse $g $tokens $prods)
+        (Failure $_) => (Success $tokens (Con "unit" Nil))
+        (Success $rest $t) =>
+            (case (Parser.parse (Star $g) $rest $prods)
+            (Success $rest2 $ts) => (Success $rest2 (combineSeq $t $ts))
+            (Failure $_) => (Success $rest $t))) ;
+
+    rewrite parseNode: (Parser.parse (Node $name $g) $tokens $prods) ~>
+        (case (Parser.parse $g $tokens $prods)
+        (Failure $msg) => (Failure $msg)
+        (Success $rest $t) => (Success $rest (wrapNode $name $t))) ;
   }
-  
-  adt Language {
-    MkLanguage : String → List Piece → Language
+
+  -----------------------------------------------------
+  -- Interpreter Helpers (from Bootstrap.lego)
+  -----------------------------------------------------
+
+  module Helpers {
+    -- Combine two terms into a sequence
+    rewrite combineSeqSeq: (combineSeq (Con "seq" $ts1) (Con "seq" $ts2)) ~>
+        (Con "seq" (append $ts1 $ts2)) ;
+
+    rewrite combineSeqLeft: (combineSeq (Con "seq" $ts) $t) ~>
+        (Con "seq" (append $ts (Cons $t Nil))) ;
+
+    rewrite combineSeqRight: (combineSeq $t (Con "seq" $ts)) ~>
+        (Con "seq" (Cons $t $ts)) ;
+
+    rewrite combineSeqUnitL: (combineSeq (Con "unit" Nil) $t) ~> $t ;
+    rewrite combineSeqUnitR: (combineSeq $t (Con "unit" Nil)) ~> $t ;
+
+    rewrite combineSeqDefault: (combineSeq $t1 $t2) ~>
+        (Con "seq" (Cons $t1 (Cons $t2 Nil))) ;
+
+    -- Wrap a term with a node name
+    rewrite wrapSeq: (wrapNode $name (Con "seq" $ts)) ~>
+        (Con $name $ts) ;
+
+    rewrite wrapOther: (wrapNode $name $t) ~>
+        (Con $name (Cons $t Nil)) ;
   }
-  
-  -- Combine all productions from all pieces
-  rewrite allProductions: (Language.productions (MkLanguage $name $pieces)) ~>
-    (flatMap (Lam p . (Piece.productions p)) $pieces) ;
-  
-  -- Combine all rules from all pieces
-  rewrite allRules: (Language.rules (MkLanguage $name $pieces)) ~>
-    (flatMap (Lam p . (Piece.rules p)) $pieces) ;
-  
-  -- Language composition via pushout
-  rewrite pushout: (Language.pushout $L1 $L2 $along) ~>
-    (MkLanguage 
-      (String.concat (Language.name $L1) "_" (Language.name $L2))
-      (append (Language.pieces $L1) (Language.pieces $L2))) ;
-}
 
------------------------------------------------------
--- Parser: Grammar Interpretation
------------------------------------------------------
+  -----------------------------------------------------
+  -- AST Typeclass (for polymorphic construction)
+  -----------------------------------------------------
 
-module Parser {
-  -- Parse result: remaining tokens + parsed term
-  adt ParseResult {
-    Success : List Token → Term → ParseResult
-    Failure : String → ParseResult
+  module AST {
+    -- AST operations: var, lit, con, unit, seq
+    -- Allows grammar to build into different target types
+
+    type AST: $a when
+        hasMethod var : String → $a,
+        hasMethod lit : String → $a,
+        hasMethod con : String → List $a → $a,
+        hasMethod unit : $a,
+        hasMethod seq : $a → $a → $a ;
+
+    -- Term instance
+    rewrite termVar: (AST.var Term $s) ~> (Var $s) ;
+    rewrite termLit: (AST.lit Term $s) ~> (Lit $s) ;
+    rewrite termCon: (AST.con Term $name $args) ~> (Con $name $args) ;
+    rewrite termUnit: (AST.unit Term) ~> (Con "unit" Nil) ;
+    rewrite termSeq: (AST.seq Term $a $b) ~> (Con "seq" (Cons $a (Cons $b Nil))) ;
+
+    -- GrammarExpr instance (meta-circular!)
+    rewrite grammarVar: (AST.var GrammarExpr $s) ~> (Ref $s) ;
+    rewrite grammarLit: (AST.lit GrammarExpr $s) ~> (GLit $s) ;
+    rewrite grammarCon: (AST.con GrammarExpr "seq" (Cons $a (Cons $b Nil))) ~> (Seq $a $b) ;
+    rewrite grammarConAlt: (AST.con GrammarExpr "alt" (Cons $a (Cons $b Nil))) ~> (Alt $a $b) ;
+    rewrite grammarConStar: (AST.con GrammarExpr "star" (Cons $g Nil)) ~> (Star $g) ;
+    rewrite grammarUnit: (AST.unit GrammarExpr) ~> Empty ;
+    rewrite grammarSeq: (AST.seq GrammarExpr $a $b) ~> (Seq $a $b) ;
   }
-  
-  -- Parse with a grammar expression
-  rewrite parse: (Parser.parse Empty $tokens) ~>
-    (Success $tokens (Con "unit" Nil)) ;
-  
-  rewrite parseLit: (Parser.parse (GLit $s) (Cons (Sym $t) $rest)) ~>
-    (if (eq $s $t) (Success $rest (Lit $s)) (Failure "literal mismatch")) ;
-  
-  rewrite parseRef: (Parser.parse (Ref $name) $tokens $prods) ~>
-    (case (lookup $name $prods)
-      None => (Failure (String.concat "unknown production: " $name))
-      (Some $g) => (Parser.parse $g $tokens $prods)) ;
-  
-  rewrite parseSeq: (Parser.parse (Seq $g1 $g2) $tokens $prods) ~>
-    (case (Parser.parse $g1 $tokens $prods)
-      (Failure $msg) => (Failure $msg)
-      (Success $rest1 $t1) =>
-        (case (Parser.parse $g2 $rest1 $prods)
-          (Failure $msg) => (Failure $msg)
-          (Success $rest2 $t2) => (Success $rest2 (combineSeq $t1 $t2)))) ;
-  
-  rewrite parseAlt: (Parser.parse (Alt $g1 $g2) $tokens $prods) ~>
-    (case (Parser.parse $g1 $tokens $prods)
-      (Success $rest $t) => (Success $rest $t)
-      (Failure $_) => (Parser.parse $g2 $tokens $prods)) ;
-  
-  rewrite parseStar: (Parser.parse (Star $g) $tokens $prods) ~>
-    (case (Parser.parse $g $tokens $prods)
-      (Failure $_) => (Success $tokens (Con "unit" Nil))
-      (Success $rest $t) =>
-        (case (Parser.parse (Star $g) $rest $prods)
-          (Success $rest2 $ts) => (Success $rest2 (combineSeq $t $ts))
-          (Failure $_) => (Success $rest $t))) ;
-  
-  rewrite parseNode: (Parser.parse (Node $name $g) $tokens $prods) ~>
-    (case (Parser.parse $g $tokens $prods)
-      (Failure $msg) => (Failure $msg)
-      (Success $rest $t) => (Success $rest (wrapNode $name $t))) ;
-}
-
------------------------------------------------------
--- Interpreter Helpers (from Bootstrap.lego)
------------------------------------------------------
-
-module Helpers {
-  -- Combine two terms into a sequence
-  rewrite combineSeqSeq: (combineSeq (Con "seq" $ts1) (Con "seq" $ts2)) ~>
-    (Con "seq" (append $ts1 $ts2)) ;
-  
-  rewrite combineSeqLeft: (combineSeq (Con "seq" $ts) $t) ~>
-    (Con "seq" (append $ts (Cons $t Nil))) ;
-  
-  rewrite combineSeqRight: (combineSeq $t (Con "seq" $ts)) ~>
-    (Con "seq" (Cons $t $ts)) ;
-  
-  rewrite combineSeqUnitL: (combineSeq (Con "unit" Nil) $t) ~> $t ;
-  rewrite combineSeqUnitR: (combineSeq $t (Con "unit" Nil)) ~> $t ;
-  
-  rewrite combineSeqDefault: (combineSeq $t1 $t2) ~>
-    (Con "seq" (Cons $t1 (Cons $t2 Nil))) ;
-  
-  -- Wrap a term with a node name
-  rewrite wrapSeq: (wrapNode $name (Con "seq" $ts)) ~>
-    (Con $name $ts) ;
-  
-  rewrite wrapOther: (wrapNode $name $t) ~>
-    (Con $name (Cons $t Nil)) ;
-}
-
------------------------------------------------------
--- AST Typeclass (for polymorphic construction)
------------------------------------------------------
-
-module AST {
-  -- AST operations: var, lit, con, unit, seq
-  -- Allows grammar to build into different target types
-  
-  type AST: $a when
-    hasMethod var : String → $a,
-    hasMethod lit : String → $a,
-    hasMethod con : String → List $a → $a,
-    hasMethod unit : $a,
-    hasMethod seq : $a → $a → $a ;
-  
-  -- Term instance
-  rewrite termVar: (AST.var Term $s) ~> (Var $s) ;
-  rewrite termLit: (AST.lit Term $s) ~> (Lit $s) ;
-  rewrite termCon: (AST.con Term $name $args) ~> (Con $name $args) ;
-  rewrite termUnit: (AST.unit Term) ~> (Con "unit" Nil) ;
-  rewrite termSeq: (AST.seq Term $a $b) ~> (Con "seq" (Cons $a (Cons $b Nil))) ;
-  
-  -- GrammarExpr instance (meta-circular!)
-  rewrite grammarVar: (AST.var GrammarExpr $s) ~> (Ref $s) ;
-  rewrite grammarLit: (AST.lit GrammarExpr $s) ~> (GLit $s) ;
-  rewrite grammarCon: (AST.con GrammarExpr "seq" (Cons $a (Cons $b Nil))) ~> (Seq $a $b) ;
-  rewrite grammarConAlt: (AST.con GrammarExpr "alt" (Cons $a (Cons $b Nil))) ~> (Alt $a $b) ;
-  rewrite grammarConStar: (AST.con GrammarExpr "star" (Cons $g Nil)) ~> (Star $g) ;
-  rewrite grammarUnit: (AST.unit GrammarExpr) ~> Empty ;
-  rewrite grammarSeq: (AST.seq GrammarExpr $a $b) ~> (Seq $a $b) ;
-}
 
 } -- end module Lego
 
@@ -359,8 +359,7 @@ module AST {
 -- Tests
 -----------------------------------------------------
 
-test "iso-id": (forward (Iso.id) x) ~~> (Some x) ;
+test "iso-id": (forward (iso.id) x) ~~> (Some x) ;
 test "term-match": (Term.match (Var "$x") (Lit "hello")) ~~> (Some (Cons (Pair "$x" (Lit "hello")) Nil)) ;
 test "rule-apply": (Rule.apply (MkRule "beta" (Con "app" (Cons (Con "lam" (Cons (Var "$x") (Cons (Var "$b") Nil))) (Cons (Var "$a") Nil))) (Var "$b")) (Con "app" (Cons (Con "lam" (Cons (Lit "x") (Cons (Lit "y") Nil))) (Cons (Lit "z") Nil)))) ~~> (Some (Lit "y")) ;
 test "parse-lit": (Parser.parse (GLit "hello") (Cons (Sym "hello") Nil) Nil) ~~> (Success Nil (Lit "hello")) ;
-

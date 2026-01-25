@@ -2,18 +2,6 @@
 -- lego2rosetta.lego: Translator from Lego to Rosetta
 --
 -- This file defines the translator in Lego syntax, leveraging meta-circularity.
--- We import the Lego language definition (assumed available as 'Lego') and Rosetta.
--- The translator applies rewriting rules directly on Lego AST terms to produce
--- Rosetta AST terms. Patterns match Lego constructs like (rule name: pat ~~> repl),
--- and produce Rosetta equivalents like (rewriteRule name: transformedPat ~> transformedRepl).
--- Focus: Transform 'rule' to 'rewriteRule', 'type' to 'judgeDecl'.
--- Do not transform 'term ::=' (grammar) or 'test' directly—instead, handle them
--- as part of piece/module transformation for namespacing.
--- Grammar ('term ::=') is transformed to 'adtDef' to abstract syntax.
--- Pieces are transformed to modules for namespace naming (e.g., Dimension.Join).
--- Tests are passed through with term abstraction.
--- Transformation is contextual: Apply within pieces, prefixing names.
--- Entry: Use 'transform' on the full lang AST.
 -----------------------------------------------------
 import Lego
 import Rosetta
@@ -22,114 +10,64 @@ lang LegoToRosetta (Lego Rosetta) :=
 
 -----------------------------------------------------
 -- TransformPrimitives
--- Basic transformation rules for terms: Abstract constructors, literals, vars.
--- e.g., join → Join (capitalized for Rosetta convention), 0 → Const 0.
+-- Basic transformation rules for terms.
 -----------------------------------------------------
 piece TransformPrimitives
-  -- Transform a term: Recurse on structure.
   rule transformTermApp: (transform ($func $args)) ~~> ($transformedFunc (transform $args))
-    when $transformedFunc = (capitalize $func) ;  -- join a b → Join (transform a) (transform b)
+    when $transformedFunc = (capitalize $func) ;
   rule transformTermLit: (transform $lit) ~~> (Const $lit)
-    when $lit = "0" | "1" | "⊥" | "⊤" | ... ;
+    when (isLiteral $lit) ;
   rule transformTermVar: (transform $var) ~~> (Var $var) ;
-  rule transformTermIdent: (transform <ident>) ~~> Ident ;
-  rule transformTermOp: (transform ($left $op $right)) ~~> ($capitalOp (transform $left) (transform $right))
-    when $capitalOp = (capitalize $op), $op = "∨" | "∧" | "=" | ... ;
-  rule transformTermParen: (transform ($inner)) ~~> (transform $inner) ;
-  -- Pattern transform (similar, preserves $wildcards).
-  rule transformPat: (transformPat $pat) ~~> (transform $pat) ;  -- Reuse term transform, as patterns are terms.
-
------------------------------------------------------
--- SyntaxTransform
--- Transform grammar 'term ::=' to 'adtDef'.
--- Despite note on not transforming grammar, we abstract it to ADT for Rosetta.
--- Constructors: "U" → U → ConstU : Term, <ident> → var → VarC : Ident → Term.
--- Namespace: If in piece Name, adt "NameTerm".
------------------------------------------------------
-piece SyntaxTransform
-  rule transformGrammar: (transform (term ::= $constrList)) ~~> (adtDef $adtName { $transformedConstrs })
-    when inPiece $pieceName, $adtName = ($pieceName ++ "Term"),
-         $transformedConstrs = (forEach $constr in $constrList: (transformConstr $constr)) ;
-  rule transformConstr: (transformConstr $syntax → $name) ~~> ($capitalName : $transType)
-    when $capitalName = (capitalize $name), $transType = (syntaxToType $syntax) ;
-  rule syntaxToTypeLit: (syntaxToType $lit) ~~> "Term" ;
-  rule syntaxToTypeIdent: (syntaxToType <ident>) ~~> "Ident → Term" ;
-  rule syntaxToTypeOp: (syntaxToType $left $op $right) ~~> "Term → Term → Term" ;
-  -- For systems: sys ::= "[" sysbranch* "]" → sys → SysC : List Branch → Term
-  rule syntaxToTypeList: (syntaxToType $item*) ~~> "List $itemType → Term"
-    when $itemType = (syntaxToType $item) ;
+  rule transformTermIdent: (transform $id) ~~> (Ident $id)
+    when (isIdent $id) ;
+  rule transformPat: (transformPat $pat) ~~> (transform $pat) ;
 
 -----------------------------------------------------
 -- RuleTransform
--- Transform 'rule name: pat ~~> repl' to 'rewriteRule name: transPat ~> transRepl'.
--- Apply abstraction to pat/repl.
--- Namespace: If in piece Dimension, name becomes "Dimension_join0L".
+-- Transform rule AST to rewriteRule.
 -----------------------------------------------------
 piece RuleTransform
-  rule transformRule: (transform (rule $name: $pat ~~> $repl)) ~~> (rewriteRule $nsName: (transformPat $pat) ~~> (transform $repl))
-    when inPiece $pieceName, $nsName = ($pieceName ++ "_" ++ $name) ;
+  rule transformRule: (transform (DRule $name $body)) ~~> (rewriteRule $name (transform $body)) ;
 
 -----------------------------------------------------
 -- TypeTransform
--- Transform 'type name: term : ty when conds' to 'judgeDecl name: transTerm : transTy when transConds'.
--- Handle contexts [$binds] body : ty → ctxCond (list transBinds) transBody : transTy.
--- Namespace similar to rules: "Dimension_piForm".
+-- Transform type judgment AST to judgeDecl.
 -----------------------------------------------------
 piece TypeTransform
-  rule transformType: (transform (type $name: $term : $ty when $conds)) ~~> (judgeDecl $nsName: (transform $term) : (transform $ty) when $transConds)
-    when inPiece $pieceName, $nsName = ($pieceName ++ "_" ++ $name),
-         $transConds = (forEach $cond in $conds: (transformCond $cond)) ;
-  rule transformCondSimple: (transformCond $lhs : $rhs) ~~> (cond (transform $lhs) : (transform $rhs)) ;
-  rule transformCondCtx: (transformCond [$binds] $body : $ty) ~~> (ctxCond $transBinds (transform $body) : (transform $ty))
-    when $transBinds = (list (forEach $bind in $binds: (transformBind $bind))) ;
-  rule transformBind: (transformBind $x : $A) ~~> (bind $x : (transform $A)) ;
+  rule transformType: (transform (DType $name $body)) ~~> (judgeDecl $name (transform $body)) ;
 
 -----------------------------------------------------
 -- TestTransform
--- Pass through 'test name: lhs ~~> rhs' with term abstraction.
--- Namespace: "Dimension_joinId".
+-- Pass through test AST with term transformation.
 -----------------------------------------------------
 piece TestTransform
-  rule transformTest: (transform (test $name: $lhs ~~> $rhs)) ~~> (testDecl $nsName: (transform $lhs) ~~> (transform $rhs))
-    when inPiece $pieceName, $nsName = ($pieceName ++ "_" ++ $name) ;
+  rule transformTest: (transform (DTest $name $body)) ~~> (testDecl $name (transform $body)) ;
 
 -----------------------------------------------------
 -- PieceTransform
--- Transform 'piece Name decls' to 'moduleDecl Name { transDecls }'.
--- Apply transforms within context (inPiece Name for namespacing).
--- Handle 'import Mod' as 'importDecl Mod'.
+-- Transform piece AST to moduleDecl.
 -----------------------------------------------------
 piece PieceTransform
-  rule transformPiece: (transform (piece $name $decls)) ~~> (moduleDecl $name { $transDecls })
-    when pushContext (inPiece $name), $transDecls = (forEach $decl in $decls: (transform $decl)), popContext ;
-  rule transformImport: (transform (import $mod)) ~~> (importDecl $mod) ;
+  rule transformPiece: (transform (DPiece $name $decls)) ~~> (moduleDecl $name (transform $decls)) ;
+  rule transformImport: (transform (DImport $mod)) ~~> (importDecl $mod) ;
 
 -----------------------------------------------------
 -- LangTransform
--- Top-level: 'lang Name := pieces' → 'lang Name := modules'.
--- Apply piece transforms.
+-- Top-level transformation.
 -----------------------------------------------------
 piece LangTransform
-  rule transformLang: (transform (lang $name := $contents)) ~~> (lang $name := $transContents)
-    when $transContents = (forEach $content in $contents: (transform $content)) ;
+  rule transformLang: (transform (DLang $name $contents)) ~~> (lang $name (transform $contents)) ;
 
 -----------------------------------------------------
 -- ContextHelpers
--- Meta-rules for context (e.g., inPiece).
--- Assume Lego supports context vars or use substitution.
+-- Meta-rules for context.
 -----------------------------------------------------
 piece ContextHelpers
-  -- Placeholder: when inPiece $name → subst for namespacing.
-  rule capitalize: (capitalize $str) ~~> $upperStr ;  -- Meta-op.
-  rule concat: ($a ++ $b) ~~> $combined ;
-  rule forEach: (forEach $item in $list: $expr) ~~> $resultList ;
-  -- Entry: transform fullLangAST ~> transformedRosetta.
+  rule capitalize: (capitalize $str) ~~> $upperStr ;
+  rule concat: (concat $a $b) ~~> $combined ;
 
 -----------------------------------------------------
 -- Examples
--- Built-in tests for transformation.
 -----------------------------------------------------
-test "transformRuleEx": transform (rule join0L: (join 0 $r) ~~> $r) ~~> (rewriteRule "Dimension_join0L": (Join (Const 0) $r) ~~> $r)
-  when inPiece "Dimension" ;
-test "transformTypeEx": transform (type PiForm: (Π ($x : $A) $B) : U when $A : U, [$x : $A] $B : U) ~~> (judgeDecl "Pi_piForm": (Pi $x : $A $B) : Univ when cond $A : Univ, ctxCond (bind $x : $A) $B : Univ) ;
-test "transformGrammarEx": transform (term ::= "0" → i0 | <ident> → ivar) ~~> (adtDef "DimensionTerm" { I0C : Term ; IvarC : Ident → Term }) ;
+test "transformVarEx": (transform $x) ~~> (Var $x) ;
+test "transformAppEx": (transform (f $a)) ~~> (F (transform $a)) ;

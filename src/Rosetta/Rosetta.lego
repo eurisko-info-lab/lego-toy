@@ -19,17 +19,17 @@ lang Rosetta (Lego) :=
 -----------------------------------------------------
 
 piece Isomorphisms
-  term ::= "Iso" term term             → iso       -- Iso fwd bwd
+  term ::= "iso" term term             → iso       -- iso fwd bwd
          | "forward" term term         → forward   -- forward iso x
          | "backward" term term        → backward  -- backward iso x
          | "comp" term term            → isoComp   -- iso composition
          | "sym" term                  → isoSym ;  -- iso reversal
 
-  rule isoForward: (forward (Iso $fwd $bwd) $x) ~~> (App $fwd $x) ;
-  rule isoBackward: (backward (Iso $fwd $bwd) $x) ~~> (App $bwd $x) ;
-  rule isoCompFwd: (forward (comp (Iso $f1 $b1) (Iso $f2 $b2)) $x) ~~>
-    (forward (Iso $f2 $b2) (forward (Iso $f1 $b1) $x)) ;
-  rule isoSym: (sym (Iso $fwd $bwd)) ~~> (Iso $bwd $fwd) ;
+  rule isoForward: (forward (iso $fwd $bwd) $x) ~~> (App $fwd $x) ;
+  rule isoBackward: (backward (iso $fwd $bwd) $x) ~~> (App $bwd $x) ;
+  rule isoCompFwd: (forward (comp (iso $f1 $b1) (iso $f2 $b2)) $x) ~~>
+    (forward (iso $f2 $b2) (forward (iso $f1 $b1) $x)) ;
+  rule isoSym: (sym (iso $fwd $bwd)) ~~> (iso $bwd $fwd) ;
 
 -----------------------------------------------------
 -- Grammar Representation
@@ -69,16 +69,30 @@ piece Languages
 
 piece File
   rosettaFile ::= decl* ;
-  decl ::= adtDecl | rewriteDecl | testDecl | moduleDecl | importDecl ;
+  decl ::= adtDecl | algebraDecl | typeclassDecl | rewriteDecl | testDecl | moduleDecl | importDecl ;
   
-  -- ADT declaration: adt Name { Ctor1 : Type, Ctor2 : Type }
-  adtDecl ::= "adt" <ident> "{" constr ("," constr)* "}" → adtDef ;
+  -- ADT declaration: adt Name (params) { Ctor1 : Type Ctor2 : Type }
+  -- Constructors MUST be separated by commas to avoid type ambiguity
+  -- (appType is greedy and would parse "Term Lit" as a type application)
+  adtDecl ::= "adt" <ident> typeParams? "{" constr ("," constr)* "}" → adtDef ;
+  typeclassDecl ::= "type" <ident> ":" "$" <ident> "when" methodDecl ("," methodDecl)* ";" → typeclassDecl ;
+  methodDecl ::= "hasMethod" <ident> ":" type → methodDecl ;
+  typeParams ::= "(" paramGroup ("," paramGroup)* ")" → typeParams
+              |  "(" paramGroup+ ")" → typeParams ;
+  paramGroup ::= <ident>+ ":" type → paramGroup ;
   constr ::= <ident> ":" type → constr ;
+  
+  -- Algebra declaration: algebra Name for Type { laws... }
+  algebraDecl ::= "algebra" <ident> "for" <ident> "{" algebraLaw* "}" → algebraDecl ;
+  algebraLaw ::= <ident> ":" term "=" term ";" → algebraLaw ;
+  
   -- Type: avoid left recursion by making -> right-associative
   -- Support type application: F a b is (F a) b
-  type ::= appType ("->" type)? → typeExpr ;
+  -- Accept both ASCII "->" and Unicode "→" arrows, and product types with "×"
+  type ::= appType (typeArrow type)? → typeExpr ;
+  typeArrow ::= "->" | "→" ;
   appType ::= baseType+ → typeApp ;
-  baseType ::= <ident> | "(" type ")" ;
+  baseType ::= <ident> | "$" <ident> → typeVar | "(" type "×" type ")" → prodType | "(" type ")" ;
   
   -- Rewrite rule: rewrite name: pattern ~> template ;
   rewriteDecl ::= "rewrite" <ident> ":" pattern "~>" term guardClause? ";" → rewriteRule ;
@@ -86,8 +100,12 @@ piece File
   pattern ::= term | "_" → wildcard ;
   
   -- Term expressions (S-expressions with binder support)
-  -- Supports: atoms, applications, binders (x . body), and compound expressions
-  term ::= binder | compound | atom ;
+  -- Supports: atoms, applications, binders (x . body), case expressions, and compound expressions
+  term ::= caseExpr | binder | compound | atom ;
+  caseExpr ::= "(" "case" term caseArm+ ")" → caseExpr ;
+  caseArm ::= "(" <ident> casePatArg* ")" "=>" term → caseArm
+            | <ident> "=>" term → caseArm ;
+  casePatArg ::= "$" <ident> → metavar | <ident> → ident ;
   binder ::= <ident> "." term → binder ;
   compound ::= "(" term+ ")" → compound ;
   atom ::= <ident> | "$" <ident> → metavar | <string> | <number> ;

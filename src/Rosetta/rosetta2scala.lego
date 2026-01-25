@@ -164,7 +164,7 @@ piece ADTTransform
 -----------------------------------------------------
 piece RewriteTransform
   -- Rewrite rule → def with pattern match
-  rule rewriteToScala: (toScala (rewriteRule $name: $pat ~~> $repl)) ~~>
+  rule rewriteToScala: (toScala (rewriteRule $name ":" $pat ~~> $repl)) ~~>
     (defDecl $name
       (paramList (param t (tyVar Term)))
       (tyVar Term)
@@ -187,7 +187,7 @@ piece RewriteTransform
 -----------------------------------------------------
 piece JudgmentTransform
   -- Type judgment → documented def returning Boolean
-  rule typeToScala: (toScala (typeDecl $name: $term : $ty when $conds)) ~~>
+  rule typeToScala: (toScala (typeDecl $name ":" $term ":" $ty when $conds)) ~~>
     (defDecl $name
       (toScalaCondParams $conds)
       (tyVar Boolean)
@@ -205,7 +205,7 @@ piece JudgmentTransform
 -----------------------------------------------------
 piece TestTransform
   -- test → assert with equals
-  rule testToScala: (toScala (testDecl $name: $lhs ~~> $rhs)) ~~>
+  rule testToScala: (toScala (testDecl $name ":" $lhs ~~> $rhs)) ~~>
     (defDecl $name
       (paramList)
       (tyUnit)

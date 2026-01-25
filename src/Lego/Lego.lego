@@ -100,11 +100,18 @@ piece Judgments
 
 -----------------------------------------------------
 -- Tests
--- Equivalence assertions
+-- Equivalence assertions with optional guards
+-- Supports both:
+--   test[grammar] "name": <surface syntax> ~~> <expected> ;  (parametric)
+--   test "name": <s-expr> ~~> <s-expr> ;                     (s-expr)
 -----------------------------------------------------
 
 piece Tests
-  decl ::= "test" <string> ":" term "~~>" term → testDecl ;
+  -- Parametric test uses piece grammar, s-expr test uses term grammar
+  testDecl ::= "test" "[" <ident> "]" <string> ":" testBody ";" → DTestParam
+             | "test" <string> ":" term "~~>" term testGuard? ";" → DTest ;
+  testGuard ::= "when" testCond ("," testCond)* → guard ;
+  testCond ::= term → cond ;
 
 -----------------------------------------------------
 -- Modules

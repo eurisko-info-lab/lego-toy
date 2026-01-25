@@ -779,32 +779,41 @@ def parseWithGrammar (grammar : LoadedGrammar) (input : String) : Option Term :=
 /-- Parse input with detailed error reporting (uses grammar-driven tokenizer or Bootstrap fallback) -/
 def parseWithGrammarE (grammar : LoadedGrammar) (input : String) : Except ParseError Term :=
   let tokens := tokenizeForGrammar grammar input
-  let st : ParseState := { tokens := tokens, binds := [] }
+  let st : ParseState := { tokens := tokens, binds := [], maxPos := 0 }
   match findAllProductions grammar.productions grammar.startProd with
   | some g =>
-    let (result, _) := parseGrammar defaultFuel grammar.productions g st
+    let (result, memo) := parseGrammar defaultFuel grammar.productions g st
     match result with
     | some (t, st') =>
       if st'.tokens.isEmpty then
         .ok t
       else
+        -- Incomplete parse: use maxPos (furthest position reached) for error location
+        let furthestPos := max st'.pos st'.maxPos
+        -- Also check memo table for furthest attempted position
+        let memoMaxPos := memo.fold (init := furthestPos) fun acc (pos, _) _ => max acc pos
+        let errorPos := max furthestPos memoMaxPos
+        let remainingAtError := tokens.drop errorPos
         let err : ParseError := {
-          message := "Incomplete parse"
-          tokenPos := st'.pos
+          message := s!"Incomplete parse at token {errorPos}"
+          tokenPos := errorPos
           production := grammar.startProd
           expected := []
-          actual := st'.tokens.head?
-          remaining := st'.tokens
+          actual := remainingAtError.head?
+          remaining := remainingAtError
         }
         .error (err.withSourceLoc input)
     | none =>
+      -- Parse failed - find furthest position from memo table
+      let memoMaxPos := memo.fold (init := 0) fun acc (pos, _) _ => max acc pos
+      let remainingTokens := tokens.drop memoMaxPos
       let err : ParseError := {
-        message := "Parse failed"
-        tokenPos := st.pos
+        message := s!"Parse failed at token {memoMaxPos}"
+        tokenPos := memoMaxPos
         production := grammar.startProd
         expected := []
-        actual := tokens.head?
-        remaining := tokens
+        actual := remainingTokens.head?
+        remaining := remainingTokens
       }
       .error (err.withSourceLoc input)
   | none =>

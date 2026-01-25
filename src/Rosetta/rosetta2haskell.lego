@@ -166,7 +166,7 @@ piece GADTTransform
 -----------------------------------------------------
 piece RewriteTransform
   -- Rewrite rule → function with case
-  rule rewriteToHaskell: (toHaskell (rewriteRule $name: $pat ~~> $repl)) ~~>
+  rule rewriteToHaskell: (toHaskell (rewriteRule $name ":" $pat ~~> $repl)) ~~>
     (funDecl $name (patVar t)
       (caseExpr (var t)
         (caseAlt (toHaskellPat $pat) (toHaskell $repl))
@@ -187,7 +187,7 @@ piece RewriteTransform
 -----------------------------------------------------
 piece JudgmentTransform
   -- Type judgment → type signature + undefined implementation
-  rule typeToHaskell: (toHaskell (typeDecl $name: $term : $ty when $conds)) ~~>
+  rule typeToHaskell: (toHaskell (typeDecl $name ":" $term ":" $ty when $conds)) ~~>
     ((typeSigDecl $name (toHaskellJudgmentType $conds $term $ty))
      (funDecl $name (undefinedExpr))) ;
   
@@ -203,7 +203,7 @@ piece JudgmentTransform
 -----------------------------------------------------
 piece TestTransform
   -- test → assertEqual (HUnit style)
-  rule testToHaskell: (toHaskell (testDecl $name: $lhs ~~> $rhs)) ~~>
+  rule testToHaskell: (toHaskell (testDecl $name ":" $lhs ~~> $rhs)) ~~>
     (funDecl $name
       (app (app (var assertEqual) (strLit $name))
            (app (app (var eq) (toHaskell $lhs)) (toHaskell $rhs)))) ;

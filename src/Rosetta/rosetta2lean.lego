@@ -138,7 +138,7 @@ piece ADTTransform
 -----------------------------------------------------
 piece RewriteTransform
   -- Simple rewrite → def with match
-  rule rewriteToLean: (toLean (rewriteRule $name: $pat ~~> $repl)) ~~>
+  rule rewriteToLean: (toLean (rewriteRule $name ":" $pat ~~> $repl)) ~~>
     (defDecl $name 
       (explicitParam t Term)
       (typeAnn (var Term))
@@ -162,14 +162,14 @@ piece RewriteTransform
 -----------------------------------------------------
 piece JudgmentTransform
   -- Type judgment → theorem (structural representation)
-  rule typeToLean: (toLean (typeDecl $name: $term : $ty when $conds)) ~~>
+  rule typeToLean: (toLean (typeDecl $name ":" $term ":" $ty when $conds)) ~~>
     (theoremDecl $name
       (toLeanParams $conds)
       (app (app (var HasType) (toLean $term)) (toLean $ty))
       (byTactic (tacSorry))) ;
   
   -- Simple type judgment without conditions
-  rule typeSimpleToLean: (toLean (typeDecl $name: $term : $ty)) ~~>
+  rule typeSimpleToLean: (toLean (typeDecl $name ":" $term ":" $ty)) ~~>
     (theoremDecl $name
       (app (app (var HasType) (toLean $term)) (toLean $ty))
       (byTactic (tacSorry))) ;
@@ -186,7 +186,7 @@ piece JudgmentTransform
 -----------------------------------------------------
 piece TestTransform
   -- test → example with eq proof
-  rule testToLean: (toLean (testDecl $name: $lhs ~~> $rhs)) ~~>
+  rule testToLean: (toLean (testDecl $name ":" $lhs ~~> $rhs)) ~~>
     (exampleDecl 
       (beq (toLean $lhs) (toLean $rhs))
       (byTactic (tacRfl))) ;

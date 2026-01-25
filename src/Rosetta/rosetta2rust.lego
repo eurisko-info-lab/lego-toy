@@ -170,7 +170,7 @@ piece ADTTransform
 piece RewriteTransform
   -- Rewrite rule → fn with match
   -- Note: Rust requires explicit lifetime/type annotations on closures
-  rule rewriteToRust: (toRust (rewriteRule $name: $pat ~~> $repl)) ~~>
+  rule rewriteToRust: (toRust (rewriteRule $name ":" $pat ~~> $repl)) ~~>
     (fnItem (pubVis) $name
       (paramList (param t (refTy (tyPath Term))))
       (returnType (tyPath Term))
@@ -194,7 +194,7 @@ piece RewriteTransform
 -----------------------------------------------------
 piece JudgmentTransform
   -- Type judgment → fn with todo!()
-  rule typeToRust: (toRust (typeDecl $name: $term : $ty when $conds)) ~~>
+  rule typeToRust: (toRust (typeDecl $name ":" $term ":" $ty when $conds)) ~~>
     (fnItem (pubVis) $name
       (toRustCondParams $conds)
       (returnType (tyPath bool))
@@ -212,7 +212,7 @@ piece JudgmentTransform
 -----------------------------------------------------
 piece TestTransform
   -- test → #[test] fn with assert_eq!
-  rule testToRust: (toRust (testDecl $name: $lhs ~~> $rhs)) ~~>
+  rule testToRust: (toRust (testDecl $name ":" $lhs ~~> $rhs)) ~~>
     (fnItem $name
       (paramList)
       (block (stmtList

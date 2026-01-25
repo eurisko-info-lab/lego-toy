@@ -150,23 +150,93 @@ partial def findTokenSeqPos (input : String) (tokens : List String) (start : Nat
         let afterTok := pos + tok.toUTF8.size
         findTokenSeqPos input rest afterTok
 
-/-- Add source location to a parse error by finding the token in input -/
+/-- Add source location to a parse error by counting tokens to find position.
+    Uses tokenPos (the 0-indexed position of the error token) to find byte offset. -/
 def ParseError.withSourceLoc (e : ParseError) (input : String) : ParseError :=
-  match e.remaining.head? with
-  | none => { e with loc := some { line := 1, column := 1 } }
-  | some tok =>
-    -- Find the LAST occurrence of this token (error is usually near the end of parsing)
-    let tokStr := tok.toString
-    let inputBytes := input.toUTF8
-    let rec findLast (fuel : Nat) (start : Nat) (lastFound : Option Nat) : Option Nat :=
+  let byteOffset := findNthTokenStart input e.tokenPos
+  { e with loc := some (computeLineCol input byteOffset) }
+where
+  /-- Find byte offset of the Nth token (0-indexed) in input -/
+  findNthTokenStart (input : String) (n : Nat) : Nat :=
+    let bytes := input.toUTF8
+    let rec go (pos : Nat) (remaining : Nat) (fuel : Nat) : Nat :=
       match fuel with
-      | 0 => lastFound
+      | 0 => pos
       | fuel' + 1 =>
-        match String.findSubstrFromBytes input tokStr start with
-        | none => lastFound
-        | some pos => findLast fuel' (pos + 1) (some pos)
-    let byteOffset := findLast inputBytes.size 0 none |>.getD 0
-    { e with loc := some (computeLineCol input byteOffset) }
+        -- Skip whitespace and comments first
+        let pos' := skipWsComments bytes pos fuel'
+        if pos' >= bytes.size then pos'
+        else if remaining == 0 then pos'  -- Return position at START of token
+        else
+          -- Skip one token
+          let tokenEnd := skipOneToken bytes pos'
+          go tokenEnd (remaining - 1) fuel'
+    go 0 n bytes.size
+  /-- Skip whitespace and -- comments -/
+  skipWsComments (bytes : ByteArray) (pos : Nat) (fuel : Nat) : Nat :=
+    match fuel with
+    | 0 => pos
+    | fuel' + 1 =>
+      if pos >= bytes.size then pos
+      else
+        let b := bytes.get! pos
+        if b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D then  -- space, tab, newline, CR
+          skipWsComments bytes (pos + 1) fuel'
+        else if b == 0x2D && pos + 1 < bytes.size && bytes.get! (pos + 1) == 0x2D then  -- "--"
+          -- Skip to end of line
+          let rec skipLine (p : Nat) : Nat :=
+            if p >= bytes.size then p
+            else if bytes.get! p == 0x0A then p + 1
+            else skipLine (p + 1)
+          skipWsComments bytes (skipLine (pos + 2)) fuel'
+        else pos
+  /-- Skip one token, return position after token -/
+  skipOneToken (bytes : ByteArray) (pos : Nat) : Nat :=
+    if pos >= bytes.size then pos
+    else
+      let b := bytes.get! pos
+      -- String literal
+      if b == 0x22 then  -- "
+        let rec skipStr (p : Nat) : Nat :=
+          if p >= bytes.size then p
+          else if bytes.get! p == 0x22 then p + 1
+          else if bytes.get! p == 0x5C && p + 1 < bytes.size then skipStr (p + 2)  -- escape
+          else skipStr (p + 1)
+        skipStr (pos + 1)
+      -- Identifier or keyword (alphanumeric start)
+      else if isAlphaStart b then
+        let rec skipIdent (p : Nat) : Nat :=
+          if p >= bytes.size then p
+          else
+            let c := bytes.get! p
+            if isAlphaNum c || c == 0x5F || c == 0x2E || c == 0x27 then skipIdent (p + 1)  -- _, ., '
+            else p
+        skipIdent (pos + 1)
+      -- $ followed by identifier (metavar)
+      else if b == 0x24 then  -- $
+        let rec skipMetavar (p : Nat) : Nat :=
+          if p >= bytes.size then p
+          else
+            let c := bytes.get! p
+            if isAlphaNum c || c == 0x5F || c == 0x27 then skipMetavar (p + 1)
+            else p
+        skipMetavar (pos + 1)
+      -- Multi-byte UTF-8 character (symbol like →, ×, etc.)
+      else if b >= 0xC0 then
+        -- Skip UTF-8 multi-byte sequence
+        let numBytes := if b >= 0xF0 then 4 else if b >= 0xE0 then 3 else 2
+        pos + numBytes
+      -- Single-byte symbol/operator
+      else pos + 1
+  isAlphaStart (b : UInt8) : Bool :=
+    (b >= 0x41 && b <= 0x5A) ||  -- A-Z
+    (b >= 0x61 && b <= 0x7A) ||  -- a-z
+    b == 0x5F  -- _
+  isAlphaNum (b : UInt8) : Bool :=
+    (b >= 0x41 && b <= 0x5A) ||  -- A-Z
+    (b >= 0x61 && b <= 0x7A) ||  -- a-z
+    (b >= 0x30 && b <= 0x39) ||  -- 0-9
+    b >= 0x80  -- UTF-8 continuation bytes
 
 /-- Result type with error tracking -/
 inductive ParseResultE (α : Type)
@@ -452,6 +522,7 @@ structure ParseState where
   binds  : List (String × Term)
   memo   : MemoTable := {}  -- Packrat memo table
   pos    : Nat := 0         -- Current position for memo keys
+  maxPos : Nat := 0         -- Furthest position reached (for error reporting)
   deriving Repr, Nonempty
 
 /-- Result of grammar interpretation.

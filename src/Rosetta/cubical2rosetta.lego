@@ -1,0 +1,298 @@
+-----------------------------------------------------
+-- cubical2rosetta.lego: Transform Cubical IR to Rosetta IR
+--
+-- This transforms Cubical .lego specifications (pieces with grammar,
+-- rewrite rules, and tests) into Rosetta IR that can then be emitted
+-- to any target language via rosetta2lean, rosetta2rust, etc.
+--
+-- Pipeline:
+--   Cubical/*.lego → parse → Lego AST → cubical2rosetta → Rosetta IR
+--                                                           ↓
+--                              ┌──────────────────────────────┴───────────────────────────┐
+--                              ↓                    ↓                    ↓                ↓
+--                     rosetta2lean.lego   rosetta2rust.lego   rosetta2hs.lego   rosetta2scala.lego
+--                              ↓                    ↓                    ↓                ↓
+--                          Lean code            Rust code          Haskell code      Scala code
+--
+-- Input: Cubical constructs
+--   - piece Name { grammar; rules; tests; }
+--   - rule name: pattern ~> template ;
+--   - test "name": input ~~> expected ;
+--   - derive operations
+--
+-- Output: Rosetta constructs (from Rosetta.lego)
+--   - moduleDecl (for pieces)
+--   - def (for rules as match functions)
+--   - rewriteRule (for rules)
+--   - testDecl (for tests)
+--   - adtDef (for piece types)
+-----------------------------------------------------
+import Lego
+import Rosetta
+
+lang CubicalToRosetta (Lego Rosetta) :=
+
+-----------------------------------------------------
+-- FileTransform
+-- Entry point: transform a lang declaration
+-----------------------------------------------------
+piece FileTransform
+  -- lang Name := pieces... → rosettaModule with all pieces
+  @file rule langToRosetta: (toRosetta (lang $name := $contents)) ~~>
+    (rosettaModule $name 
+      (seq (importDecl "Cubical.Runtime")
+           (toRosettaDecls $contents))) ;
+  
+  -- Transform sequence of declarations
+  rule declsSeq: (toRosettaDecls ($decl $rest)) ~~>
+    (seq (toRosettaDecl $decl) (toRosettaDecls $rest)) ;
+  rule declsSingle: (toRosettaDecls $decl) ~~>
+    (toRosettaDecl $decl) ;
+  rule declsNil: (toRosettaDecls ()) ~~> () ;
+  
+  -- Route each declaration type
+  rule declPiece: (toRosettaDecl (piece $name $body)) ~~>
+    (toRosetta (piece $name $body)) ;
+  rule declImport: (toRosettaDecl (import $mod ;)) ~~>
+    (importDecl $mod) ;
+
+-----------------------------------------------------
+-- PieceTransform
+-- Transform piece declarations with grammar, rules, tests
+-----------------------------------------------------
+piece PieceTransform
+  -- piece Name { contents } → namespace with rules and tests
+  @decl rule pieceToRosetta: (toRosetta (piece $name $contents)) ~~>
+    (namespaceDecl $name (toRosettaPieceContents $contents)) ;
+  
+  -- Transform piece contents (grammar, rules, tests)
+  rule pieceContentsSeq: (toRosettaPieceContents ($item $rest)) ~~>
+    (seq (toRosettaPieceItem $item) (toRosettaPieceContents $rest)) ;
+  rule pieceContentsSingle: (toRosettaPieceContents $item) ~~>
+    (toRosettaPieceItem $item) ;
+  rule pieceContentsNil: (toRosettaPieceContents ()) ~~> () ;
+  
+  -- Route piece items
+  rule pieceItemGrammar: (toRosettaPieceItem ($prod ::= $alts ;)) ~~>
+    (comment (concat "Grammar: " $prod)) ;  -- Grammar becomes comment (handled separately)
+  rule pieceItemRule: (toRosettaPieceItem (rule $name : $pat ~> $tmpl ;)) ~~>
+    (toRosetta (rule $name : $pat ~> $tmpl ;)) ;
+  rule pieceItemTest: (toRosettaPieceItem (test $name : $input ~~> $expected ;)) ~~>
+    (toRosetta (test $name : $input ~~> $expected ;)) ;
+  rule pieceItemDerive: (toRosettaPieceItem (derive $op for $ty $opts ;)) ~~>
+    (comment (concat "derive " $op)) ;
+
+-----------------------------------------------------
+-- RuleTransform
+-- Transform rewrite rules to Rosetta function definitions
+-----------------------------------------------------
+piece RuleTransform
+  -- rule name: pattern ~> template → def with match
+  @decl rule ruleToRosetta: (toRosetta (rule $name : $pat ~> $tmpl ;)) ~~>
+    (def $name 
+      (Arrow Term Term)
+      (Lam t .
+        (match t
+          (case (toRosettaPat $pat) (toRosettaExpr $tmpl))
+          (case _ t)))) ;
+  
+  -- Guarded rule: rule name: pattern ~> template when guard
+  rule guardedRuleToRosetta: (toRosetta (rule $name : $pat ~> $tmpl when $guard ;)) ~~>
+    (def $name
+      (Arrow Term Term)
+      (Lam t .
+        (match t
+          (case (toRosettaPat $pat) 
+            (ifThenElse (toRosettaExpr $guard)
+              (toRosettaExpr $tmpl)
+              t))
+          (case _ t)))) ;
+
+-----------------------------------------------------
+-- TestTransform
+-- Transform test declarations
+-----------------------------------------------------
+piece TestTransform
+  -- test "name": input ~~> expected → testDecl
+  @decl rule testToRosetta: (toRosetta (test $name : $input ~~> $expected ;)) ~~>
+    (testDecl $name 
+      (testCase (toRosettaExpr $input) (toRosettaExpr $expected))) ;
+
+-----------------------------------------------------
+-- PatternTransform
+-- Transform Cubical patterns to Rosetta patterns
+-----------------------------------------------------
+piece PatternTransform
+  -- Variable pattern: $x → PatVar x
+  rule patVar: (toRosettaPat $x) ~~> (PatVar $x) 
+    when (isMetaVar $x) ;
+  
+  -- Constructor pattern: (con args...) → PatCon con [patterns...]
+  rule patCon: (toRosettaPat ($con $args)) ~~>
+    (PatCon $con (toRosettaPats $args)) ;
+  
+  -- Nested constructor: (con arg1 arg2) → PatCon with list
+  rule patConMulti: (toRosettaPat ($con $a1 $a2)) ~~>
+    (PatCon $con (Cons (toRosettaPat $a1) (Cons (toRosettaPat $a2) Nil))) ;
+  
+  -- Simple constructor: con → PatCon con []
+  rule patConNullary: (toRosettaPat $con) ~~> (PatCon $con Nil)
+    when (isIdent $con) ;
+  
+  -- List of patterns
+  rule patsSeq: (toRosettaPats ($p $rest)) ~~>
+    (Cons (toRosettaPat $p) (toRosettaPats $rest)) ;
+  rule patsSingle: (toRosettaPats $p) ~~>
+    (Cons (toRosettaPat $p) Nil) ;
+  rule patsNil: (toRosettaPats ()) ~~> Nil ;
+
+-----------------------------------------------------
+-- ExprTransform
+-- Transform Cubical expressions to Rosetta expressions
+-----------------------------------------------------
+piece ExprTransform
+  -- Meta-variable: $x → Var x
+  rule exprVar: (toRosettaExpr $x) ~~> (Var $x)
+    when (isMetaVar $x) ;
+  
+  -- Literal: "string" → Lit "string"
+  rule exprLit: (toRosettaExpr $s) ~~> (Lit $s)
+    when (isString $s) ;
+  
+  -- Number: 42 → Lit "42"
+  rule exprNum: (toRosettaExpr $n) ~~> (Lit (toString $n))
+    when (isNumber $n) ;
+  
+  -- Constructor application: (con arg1 arg2) → Con "con" [exprs...]
+  rule exprConApp: (toRosettaExpr ($con $args)) ~~>
+    (Con $con (toRosettaExprs $args)) ;
+  
+  -- Simple identifier: ix → Con "ix" []
+  rule exprIdent: (toRosettaExpr $id) ~~> (Con $id Nil)
+    when (isIdent $id) ;
+  
+  -- Expression list
+  rule exprsSeq: (toRosettaExprs ($e $rest)) ~~>
+    (Cons (toRosettaExpr $e) (toRosettaExprs $rest)) ;
+  rule exprsSingle: (toRosettaExprs $e) ~~>
+    (Cons (toRosettaExpr $e) Nil) ;
+  rule exprsNil: (toRosettaExprs ()) ~~> Nil ;
+
+-----------------------------------------------------
+-- TermConstructors
+-- Transform specific Cubical term constructors
+-----------------------------------------------------
+piece TermConstructors
+  -- De Bruijn index: (ix n) → Con "ix" [Lit n]
+  rule ixToRosetta: (toRosettaExpr (ix $n)) ~~>
+    (Con "ix" (Cons (Lit (toString $n)) Nil)) ;
+  
+  -- Lambda: (lam body) → Con "lam" [body']
+  rule lamToRosetta: (toRosettaExpr (lam $body)) ~~>
+    (Con "lam" (Cons (toRosettaExpr $body) Nil)) ;
+  
+  -- Application: (app f a) → Con "app" [f', a']
+  rule appToRosetta: (toRosettaExpr (app $f $a)) ~~>
+    (Con "app" (Cons (toRosettaExpr $f) (Cons (toRosettaExpr $a) Nil))) ;
+  
+  -- Pi type: (pi A B) → Con "pi" [A', B']
+  rule piToRosetta: (toRosettaExpr (pi $A $B)) ~~>
+    (Con "pi" (Cons (toRosettaExpr $A) (Cons (toRosettaExpr $B) Nil))) ;
+  
+  -- Pair: (pair a b) → Con "pair" [a', b']
+  rule pairToRosetta: (toRosettaExpr (pair $a $b)) ~~>
+    (Con "pair" (Cons (toRosettaExpr $a) (Cons (toRosettaExpr $b) Nil))) ;
+  
+  -- Universe: (univ l) → Con "univ" [l']
+  rule univToRosetta: (toRosettaExpr (univ $l)) ~~>
+    (Con "univ" (Cons (toRosettaExpr $l) Nil)) ;
+  
+  -- Path: (path A a b) → Con "path" [A', a', b']
+  rule pathToRosetta: (toRosettaExpr (path $A $a $b)) ~~>
+    (Con "path" (Cons (toRosettaExpr $A) 
+                (Cons (toRosettaExpr $a) 
+                (Cons (toRosettaExpr $b) Nil)))) ;
+  
+  -- Cofibration: cof_top → Con "cof_top" []
+  rule cofTopToRosetta: (toRosettaExpr cof_top) ~~>
+    (Con "cof_top" Nil) ;
+  rule cofBotToRosetta: (toRosettaExpr cof_bot) ~~>
+    (Con "cof_bot" Nil) ;
+  
+  -- Dimension: dim0, dim1 → Con "dim0/1" []
+  rule dim0ToRosetta: (toRosettaExpr dim0) ~~> (Con "dim0" Nil) ;
+  rule dim1ToRosetta: (toRosettaExpr dim1) ~~> (Con "dim1" Nil) ;
+
+-----------------------------------------------------
+-- BuiltinOps
+-- Transform builtin operations to Rosetta
+-----------------------------------------------------
+piece BuiltinOps
+  -- subst: (subst k v e) → App (App (App (Var "subst") k) v) e
+  rule substToRosetta: (toRosettaExpr (subst $k $v $e)) ~~>
+    (App (App (App (Var "subst") (toRosettaExpr $k)) 
+                                 (toRosettaExpr $v)) 
+                                 (toRosettaExpr $e)) ;
+  
+  -- shift: (shift k n e) → App (App (App (Var "shift") k) n) e
+  rule shiftToRosetta: (toRosettaExpr (shift $k $n $e)) ~~>
+    (App (App (App (Var "shift") (toRosettaExpr $k))
+                                 (toRosettaExpr $n))
+                                 (toRosettaExpr $e)) ;
+  
+  -- normalize: (normalize fuel t) → App (App (Var "normalize") fuel) t
+  rule normalizeToRosetta: (toRosettaExpr (normalize $fuel $t)) ~~>
+    (App (App (Var "normalize") (toRosettaExpr $fuel)) 
+                                (toRosettaExpr $t)) ;
+  
+  -- Arithmetic
+  rule addToRosetta: (toRosettaExpr (add $a $b)) ~~>
+    (App (App (Var "add") (toRosettaExpr $a)) (toRosettaExpr $b)) ;
+  rule subToRosetta: (toRosettaExpr (sub $a $b)) ~~>
+    (App (App (Var "sub") (toRosettaExpr $a)) (toRosettaExpr $b)) ;
+  
+  -- Comparison
+  rule gtToRosetta: (toRosettaExpr (gt $a $b)) ~~>
+    (App (App (Var "gt") (toRosettaExpr $a)) (toRosettaExpr $b)) ;
+  rule geqToRosetta: (toRosettaExpr (geq $a $b)) ~~>
+    (App (App (Var "geq") (toRosettaExpr $a)) (toRosettaExpr $b)) ;
+  rule eqToRosetta: (toRosettaExpr (eq $a $b)) ~~>
+    (App (App (Var "eq") (toRosettaExpr $a)) (toRosettaExpr $b)) ;
+  rule neqToRosetta: (toRosettaExpr (neq $a $b)) ~~>
+    (App (App (Var "neq") (toRosettaExpr $a)) (toRosettaExpr $b)) ;
+  
+  -- Conditional
+  rule ifToRosetta: (toRosettaExpr (if $c $t $e)) ~~>
+    (ifThenElse (toRosettaExpr $c) (toRosettaExpr $t) (toRosettaExpr $e)) ;
+
+-----------------------------------------------------
+-- RuleList
+-- Collect all rules from a piece for the normalizer
+-----------------------------------------------------
+piece RuleList
+  -- Generate rule list for piece
+  rule collectRules: (collectRules (piece $name $contents)) ~~>
+    (def (concat $name "Rules")
+      (List Rule)
+      (collectRulesFrom $contents)) ;
+  
+  rule rulesFrom: (collectRulesFrom (rule $name : $pat ~> $tmpl ; $rest)) ~~>
+    (Cons (Rule $name (toRosettaPat $pat) (toRosettaExpr $tmpl))
+          (collectRulesFrom $rest)) ;
+  rule rulesFromEnd: (collectRulesFrom ()) ~~> Nil ;
+  rule rulesFromSkip: (collectRulesFrom ($other $rest)) ~~>
+    (collectRulesFrom $rest) ;
+
+-----------------------------------------------------
+-- ModuleCollector  
+-- Collect all pieces into a single module with combined rules
+-----------------------------------------------------
+piece ModuleCollector
+  -- allRules: list of all rules from all pieces
+  rule allRules: (allRules $lang) ~~>
+    (def "allRules" (List Rule) (flattenRules (collectAllRules $lang))) ;
+  
+  -- normalize with collected rules
+  rule normalizeExpr: (normalizeExpr $t) ~~>
+    (App (App (Var "normalize") (Var "allRules")) $t) ;
+

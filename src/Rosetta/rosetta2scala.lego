@@ -126,23 +126,27 @@ piece RewriteTransformScala
 
 -----------------------------------------------------
 -- Pattern transformation (Rosetta patterns to Scala patterns)
+-- Scala grammar: pattern → patVar | patCtor | ...
+-- patCtor ::= <ident> "(" patternList ")" → patCtor
+-- patternList ::= pattern ("," pattern)* → patternList
 -----------------------------------------------------
 piece PatternTransformScala
-  -- Metavariable: (metavar "$" x) becomes x
+  -- Metavariable: (metavar "$" x) becomes patVar x
   rule transformPatternScalaMeta: (transformPatternScala (metavar "$" $x))
     ~~> (patVar $x) ;
 
-  -- Constructor pattern: (compound "(" Ctor args... ")")
+  -- Constructor pattern: (compound "(" Ctor args... ")") becomes patCtor with patternList
   rule transformPatternScalaCtor: (transformPatternScala (compound "(" $ctor $args... ")"))
-    ~~> (patExtract $ctor @map transformPatternScala $args...) ;
+    ~~> (patCtor $ctor (patternList @map transformPatternScala $args...)) ;
 
-  -- Simple identifier
+  -- Simple identifier (like Nil)
   rule transformPatternScalaIdent: (transformPatternScala $x)
     ~~> (patVar $x) ;
 
 -----------------------------------------------------
 -- Term transformation (Rosetta terms to Scala terms)
 -- Note: Terms must be fully wrapped: term -> orExpr -> andExpr -> cmpExpr -> addExpr -> mulExpr -> unaryExpr -> postfixExpr -> appExpr
+-- Note: appArg expects termList inside: appArg ::= "(" termList? ")" → appArg
 -----------------------------------------------------
 piece TermTransformScala
   -- Metavariable: (metavar "$" x) becomes var x wrapped in full term chain
@@ -153,14 +157,15 @@ piece TermTransformScala
   rule transformTermScalaApp: (transformTermScala (compound "(" $f $args... ")"))
     ~~> (term (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var $f) @map transformTermArgScala $args...))))))))) ;
   
+  -- appArg needs termList inside: (appArg (termList (term ...)))
   rule transformTermArgScalaMeta: (transformTermArgScala (metavar "$" $x))
-    ~~> (appArg (var $x)) ;
+    ~~> (appArg (termList (term (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var $x)))))))))))) ;
   
   rule transformTermArgScalaCompound: (transformTermArgScala (compound "(" $inner... ")"))
-    ~~> (appArg (paren (transformTermScala (compound "(" $inner... ")")))) ;
+    ~~> (appArg (termList (transformTermScala (compound "(" $inner... ")")))) ;
   
   rule transformTermArgScalaIdent: (transformTermArgScala $x)
-    ~~> (appArg (var $x)) ;
+    ~~> (appArg (termList (term (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var $x)))))))))))) ;
 
   -- Simple identifier
   rule transformTermScalaIdent: (transformTermScala $x)

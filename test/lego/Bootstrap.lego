@@ -95,6 +95,7 @@ token Token
       ':' ':' '=',   -- ::=
       '=' 'I' '=',   -- =I=
       '~' '~' '>',   -- ~~>
+      '.' '.' '.',   -- ... (for rest patterns like $x...)
       ':' '=',       -- :=
       '~' '>',       -- ~>
       '-' '>',       -- ->
@@ -198,7 +199,9 @@ piece Term
 
 piece Pattern
   pattern ::= "$" ident "." pattern → binder
+            | "$" ident "..." → restVar
             | "$" ident → var
+            | "@" ident patternArg+ → mapExpr
             | "[" pattern ":=" pattern "]" pattern → subst
             | "[" patternArg* "]" → bracket
             | "{" patternArg* "}" → brace
@@ -218,6 +221,7 @@ piece Pattern
             | ident → con ;
   patternArg ::= "$" ident "." pattern → binder
                | "$" ident ":" pattern → typedVar
+               | "$" ident "..." → restVar
                | "$" ident ":=" pattern → assign
                | ident ":=" pattern → assign
                | ident ":" pattern → labeledArg
@@ -232,6 +236,7 @@ piece Pattern
                | "@@" → con
                | "-" → con
                | "↾" → con
+               | "@" ident patternArg+ → mapExpr
                | "@" → con
                | "." → con
                | "|" → con
@@ -259,7 +264,9 @@ piece Pattern
 
 piece Template
   template ::= "$" ident "." template → binder
+             | "$" ident "..." → restVar
              | "$" ident → var
+             | "@" ident templateArg+ → mapExpr
              | "let" ident "=" template "in" template → letIn
              | "let" "$" ident "=" template "in" template → letIn
              | "let" "(" template "," template ")" "=" template "in" template → letTupleIn
@@ -315,6 +322,7 @@ piece Template
                 | "@@" → con
                 | "-" → con
                 | "↾" → con
+                | "@" ident templateArg+ → mapExpr
                 | "@" → con
                 | "." → con
                 | "|" → con

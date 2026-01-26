@@ -255,6 +255,9 @@ piece Items
       → modDeclItem
     | visibility? "mod" <ident> "{" @nl @indent item* @dedent "}" @nl
       → modDefItem
+    -- Comments (for generated code)
+    | "//" <ident>* @nl
+      → lineComment
     ;
 
   visibility ::= "pub"                  → pubVis
@@ -262,7 +265,7 @@ piece Items
                | "pub" @nsp "(" "super" ")"  → pubSuperVis
                ;
   enumVariant ::= <ident> "," @nl       → enumVariantUnit
-                | <ident> @nsp "(" tupleField* ")" "," @nl → enumVariantTuple
+                | <ident> @nsp "(" tupleField ("," tupleField)* ")" "," @nl → enumVariantTuple
                 | <ident> "{" @nl @indent structField* @dedent "}" "," @nl → enumVariantStruct
                 ;
   structField ::= visibility? <ident> ":" type "," @nl → structField ;

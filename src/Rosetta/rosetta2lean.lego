@@ -13,6 +13,15 @@
 lang RosettaToLean :=
 
 -----------------------------------------------------
+-- Import declarations
+-- Rosetta: (DImport "import" (modulePath ...) ";")
+-- Lean: (importDecl (modulePath ...))
+-----------------------------------------------------
+piece ImportTransform
+  rule importToLean: (DImport "import" $path ";")
+    ~~> (importDecl $path) ;
+
+-----------------------------------------------------
 -- ADT to Inductive
 -- Rosetta AST structure from parser:
 --   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")
@@ -27,27 +36,25 @@ lang RosettaToLean :=
 -- Grammar: "inductive" <ident> param* whereCtors? derivingClause?
 -- param* and whereCtors? each consume their children from AST in order.
 -- If param* is empty, no children. If whereCtors? absent, no child.
+--
+-- Using loop pattern: $constrs... captures all remaining constructor items,
+-- (@map transformConstr $constrs...) transforms each one.
 -----------------------------------------------------
 piece AdtToInductive
-  -- ADT with NO params, NO constructors 
-  rule adtToInductiveEmptyNoParams: (adtDef "adt" $name (unit) "{" "}")
-    ~~> (inductiveDecl $name (whereCtors)) ;
-  
-  -- ADT with NO params, ONE constructor
-  rule adtToInductiveOneNoParams: (adtDef "adt" $name (unit) "{" $c1 "}")
-    ~~> (inductiveDecl $name (whereCtors (transformConstr $c1))) ;
-  
-  -- ADT with NO params, TWO constructors
-  rule adtToInductiveTwoNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) "}")
-    ~~> (inductiveDecl $name (whereCtors (transformConstr $c1) (transformConstr $c2))) ;
-  
-  -- ADT with NO params, THREE constructors  
-  rule adtToInductiveThreeNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) "}")
-    ~~> (inductiveDecl $name (whereCtors (transformConstr $c1) (transformConstr $c2) (transformConstr $c3))) ;
+  -- ADT with NO params, any number of constructors
+  -- Use $constrs... to capture all constructor-related children, then @map transforms each
+  -- Note: Use whereCtors directly with @map (no extra parens) so mapExpr expands inline
+  rule adtToInductive: (adtDef "adt" $name (unit) "{" $constrs... "}")
+    ~~> (inductiveDecl $name (whereCtors @map transformConstr $constrs...)) ;
 
-  -- ADT with NO params, FOUR constructors
-  rule adtToInductiveFourNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) (seq "," $c4) "}")
-    ~~> (inductiveDecl $name (whereCtors (transformConstr $c1) (transformConstr $c2) (transformConstr $c3) (transformConstr $c4))) ;
+-----------------------------------------------------
+-- Normalize constructors: strip (seq "," X) wrappers
+-- This is applied by @map to each captured item 
+-----------------------------------------------------
+piece NormalizeConstr
+  -- Strip seq wrapper: (seq "," X) -> just the inner constr
+  rule normalizeSeq: (transformConstr (seq "," $c))
+    ~~> (transformConstr $c) ;
 
   -- TODO: Add rules for ADT WITH type params when needed
   rule transformParams: (transformParams (typeParams $ps))
@@ -77,26 +84,139 @@ piece ConstrTransform
 -----------------------------------------------------
 -- Type wrapping for Lean's grammar
 -- Lean term grammar: term → arrowExpr → ... → appExpr → var
+-- Rosetta arrow type: (typeExpr (typeApp A) "->" (typeExpr (typeApp B)) (unit))
+-- Note: Lean grammar has arrowTy for "A → B" and arrowExpr for passthrough
 -----------------------------------------------------
 piece TypeWrap
+  -- Simple type: just a type name like Int, String
   rule wrapTypeApp: (wrapType (typeExpr (typeApp $name)))
     ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name)))))))))) ;
   
   rule wrapTypeSimple: (wrapType (typeApp $name))
     ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name)))))))))) ;
 
+  -- Arrow type: A -> B
+  -- Rosetta: (typeExpr (typeApp A) "->" (typeExpr ...) (unit))
+  -- Use arrowTy (not arrowExpr) for arrow types: orExpr "→" arrowExpr → arrowTy
+  rule wrapTypeArrow: (wrapType (typeExpr $a "->" $b (unit)))
+    ~~> (term (arrowTy (wrapArrowLhs $a) (wrapArrowRhs $b))) ;
+
+  -- Arrow type nested: A -> B -> C  
+  rule wrapTypeArrowNested: (wrapType (typeExpr $a "->" $b $more))
+    ~~> (term (arrowTy (wrapArrowLhs $a) (wrapArrowRhs (typeExpr $b $more)))) ;
+
+  -- Left side of arrow (produces orExpr level)
+  rule wrapArrowLhsApp: (wrapArrowLhs (typeApp $name))
+    ~~> (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name)))))))) ;
+  
+  -- Type application: List Term on left side
+  rule wrapArrowLhsAppTwo: (wrapArrowLhs (typeApp $name $arg))
+    ~~> (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name) (appArg (var $arg))))))))) ;
+
+  -- Right side of arrow: for terminal (no more arrows), use arrowExpr (passthrough)
+  -- For chaining arrows, use arrowTy
+  rule wrapArrowRhsSimple: (wrapArrowRhs (typeExpr (typeApp $name)))
+    ~~> (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name))))))))) ;
+
+  -- Simple type with arg: List Term (terminal) - wrap arg in appArg
+  rule wrapArrowRhsAppTwo: (wrapArrowRhs (typeExpr (typeApp $name $arg)))
+    ~~> (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name) (appArg (var $arg)))))))))) ;
+
+  -- Arrow with simple type on left: A -> B (terminal)
+  rule wrapArrowRhsArrow: (wrapArrowRhs (typeExpr (typeApp $a) "->" $b (unit)))
+    ~~> (arrowTy (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $a)))))))) (wrapArrowRhs $b)) ;
+
+  -- Arrow with simple type on left: A -> B -> ... (continuing)
+  rule wrapArrowRhsArrowNested: (wrapArrowRhs (typeExpr (typeApp $a) "->" $b $more))
+    ~~> (arrowTy (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $a)))))))) (wrapArrowRhs (typeExpr $b $more))) ;
+
+  -- Arrow with type application on left: List Term -> B (terminal) - wrap arg in appArg
+  rule wrapArrowRhsArrowAppTwo: (wrapArrowRhs (typeExpr (typeApp $name $arg) "->" $b (unit)))
+    ~~> (arrowTy (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name) (appArg (var $arg))))))))) (wrapArrowRhs $b)) ;
+
+  -- Arrow with type application on left: List Term -> B -> ... (continuing)
+  rule wrapArrowRhsArrowAppTwoNested: (wrapArrowRhs (typeExpr (typeApp $name $arg) "->" $b $more))
+    ~~> (arrowTy (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name) (appArg (var $arg))))))))) (wrapArrowRhs (typeExpr $b $more))) ;
+
+  -- Fallback for complex types
   rule wrapTypeExpr: (wrapType (typeExpr $inner $rest))
     ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (wrapTypeInner $inner)))))))))) ;
 
   rule wrapTypeInner: (wrapTypeInner (typeApp $name))
     ~~> (var $name) ;
 
+
 -----------------------------------------------------
 -- Rewrite Rule transformation
 -- Rosetta: (rewriteRule "rewrite" name ":" lhs "~>" rhs ";")
--- Lean:    Comment (rewrite rules don't have direct Lean syntax)
+-- Lean: def name : T → T | pattern => rhs
+-- 
+-- Rosetta compound AST: (compound "(" f arg1 arg2... ")")
+-- Need to strip the paren literals when transforming.
 -----------------------------------------------------
 piece RewriteTransform
+  -- Simple rewrite: (fname (Ctor $vars...)) ~> body
+  -- Pattern includes literal parens from parser
+  -- Output: def fname
+  --           | pattern => rhs
+  rule rewriteToDefSimple: (rewriteRule "rewrite" $name ":" (compound "(" $fname $arg ")") "~>" $rhs ";")
+    ~~> (defDeclMatch $name (matchAlt (patternList (transformPattern $arg)) (transformTerm $rhs))) ;
+
+  -- Rewrite with guard
+  rule rewriteToDefGuarded: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs (guard "when" $cond) ";")
+    ~~> (defDeclMatch $name (matchAlt (patternList (transformPattern $lhs)) (transformTerm $rhs))) ;
+
+  -- Fallback: just produce a comment
   rule rewriteToComment: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
-    ~~> (comment (concat "-- rewrite " $name)) ;
+    ~~> (comment "rewrite" $name) ;
+
+-----------------------------------------------------
+-- Pattern transformation (Rosetta patterns to Lean patterns)
+-----------------------------------------------------
+piece PatternTransform
+  -- Metavariable: (metavar "$" x) becomes x (strip the $ marker)
+  rule transformPatternMeta: (transformPattern (metavar "$" $x))
+    ~~> (patVar $x) ;
+
+  -- Constructor pattern: (compound "(" Ctor args... ")")
+  -- Lean grammar: <ident> pattern* → patApp
+  rule transformPatternCtor: (transformPattern (compound "(" $ctor $args... ")"))
+    ~~> (patApp $ctor @map transformPattern $args...) ;
+
+  -- Simple identifier (constructor with no args)
+  rule transformPatternIdent: (transformPattern $x)
+    ~~> (patVar $x) ;
+
+-----------------------------------------------------
+-- Term transformation (Rosetta terms to Lean terms)
+-- Lean requires full term hierarchy:
+--   term -> arrowExpr -> orExpr -> andExpr -> cmpExpr 
+--        -> addExpr -> mulExpr -> unaryExpr -> appExpr
+-- For argExpr in applications, use (paren term) for complex exprs
+-----------------------------------------------------
+piece TermTransform  
+  -- Metavariable: (metavar "$" x) becomes wrapped var
+  rule transformTermMeta: (transformTerm (metavar "$" $x))
+    ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $x)))))))))) ;
+
+  -- Constructor/Application: (compound "(" f args... ")")
+  rule transformTermApp: (transformTerm (compound "(" $f $args... ")"))
+    ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $f) @map transformTermArg $args...))))))))) ;
+  
+  -- Argument transformation
+  -- Simple metavar -> just use var (which is an argExpr)
+  rule transformTermArgMeta: (transformTermArg (metavar "$" $x))
+    ~~> (appArg (var $x)) ;
+  
+  -- Compound arg -> wrap in parens: (paren term)
+  rule transformTermArgCompound: (transformTermArg (compound "(" $inner... ")"))
+    ~~> (appArg (paren (transformTerm (compound "(" $inner... ")")))) ;
+  
+  -- Simple identifier -> var
+  rule transformTermArgIdent: (transformTermArg $x)
+    ~~> (appArg (var $x)) ;
+
+  -- Simple identifier
+  rule transformTermIdent: (transformTerm $x)
+    ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $x)))))))))) ;
 

@@ -328,7 +328,7 @@ piece Declarations
   
   declBody ::=
     -- Enum (Scala 3 ADT)
-    visibility* "enum" <ident> typeParamList? extendsClause? "{" @nl @indent enumCase* @dedent "}" @nl
+    visibility* "enum" <ident> typeParamList? extendsClause? enumCases
       → enumDecl
     -- Sealed trait + case class (Scala 2 style)
     | visibility* "sealed" "trait" <ident> typeParamList? extendsClause? @nl @nl
@@ -376,12 +376,16 @@ piece Declarations
       → packageDecl
     | "import" importPath @nl
       → importDecl
+    -- Comments (for generated code)
+    | "//" <ident>* @nl
+      → lineComment
     ;
   
   classBody ::= "{" @nl @indent member* @dedent "}" @nl → classBody
               | ":" @nl @indent member* @dedent        → classBodyIndent
               ;
 
+  enumCases ::= "{" @nl @indent enumCase* @dedent "}" @nl → enumCases ;
   enumCase ::= "case" <ident> @nsp "(" paramList ")" @nl → enumCaseParams
              | "case" <ident> @nl                       → enumCaseSimple
              ;

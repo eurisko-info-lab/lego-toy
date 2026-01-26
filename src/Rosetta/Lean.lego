@@ -308,7 +308,7 @@ piece Patterns
   patternList ::= pattern ("," pattern)*          → patternList ;
   -- Match alternatives can contain either a single term or a sequence of doElems
   matchAlt ::= "|" patternList "=>" doElem+       → matchAltDo
-             | "|" patternList "=>" term          → matchAlt
+             | "|" patternList "=>" term @nl      → matchAlt
              ;
 
 -----------------------------------------------------
@@ -373,6 +373,8 @@ piece Declarations
     -- Definitions - these are the key ones
     | "def" <ident> param* typeAnn? whereClause? ":=" term
       → defDecl
+    | "def" <ident> typeAnn? @nl @indent matchAlt+ @dedent
+      → defDeclMatch
     | "partial" "def" <ident> param* typeAnn? ":=" term
       → partialDefDecl
     | "abbrev" <ident> param* typeAnn? ":=" term
@@ -425,6 +427,9 @@ piece Declarations
       → evalCmd
     | "#print" <ident> @nl
       → printCmd
+    -- Comments (for generated code)
+    | "--" <ident>* @nl
+      → comment
     ;
 
   param ::= <ident>                               → simpleParam

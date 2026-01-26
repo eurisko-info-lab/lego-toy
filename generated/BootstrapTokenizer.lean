@@ -34,20 +34,20 @@ def tokenPiece : Piece := {
     ("Token.mathop", ((lit "∘").alt ((lit "⊗").alt ((lit "⊙").alt ((lit "∧").alt ((lit "∨").alt ((lit "∷").alt ((lit "⋆").alt ((lit "¯").alt ((lit "⊤").alt (lit "⊥"))))))))))),
     ("Token.alpha", ((ref "Token.lower").alt ((ref "Token.upper").alt ((ref "Token.greek").alt ((ref "Token.mathbb").alt ((ref "Token.super").alt ((ref "Token.sub").alt ((ref "Token.mathrel").alt ((ref "Token.mathop").alt (lit "_")))))))))),
     ("Token.symch", ((lit "(").alt ((lit ")").alt ((lit "[").alt ((lit "]").alt ((lit "{").alt ((lit "}").alt ((lit "<").alt ((lit ">").alt ((lit ":").alt ((lit ";").alt ((lit ",").alt ((lit ".").alt ((lit "|").alt ((lit "!").alt ((lit "?").alt ((lit "@").alt ((lit "#").alt ((lit "$").alt ((lit "%").alt ((lit "^").alt ((lit "&").alt ((lit "*").alt ((lit "+").alt ((lit "-").alt ((lit "=").alt ((lit "~").alt ((lit "/").alt ((lit "\\").alt ((lit "→").alt ((lit "←").alt ((lit "↔").alt ((lit "⊕").alt ((lit "⊢").alt ((lit "×").alt ((lit "λ").alt ((lit "∂").alt ((lit "∀").alt ((lit "∃").alt ((lit "⦉").alt ((lit "⦊").alt ((lit "«").alt ((lit "»").alt ((lit "★").alt ((lit "☆").alt ((lit "`").alt ((lit "↦").alt ((lit "↾").alt ((lit "⟨").alt (lit "⟩")))))))))))))))))))))))))))))))))))))))))))))))))),
-    ("Token.ident", ((ref "Token.alpha").seq (((ref "Token.alpha").alt ((ref "Token.digit").alt ((lit "-").alt ((lit "/").alt (lit "'"))))).star))),
-    ("Token.hashident", (((lit "#").seq (ref "Token.alpha")).seq (((ref "Token.alpha").alt (ref "Token.digit")).star))),
-    ("Token.number", ((ref "Token.digit").seq ((ref "Token.digit").star))),
-    ("Token.string", (((lit "\"").seq ((ref "Token.strchar").star)).seq (lit "\""))),
-    ("Token.strchar", (((empty.seq (lit "\\")).seq (ref "Token.escape")).alt (ref "Token.printable"))),
+    ("Token.ident", ((ref "Token.alpha").seq ((((ref "Token.alpha").alt ((ref "Token.digit").alt ((lit "-").alt ((lit "/").alt (lit "'"))))).star).seq empty))),
+    ("Token.hashident", ((lit "#").seq ((ref "Token.alpha").seq ((((ref "Token.alpha").alt (ref "Token.digit")).star).seq empty)))),
+    ("Token.number", ((ref "Token.digit").seq (((ref "Token.digit").star).seq empty))),
+    ("Token.string", ((lit "\"").seq (((ref "Token.strchar").star).seq ((lit "\"").seq empty)))),
+    ("Token.strchar", (((lit "\\").seq ((ref "Token.escape").seq empty)).alt (ref "Token.printable"))),
     ("Token.escape", ((lit "\"").alt ((lit "\\").alt ((lit "n").alt ((lit "t").alt ((lit "r").alt (lit "'"))))))),
     ("Token.printable", ((ref "Token.alpha").alt ((ref "Token.digit").alt ((ref "Token.symch").alt (lit " "))))),
-    ("Token.char", (((lit "'").seq (ref "Token.charinner")).seq (lit "'"))),
-    ("Token.charinner", (((empty.seq (lit "\\")).seq (ref "Token.escape")).alt ((ref "Token.alpha").alt ((ref "Token.digit").alt ((ref "Token.symch").alt ((lit " ").alt (lit "\""))))))),
+    ("Token.char", ((lit "'").seq ((ref "Token.charinner").seq ((lit "'").seq empty)))),
+    ("Token.charinner", (((lit "\\").seq ((ref "Token.escape").seq empty)).alt ((ref "Token.alpha").alt ((ref "Token.digit").alt ((ref "Token.symch").alt ((lit " ").alt (lit "\""))))))),
     ("Token.ws", ((lit " ").alt ((lit "\t").alt ((lit "\n").alt (lit ""))))),
-    ("Token.comment", (((lit "-").seq (lit "-")).seq ((ref "Token.nonnl").star))),
+    ("Token.comment", ((lit "-").seq ((lit "-").seq (((ref "Token.nonnl").star).seq empty)))),
     ("Token.nonnl", ((ref "Token.alpha").alt ((ref "Token.digit").alt ((ref "Token.symch").alt ((lit " ").alt ((lit "\t").alt ((lit "'").alt (lit "\"")))))))),
-    ("Token.operator", (longest [(((lit ":").seq (lit ":")).seq (lit "=")), (((lit "=").seq (lit "I")).seq (lit "=")), (((lit "~").seq (lit "~")).seq (lit ">")), ((lit ":").seq (lit "=")), ((lit "~").seq (lit ">")), ((lit "-").seq (lit ">")), ((lit "<").seq (lit "-")), ((lit "=").seq (lit ">")), ((lit "@").seq (lit "@")), (((lit "@").seq (lit "n")).seq (lit "l")), (((((((lit "@").seq (lit "i")).seq (lit "n")).seq (lit "d")).seq (lit "e")).seq (lit "n")).seq (lit "t")), (((((((lit "@").seq (lit "d")).seq (lit "e")).seq (lit "d")).seq (lit "e")).seq (lit "n")).seq (lit "t")), (((lit "@").seq (lit "s")).seq (lit "p")), ((((lit "@").seq (lit "n")).seq (lit "s")).seq (lit "p")), (ref "Token.symch")])),
-    ("Token.special", (((lit "<").seq ((ref "Token.alpha").seq ((ref "Token.alpha").star))).seq (lit ">")))
+    ("Token.operator", (longest [((lit ":").seq ((lit ":").seq ((lit "=").seq empty))), ((lit "=").seq ((lit "I").seq ((lit "=").seq empty))), ((lit "~").seq ((lit "~").seq ((lit ">").seq empty))), ((lit ".").seq ((lit ".").seq ((lit ".").seq empty))), ((lit ":").seq ((lit "=").seq empty)), ((lit "~").seq ((lit ">").seq empty)), ((lit "-").seq ((lit ">").seq empty)), ((lit "<").seq ((lit "-").seq empty)), ((lit "=").seq ((lit ">").seq empty)), ((lit "@").seq ((lit "@").seq empty)), ((lit "@").seq ((lit "n").seq ((lit "l").seq empty))), ((lit "@").seq ((lit "i").seq ((lit "n").seq ((lit "d").seq ((lit "e").seq ((lit "n").seq ((lit "t").seq empty))))))), ((lit "@").seq ((lit "d").seq ((lit "e").seq ((lit "d").seq ((lit "e").seq ((lit "n").seq ((lit "t").seq empty))))))), ((lit "@").seq ((lit "s").seq ((lit "p").seq empty))), ((lit "@").seq ((lit "n").seq ((lit "s").seq ((lit "p").seq empty)))), (ref "Token.symch")])),
+    ("Token.special", ((lit "<").seq (((ref "Token.alpha").seq ((ref "Token.alpha").star)).seq ((lit ">").seq empty))))
   ]
   rules := []
 }

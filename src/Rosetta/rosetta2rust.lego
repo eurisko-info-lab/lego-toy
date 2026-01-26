@@ -24,25 +24,13 @@ lang RosettaToRust :=
 -- Grammar: visibility? "enum" <ident> typeParamList? whereClause? "{" enumVariant* "}"
 -----------------------------------------------------
 piece AdtToEnumRust
-  -- ADT with NO params, NO constructors 
-  rule adtToEnumEmptyNoParamsRust: (adtDef "adt" $name (unit) "{" "}")
-    ~~> (enumItem (pubVis) $name) ;
+  -- Variadic ADT transformation using @map
+  rule adtToEnumRust: (adtDef "adt" $name (unit) "{" $constrs... "}")
+    ~~> (enumItem (pubVis) $name @map transformConstrRust $constrs...) ;
   
-  -- ADT with NO params, ONE constructor
-  rule adtToEnumOneNoParamsRust: (adtDef "adt" $name (unit) "{" $c1 "}")
-    ~~> (enumItem (pubVis) $name (transformConstrRust $c1)) ;
-  
-  -- ADT with NO params, TWO constructors
-  rule adtToEnumTwoNoParamsRust: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) "}")
-    ~~> (enumItem (pubVis) $name (transformConstrRust $c1) (transformConstrRust $c2)) ;
-  
-  -- ADT with NO params, THREE constructors  
-  rule adtToEnumThreeNoParamsRust: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) "}")
-    ~~> (enumItem (pubVis) $name (transformConstrRust $c1) (transformConstrRust $c2) (transformConstrRust $c3)) ;
-
-  -- ADT with NO params, FOUR constructors
-  rule adtToEnumFourNoParamsRust: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) (seq "," $c4) "}")
-    ~~> (enumItem (pubVis) $name (transformConstrRust $c1) (transformConstrRust $c2) (transformConstrRust $c3) (transformConstrRust $c4)) ;
+  -- Helper to normalize seq wrappers from comma-separated constructors
+  rule normalizeSeqRust: (transformConstrRust (seq "," $c))
+    ~~> (transformConstrRust $c) ;
 
 -----------------------------------------------------
 -- Constructor transformation
@@ -50,18 +38,45 @@ piece AdtToEnumRust
 -- Rust grammar: enumVariant ::= <ident> "," | <ident> "(" tupleField* ")" ","
 -- For simple types (same as ADT name), use enumVariantUnit
 -- For types with args, use enumVariantTuple
+--
+-- Actual AST from Rosetta parser:
+--   Simple: (typeExpr (typeApp GrammarExpr))
+--   One arrow: (typeExpr (typeApp A) "->" (typeExpr (typeApp B)) (unit))
+--   Two arrows: (typeExpr (typeApp A) "->" (typeExpr (typeApp B) "->" (typeExpr (typeApp C)) (unit)) (unit))
+--   Note: The trailing (unit) comes from the optional (typeArrow type)? in the grammar
 -----------------------------------------------------
 piece ConstrTransformRust
-  -- Constructor with type -> enumVariantTuple with field
-  rule transformConstrRust: (transformConstrRust (constr $name ":" $type))
-    ~~> (enumVariantTuple $name (tupleField (wrapTypeRust $type))) ;
-  
-  -- Direct pass through
+  -- Constructor with simple type (no args) -> enumVariantUnit
+  -- Pattern: (constr Name ":" (typeExpr (typeApp ReturnType)))
+  rule transformConstrRustSimple: (transformConstrRust (constr $name ":" (typeExpr (typeApp $type))))
+    ~~> (enumVariantUnit $name) ;
+
+  -- Constructor with ONE arrow: A -> Result (with trailing unit)
+  rule transformConstrRustOneArg: (transformConstrRust (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $ret)) (unit))))
+    ~~> (enumVariantTuple $name (tupleField (tyPath $a))) ;
+
+  -- Constructor with ONE arrow where arg is type application: List Term -> Result (with trailing unit)
+  rule transformConstrRustOneArgApp: (transformConstrRust (constr $name ":" (typeExpr (typeApp $a $aArg) "->" (typeExpr (typeApp $ret)) (unit))))
+    ~~> (enumVariantTuple $name (tupleField (tyGeneric $a (typeList (tyPath $aArg))))) ;
+
+  -- Constructor with TWO arrows: A -> B -> Result (with nested units)
+  rule transformConstrRustTwoArgs: (transformConstrRust (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b) "->" (typeExpr (typeApp $ret)) (unit)) (unit))))
+    ~~> (enumVariantTuple $name (tupleField (tyPath $a)) (tupleField (tyPath $b))) ;
+
+  -- Constructor with TWO arrows, second arg is type app: A -> List B -> Result (with nested units)
+  rule transformConstrRustTwoArgsSecondApp: (transformConstrRust (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b $bArg) "->" (typeExpr (typeApp $ret)) (unit)) (unit))))
+    ~~> (enumVariantTuple $name (tupleField (tyPath $a)) (tupleField (tyGeneric $b (typeList (tyPath $bArg))))) ;
+
+  -- Constructor with THREE arrows: A -> B -> C -> Result (with nested units)
+  rule transformConstrRustThreeArgs: (transformConstrRust (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b) "->" (typeExpr (typeApp $c) "->" (typeExpr (typeApp $ret)) (unit)) (unit)) (unit))))
+    ~~> (enumVariantTuple $name (tupleField (tyPath $a)) (tupleField (tyPath $b)) (tupleField (tyPath $c))) ;
+
+  -- Direct pass through (fallback)
   rule transformConstrRustDirect: (constr $name ":" $type)
-    ~~> (enumVariantTuple $name (tupleField (wrapTypeRust $type))) ;
+    ~~> (enumVariantUnit $name) ;
 
 -----------------------------------------------------
--- Type wrapping for Rust's grammar
+-- Type wrapping for Rust's grammar (for other contexts)
 -----------------------------------------------------
 piece TypeWrapRust
   rule wrapTypeRustApp: (wrapTypeRust (typeExpr (typeApp $name)))
@@ -70,15 +85,59 @@ piece TypeWrapRust
   rule wrapTypeRustSimple: (wrapTypeRust (typeApp $name))
     ~~> (tyPath $name) ;
 
+  rule wrapTypeRustAppTwo: (wrapTypeRust (typeExpr (typeApp $name $arg)))
+    ~~> (tyGeneric $name (typeList (tyPath $arg))) ;
+
   rule wrapTypeRustExpr: (wrapTypeRust (typeExpr $inner $rest))
     ~~> (tyPath $inner) ;
 
 -----------------------------------------------------
 -- Rewrite Rule transformation
 -- Rosetta: (rewriteRule "rewrite" name ":" lhs "~>" rhs ";")
--- Rust:    Comment (rewrite rules don't have direct Rust syntax)
+-- Rust: fn name(x: Term) -> Term { match x { pattern => rhs } }
+--
+-- Rosetta compound AST: (compound "(" f arg1 arg2... ")")
 -----------------------------------------------------
 piece RewriteTransformRust
+  -- Simple rewrite: (fname (Ctor $vars...)) ~> body
+  rule rewriteToFnRust: (rewriteRule "rewrite" $name ":" (compound "(" $fname $arg ")") "~>" $rhs ";")
+    ~~> (fnItem (pubVis) $name (paramList (param "x" (tyPath Term))) (returnType (tyPath Term))
+              (block (stmtList (matchExpr (var "x") 
+                (matchArm (transformPatternRust $arg) (transformTermRust $rhs)))))) ;
+
+  -- Fallback: produce a comment
   rule rewriteToCommentRust: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
-    ~~> (comment (concat "// rewrite " $name)) ;
+    ~~> (lineComment "//" "rewrite" $name) ;
+
+-----------------------------------------------------
+-- Pattern transformation (Rosetta patterns to Rust patterns)
+-----------------------------------------------------
+piece PatternTransformRust
+  -- Metavariable: (metavar "$" x) becomes x
+  rule transformPatternRustMeta: (transformPatternRust (metavar "$" $x))
+    ~~> (patIdent $x) ;
+
+  -- Constructor pattern: (compound "(" Ctor args... ")")
+  rule transformPatternRustCtor: (transformPatternRust (compound "(" $ctor $args... ")"))
+    ~~> (patTupleStruct $ctor @map transformPatternRust $args...) ;
+
+  -- Simple identifier
+  rule transformPatternRustIdent: (transformPatternRust $x)
+    ~~> (patIdent $x) ;
+
+-----------------------------------------------------
+-- Term transformation (Rosetta terms to Rust terms)
+-----------------------------------------------------
+piece TermTransformRust
+  -- Metavariable: (metavar "$" x) becomes var x
+  rule transformTermRustMeta: (transformTermRust (metavar "$" $x))
+    ~~> (var $x) ;
+
+  -- Constructor/Application: (compound "(" f args... ")")
+  rule transformTermRustApp: (transformTermRust (compound "(" $f $args... ")"))
+    ~~> (callExpr (var $f) @map transformTermRust $args...) ;
+
+  -- Simple identifier
+  rule transformTermRustIdent: (transformTermRust $x)
+    ~~> (var $x) ;
 

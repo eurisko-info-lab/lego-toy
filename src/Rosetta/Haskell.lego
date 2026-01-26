@@ -143,7 +143,7 @@ piece ListComprehension
 -----------------------------------------------------
 piece Types
   type ::= <ident>                      → tyVar
-         | <ident> type+                → tyApp
+         | "(" <ident> type+ ")"        → tyApp
          | type "->" type               → tyFun
          | "(" typeList ")"             → tyTuple
          | "[" type "]"                 → tyList
@@ -228,6 +228,9 @@ piece Declarations
       → infixrDecl
     | "infix" <number> <ident> @nl
       → infixDecl
+    -- Comments (for generated code)
+    | "--" <ident>* @nl
+      → comment
     ;
 
   dataCon ::= <ident> type*             → dataCon

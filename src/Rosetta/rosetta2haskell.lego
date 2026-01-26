@@ -24,43 +24,58 @@ lang RosettaToHaskell :=
 -- Grammar: "data" <ident> tyVarList? @nl @indent "=" dataCon @nl ("|" dataCon @nl)* @dedent
 -----------------------------------------------------
 piece AdtToData
-  -- ADT with NO params, NO constructors 
-  rule adtToDataEmptyNoParams: (adtDef "adt" $name (unit) "{" "}")
-    ~~> (dataDecl $name) ;
+  -- Variadic ADT transformation using @map
+  rule adtToData: (adtDef "adt" $name (unit) "{" $constrs... "}")
+    ~~> (dataDecl $name @map transformConstrHaskell $constrs...) ;
   
-  -- ADT with NO params, ONE constructor
-  rule adtToDataOneNoParams: (adtDef "adt" $name (unit) "{" $c1 "}")
-    ~~> (dataDecl $name (transformConstrHaskell $c1)) ;
-  
-  -- ADT with NO params, TWO constructors
-  rule adtToDataTwoNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) "}")
-    ~~> (dataDecl $name (transformConstrHaskell $c1) (transformConstrHaskell $c2)) ;
-  
-  -- ADT with NO params, THREE constructors  
-  rule adtToDataThreeNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) "}")
-    ~~> (dataDecl $name (transformConstrHaskell $c1) (transformConstrHaskell $c2) (transformConstrHaskell $c3)) ;
-
-  -- ADT with NO params, FOUR constructors
-  rule adtToDataFourNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) (seq "," $c4) "}")
-    ~~> (dataDecl $name (transformConstrHaskell $c1) (transformConstrHaskell $c2) (transformConstrHaskell $c3) (transformConstrHaskell $c4)) ;
+  -- Helper to normalize seq wrappers from comma-separated constructors
+  rule normalizeSeqHaskell: (transformConstrHaskell (seq "," $c))
+    ~~> (transformConstrHaskell $c) ;
 
 -----------------------------------------------------
 -- Constructor transformation
 -- Rosetta: (constr Name ":" Type)
 -- Haskell grammar: dataCon ::= <ident> type*
 -- dataCon has name followed by zero or more types
+--
+-- Actual AST from Rosetta parser:
+--   Simple: (typeExpr (typeApp GrammarExpr))
+--   One arrow: (typeExpr (typeApp A) "->" (typeExpr (typeApp B)) (unit))
+--   Two arrows: (typeExpr (typeApp A) "->" (typeExpr (typeApp B) "->" (typeExpr (typeApp C)) (unit)) (unit))
+--   Note: The trailing (unit) comes from the optional (typeArrow type)? in the grammar
 -----------------------------------------------------
 piece ConstrTransformHaskell
-  -- Constructor with type -> dataCon with type argument
-  rule transformConstrHaskell: (transformConstrHaskell (constr $name ":" $type))
-    ~~> (dataCon $name (wrapTypeHaskell $type)) ;
-  
-  -- Direct pass through
+  -- Constructor with simple type (no args) -> dataCon with no type args
+  -- Pattern: (constr Name ":" (typeExpr (typeApp ReturnType)))
+  rule transformConstrHaskellSimple: (transformConstrHaskell (constr $name ":" (typeExpr (typeApp $type))))
+    ~~> (dataCon $name) ;
+
+  -- Constructor with ONE arrow: A -> Result (with trailing unit)
+  rule transformConstrHaskellOneArg: (transformConstrHaskell (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $ret)) (unit))))
+    ~~> (dataCon $name (tyVar $a)) ;
+
+  -- Constructor with ONE arrow where arg is type application: List Term -> Result (with trailing unit)
+  rule transformConstrHaskellOneArgApp: (transformConstrHaskell (constr $name ":" (typeExpr (typeApp $a $aArg) "->" (typeExpr (typeApp $ret)) (unit))))
+    ~~> (dataCon $name (tyApp $a (tyVar $aArg))) ;
+
+  -- Constructor with TWO arrows: A -> B -> Result (with nested units)
+  rule transformConstrHaskellTwoArgs: (transformConstrHaskell (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b) "->" (typeExpr (typeApp $ret)) (unit)) (unit))))
+    ~~> (dataCon $name (tyVar $a) (tyVar $b)) ;
+
+  -- Constructor with TWO arrows, second arg is type app: A -> List B -> Result (with nested units)
+  rule transformConstrHaskellTwoArgsSecondApp: (transformConstrHaskell (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b $bArg) "->" (typeExpr (typeApp $ret)) (unit)) (unit))))
+    ~~> (dataCon $name (tyVar $a) (tyApp $b (tyVar $bArg))) ;
+
+  -- Constructor with THREE arrows: A -> B -> C -> Result (with nested units)
+  rule transformConstrHaskellThreeArgs: (transformConstrHaskell (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b) "->" (typeExpr (typeApp $c) "->" (typeExpr (typeApp $ret)) (unit)) (unit)) (unit))))
+    ~~> (dataCon $name (tyVar $a) (tyVar $b) (tyVar $c)) ;
+
+  -- Direct pass through (fallback) 
   rule transformConstrHaskellDirect: (constr $name ":" $type)
-    ~~> (dataCon $name (wrapTypeHaskell $type)) ;
+    ~~> (dataCon $name) ;
 
 -----------------------------------------------------
--- Type wrapping for Haskell's grammar
+-- Type wrapping for Haskell's grammar (for other contexts)
 -----------------------------------------------------
 piece TypeWrapHaskell
   rule wrapTypeHaskellApp: (wrapTypeHaskell (typeExpr (typeApp $name)))
@@ -69,15 +84,57 @@ piece TypeWrapHaskell
   rule wrapTypeHaskellSimple: (wrapTypeHaskell (typeApp $name))
     ~~> (tyVar $name) ;
 
+  rule wrapTypeHaskellAppTwo: (wrapTypeHaskell (typeExpr (typeApp $name $arg)))
+    ~~> (tyApp $name (tyVar $arg)) ;
+
   rule wrapTypeHaskellExpr: (wrapTypeHaskell (typeExpr $inner $rest))
     ~~> (tyVar $inner) ;
 
 -----------------------------------------------------
 -- Rewrite Rule transformation
 -- Rosetta: (rewriteRule "rewrite" name ":" lhs "~>" rhs ";")
--- Haskell: Comment (rewrite rules don't have direct Haskell syntax)
+-- Haskell: name pattern = rhs
+--
+-- Rosetta compound AST: (compound "(" f arg1 arg2... ")")
 -----------------------------------------------------
 piece RewriteTransformHaskell
+  -- Simple rewrite: (fname (Ctor $vars...)) ~> body
+  rule rewriteToFunHaskell: (rewriteRule "rewrite" $name ":" (compound "(" $fname $arg ")") "~>" $rhs ";")
+    ~~> (funDecl $name (transformPatternHaskell $arg) (transformTermHaskell $rhs)) ;
+
+  -- Fallback: produce a comment
   rule rewriteToCommentHaskell: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
-    ~~> (comment (concat "-- rewrite " $name)) ;
+    ~~> (comment "--" "rewrite" $name) ;
+
+-----------------------------------------------------
+-- Pattern transformation (Rosetta patterns to Haskell patterns)
+-----------------------------------------------------
+piece PatternTransformHaskell
+  -- Metavariable: (metavar "$" x) becomes x
+  rule transformPatternHaskellMeta: (transformPatternHaskell (metavar "$" $x))
+    ~~> (patVar $x) ;
+
+  -- Constructor pattern: (compound "(" Ctor args... ")")
+  rule transformPatternHaskellCtor: (transformPatternHaskell (compound "(" $ctor $args... ")"))
+    ~~> (patCtor $ctor @map transformPatternHaskell $args...) ;
+
+  -- Simple identifier
+  rule transformPatternHaskellIdent: (transformPatternHaskell $x)
+    ~~> (patVar $x) ;
+
+-----------------------------------------------------
+-- Term transformation (Rosetta terms to Haskell terms)
+-----------------------------------------------------
+piece TermTransformHaskell
+  -- Metavariable: (metavar "$" x) becomes var x
+  rule transformTermHaskellMeta: (transformTermHaskell (metavar "$" $x))
+    ~~> (var $x) ;
+
+  -- Constructor/Application: (compound "(" f args... ")")
+  rule transformTermHaskellApp: (transformTermHaskell (compound "(" $f $args... ")"))
+    ~~> (app (var $f) @map transformTermHaskell $args...) ;
+
+  -- Simple identifier
+  rule transformTermHaskellIdent: (transformTermHaskell $x)
+    ~~> (var $x) ;
 

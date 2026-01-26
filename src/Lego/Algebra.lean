@@ -351,8 +351,8 @@ partial def matchPattern (pat : Term) (t : Term) : Option (List (String × Term)
     else none
   | .lit a, .lit b => if a == b then some [] else none
   | .con c1 args1, .con c2 args2 =>
-    if c1 == c2 && args1.length == args2.length then
-      matchList args1 args2
+    if c1 == c2 then
+      matchListWithRest args1 args2
     else none
   | _, _ => none
 where
@@ -363,22 +363,201 @@ where
       match acc.find? (·.1 == name) with
       | some (_, existing) => if existing == term then some acc else none
       | none => some ((name, term) :: acc)
-  matchList : List Term → List Term → Option (List (String × Term))
+  /-- Check if a pattern is a rest pattern ($name... or restVar node) -/
+  isRestPattern : Term → Option String
+    | .var name => if name.startsWith "$" && name.endsWith "..."
+                   then some (name.drop 1 |>.dropRight 3)
+                   else none
+    -- Handle parsed restVar node: (restVar (ident name)) or (restVar name)
+    | .con "restVar" [.con "ident" [.var name]] => some name
+    | .con "restVar" [.con "ident" [.lit name]] => some name
+    | .con "restVar" [.var name] => some name
+    | .con "restVar" [.lit name] => some name
+    | _ => none
+  /-- Match pattern list, supporting rest patterns ($name...) to capture remaining items.
+      The rest pattern captures all items between its position and the patterns that follow.
+      Example: pattern [$a, $rest..., $z] matches terms [1,2,3,4,5] with a=1, rest=[2,3,4], z=5 -/
+  matchListWithRest : List Term → List Term → Option (List (String × Term))
     | [], [] => some []
-    | p :: ps, t :: ts => do
-      let m1 ← matchPattern p t
-      let m2 ← matchList ps ts
-      mergeBindings m1 m2
-    | _, _ => none
+    | [p], ts =>
+      -- If last pattern is a rest pattern, capture all remaining terms
+      match isRestPattern p with
+      | some restName =>
+        -- Avoid double-wrapping: if there's exactly one term and it's already a seq, use it directly
+        match ts with
+        | [single@(.con "seq" _)] => some [(restName, single)]
+        | _ => some [(restName, .con "seq" ts)]
+      | none =>
+        match ts with
+        | [t] => matchPattern p t
+        | _ => none  -- Single non-rest pattern but multiple terms
+    | p :: ps, ts => do
+      -- Check if current pattern is a rest pattern
+      match isRestPattern p with
+      | some restName =>
+        -- Rest pattern with trailing patterns: match trailing first, capture middle
+        -- ps = trailing patterns, ts = all remaining terms
+        -- We need to find how many terms to capture vs leave for trailing
+        let trailingCount := ps.length
+        if ts.length < trailingCount then
+          none  -- Not enough terms for trailing patterns
+        else
+          let captureCount := ts.length - trailingCount
+          let (captured, trailing) := ts.splitAt captureCount
+          -- Match trailing patterns with trailing terms
+          let trailingBindings ← matchListWithRest ps trailing
+          -- Combine rest capture with trailing bindings
+          -- Avoid double-wrapping: if there's exactly one capture and it's already a seq, use it directly
+          let captureBinding := match captured with
+            | [single@(.con "seq" _)] => (restName, single)
+            | _ => (restName, .con "seq" captured)
+          mergeBindings [captureBinding] trailingBindings
+      | none =>
+        match ts with
+        | [] => none  -- More patterns than terms
+        | t :: rest =>
+          let m1 ← matchPattern p t
+          let m2 ← matchListWithRest ps rest
+          mergeBindings m1 m2
+    | [], _ :: _ => none  -- More terms than patterns (no rest to capture)
 
-/-- Apply a template with bindings to produce a term -/
+/-- Check if a template element is a splat pattern ($name... or restVar node) -/
+def isSplatPattern (t : Term) : Option String :=
+  match t with
+  | .var name => if name.startsWith "$" && name.endsWith "..."
+                 then some (name.drop 1 |>.dropRight 3)
+                 else none
+  -- Handle parsed restVar node: (restVar (ident name)) or (restVar name)
+  | .con "restVar" [.con "ident" [.var name]] => some name
+  | .con "restVar" [.con "ident" [.lit name]] => some name
+  | .con "restVar" [.var name] => some name
+  | .con "restVar" [.lit name] => some name
+  | _ => none
+
+/-- Check if a template element is a @map pattern: (@map wrapper $items...) or (mapExpr wrapper $items...) -/
+def isMapPattern (t : Term) : Option (Term × String) :=
+  -- Helper to find restVar in a list of terms
+  let findRestVar : List Term → Option String := fun ts =>
+    ts.findSome? fun t =>
+      match t with
+      | .con "restVar" [.con "ident" [.var name]] => some name
+      | .con "restVar" [.con "ident" [.lit name]] => some name
+      | .con "restVar" [.var name] => some name
+      | .con "restVar" [.lit name] => some name
+      | .con "templateArg" [.con "restVar" args] =>
+        match args with
+        | [.con "ident" [.var name]] => some name
+        | [.con "ident" [.lit name]] => some name
+        | [.var name] => some name
+        | [.lit name] => some name
+        | _ => none
+      | _ => none
+  -- Helper to extract wrapper name from various node types
+  let getWrapperName : Term → Option String := fun t =>
+    match t with
+    | .var name => some name
+    | .lit name => some name
+    | .con "ident" [.var name] => some name
+    | .con "ident" [.lit name] => some name
+    | .con name [] => some name  -- nullary constructor like (map) or (transformConstr)
+    | _ => none
+  match t with
+  | .con "@map" [wrapper, .var items] =>
+    if items.startsWith "$" && items.endsWith "..."
+    then some (wrapper, items.drop 1 |>.dropRight 3)
+    else none
+  -- Handle parsed mapExpr from Bootstrap grammar: "@" ident templateArg+ → mapExpr
+  -- Actual structure: (mapExpr "@" (wrapper) (fn) (restVar ...) (unit))
+  -- where wrapper is the function to apply, fn is another arg, etc.
+  -- The "@" is first child, wrapper is second
+  | .con "mapExpr" (.lit "@" :: rest) =>
+    -- First non-@ element should be the wrapper function name (like "transformConstr")
+    -- Then we need to find the restVar
+    match rest with
+    | [] => none
+    | wrapperTerm :: args =>
+      -- The wrapper is typically (map) which we skip, actual wrapper is next
+      -- Structure: "@" (map) (transformConstr) (restVar) (unit)
+      -- So args = [(map), (transformConstr), (restVar), (unit)]
+      -- We want transformConstr as wrapper, and find restVar
+      let nonEmptyArgs := args.filter (fun x => match x with | .con "unit" [] => false | _ => true)
+      match nonEmptyArgs with
+      | [] => none
+      | [singleArg] =>
+        -- Only restVar, use wrapperTerm as wrapper
+        match findRestVar [singleArg], getWrapperName wrapperTerm with
+        | some items, some wname => some (.var wname, items)
+        | _, _ => none
+      | _ =>
+        -- Find first non-map, non-restVar as wrapper, and find restVar
+        let possibleWrappers := nonEmptyArgs.filter (fun x =>
+          match x with
+          | .con "restVar" _ => false
+          | .con "map" [] => false  -- skip the "map" keyword
+          | _ => true)
+        let wrapper := possibleWrappers.head?
+        match wrapper, findRestVar nonEmptyArgs with
+        | some w, some items =>
+          match getWrapperName w with
+          | some wname => some (.var wname, items)
+          | none => none
+        | _, _ => none
+  -- Handle mapExpr with (ident wrapper) as first child
+  | .con "mapExpr" (.con "ident" [.var wrapper] :: rest) =>
+    match findRestVar rest with
+    | some items => some (.var wrapper, items)
+    | none => none
+  -- Handle old forms for backward compat
+  | .con "mapExpr" [.var wrapper, .con "patternArg" [.con "patVar" [.var items]]] =>
+    some (.var wrapper, items)
+  | .con "mapExpr" [.var wrapper, .con "restVar" [.var items]] =>
+    some (.var wrapper, items)
+  | .con "mapExpr" (wrapper :: rest) =>
+    match findRestVar rest with
+    | some items => some (wrapper, items)
+    | none => none
+  | _ => none
+
+/-- Apply a template with bindings to produce a term.
+    Supports:
+    - Splat patterns ($name...) which expand a seq of terms as children
+    - Map patterns (@map wrapper $items...) which wrap each item -/
 partial def applyTemplate (env : List (String × Term)) : Term → Term
   | .var name =>
     if name.startsWith "$" then
-      env.find? (·.1 == name.drop 1) |>.map (·.2) |>.getD (.var name)
+      -- Check for splat pattern first
+      if name.endsWith "..." then
+        let varName := name.drop 1 |>.dropRight 3
+        env.find? (·.1 == varName) |>.map (·.2) |>.getD (.var name)
+      else
+        env.find? (·.1 == name.drop 1) |>.map (·.2) |>.getD (.var name)
     else .var name
   | .lit s => .lit s
-  | .con c args => .con c (args.map (applyTemplate env))
+  | .con c args =>
+    -- Process args, expanding splat patterns and @map
+    let expandedArgs := args.flatMap fun arg =>
+      -- Check for @map pattern first
+      match isMapPattern arg with
+      | some (wrapper, varName) =>
+        match env.find? (·.1 == varName) with
+        | some (_, .con "seq" children) =>
+          children.map fun child =>
+            -- Apply wrapper to each child: (wrapper child)
+            let wrappedChild := Term.con wrapper.toString [applyTemplate env child]
+            wrappedChild
+        | some (_, other) =>
+          [Term.con wrapper.toString [applyTemplate env other]]
+        | none => [arg]
+      | none =>
+        -- Check for splat pattern
+        match isSplatPattern arg with
+        | some varName =>
+          match env.find? (·.1 == varName) with
+          | some (_, .con "seq" children) => children.map (applyTemplate env)
+          | some (_, other) => [applyTemplate env other]
+          | none => [arg]
+        | none => [applyTemplate env arg]
+    .con c expandedArgs
 
 /-- Convert a Rule to an Iso on Terms -/
 def Rule.toIso (r : Rule) : Iso Term Term where

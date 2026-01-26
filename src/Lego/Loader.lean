@@ -931,6 +931,30 @@ partial def patternAstToTerm (t : Term) : Term :=
   -- Number handling: (num (number "n")) → .lit "n"
   | .con "num" [.con "number" [.lit n]] => .lit n
   | .con "num" [.lit n] => .lit n
+  -- Rest variable pattern with full structure from grammar: "$" ident "..." → restVar
+  -- Produces (restVar "$" (ident name) "...") or (restVar (ident name) "...") after filtering
+  -- We normalize to (restVar (ident (var name))) for matching
+  | .con "restVar" args =>
+    -- Filter out "$" and "..." to get just the identifier
+    let filtered := args.filter (fun a => match a with
+      | .lit "$" => false
+      | .lit "..." => false
+      | _ => true)
+    match filtered with
+    | [.con "ident" [.var name]] =>
+      .con "restVar" [.con "ident" [.var name]]
+    | [.con "ident" [.lit name]] =>
+      .con "restVar" [.con "ident" [.var name]]
+    | [.var name] =>
+      .con "restVar" [.con "ident" [.var name]]
+    | [.con name []] =>  -- bare identifier became nullary con
+      .con "restVar" [.con "ident" [.var name]]
+    | _ =>
+      -- Keep whatever we have (may be already processed)
+      .con "restVar" (filtered.map patternAstToTerm)
+  -- Map expression: (@map wrapper $items...) for transforming lists
+  | .con "mapExpr" args =>
+    .con "mapExpr" (args.map patternAstToTerm)
   -- NEW format from generated grammar: (var "$" (ident name)) → .var "$name"
   | .con "var" [.lit "$", .con "ident" [.var name]] =>
     .var s!"${name}"
@@ -993,6 +1017,30 @@ partial def templateAstToTerm (t : Term) : Term :=
   -- Number handling: (num (number "n")) → .lit "n"
   | .con "num" [.con "number" [.lit n]] => .lit n
   | .con "num" [.lit n] => .lit n
+  -- Rest variable pattern with full structure from grammar: "$" ident "..." → restVar
+  -- Produces (restVar "$" (ident name) "...") or (restVar (ident name) "...") after filtering
+  -- We normalize to (restVar (ident (var name))) for matching
+  | .con "restVar" args =>
+    -- Filter out "$" and "..." to get just the identifier
+    let filtered := args.filter (fun a => match a with
+      | .lit "$" => false
+      | .lit "..." => false
+      | _ => true)
+    match filtered with
+    | [.con "ident" [.var name]] =>
+      .con "restVar" [.con "ident" [.var name]]
+    | [.con "ident" [.lit name]] =>
+      .con "restVar" [.con "ident" [.var name]]
+    | [.var name] =>
+      .con "restVar" [.con "ident" [.var name]]
+    | [.con name []] =>  -- bare identifier became nullary con
+      .con "restVar" [.con "ident" [.var name]]
+    | _ =>
+      -- Keep whatever we have (may be already processed)
+      .con "restVar" (filtered.map templateAstToTerm)
+  -- Map expression: (@map wrapper $items...) for transforming lists
+  | .con "mapExpr" args =>
+    .con "mapExpr" (args.map templateAstToTerm)
   -- NEW format from generated grammar: (var "$" (ident name)) → .var "$name"
   | .con "var" [.lit "$", .con "ident" [.var name]] =>
     .var s!"${name}"

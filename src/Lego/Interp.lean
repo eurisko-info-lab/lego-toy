@@ -852,12 +852,50 @@ def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term)
         printGrammar fuel' prods g2 remainingTerm acc'
       | none => none
     else
-      -- Normal: split term between g1 and g2
-      let (t1, t2) := splitSeq t
-      dbg_trace s!"seq split: t1={t1}, t2={t2}"
-      match printGrammar fuel' prods g1 t1 acc with
-      | some acc' => printGrammar fuel' prods g2 t2 acc'
-      | none => none
+      -- Check if g1 is a ref or optional ref (X? = alt (ref X) empty)
+      -- For optional, extract the ref part so we can test it without falling back to empty
+      let g1RefPart : Option GrammarExpr := match g1 with
+        | .mk (.ref _) => some g1
+        | .mk (.alt g1' (.mk .empty)) => some g1'  -- X? pattern: extract X
+        | .mk (.alt (.mk .empty) g2') => some g2'  -- empty | X pattern: extract X
+        | _ => none
+      match g1RefPart with
+      | some refG =>
+        -- For refs and optionals: try to match ONLY the ref part with first child
+        -- If it fails, don't consume the child (pass all to g2)
+        let ts := match t with
+          | .con "seq" children => children
+          | .con "unit" [] => []
+          | other => [other]
+        match ts with
+        | [] =>
+          -- No children - for optional this is fine (matches empty), for ref it should work with unit
+          match printGrammar fuel' prods g1 (.con "unit" []) acc with
+          | some acc' => printGrammar fuel' prods g2 (.con "unit" []) acc'
+          | none => printGrammar fuel' prods g2 (.con "unit" []) acc
+        | t1 :: rest =>
+          -- Try ONLY the ref part with first child (not the full optional with empty fallback)
+          dbg_trace s!"seq ref/opt: trying ref part with {t1}"
+          match printGrammar fuel' prods refG t1 acc with
+          | some acc' =>
+            -- Ref matched, consume child, pass rest to g2
+            dbg_trace s!"seq ref/opt: ref matched, passing {rest.length} remaining to g2"
+            let t2 := match rest with
+              | [] => Term.con "unit" []
+              | [x] => x
+              | xs => Term.con "seq" xs
+            printGrammar fuel' prods g2 t2 acc'
+          | none =>
+            -- Ref failed, DON'T consume child, pass ALL children to g2
+            dbg_trace s!"seq ref/opt: ref failed, passing all {ts.length} children to g2"
+            printGrammar fuel' prods g2 t acc
+      | none =>
+        -- Normal non-ref: split term between g1 and g2
+        let (t1, t2) := splitSeq t
+        dbg_trace s!"seq split: t1={t1}, t2={t2}"
+        match printGrammar fuel' prods g1 t1 acc with
+        | some acc' => printGrammar fuel' prods g2 t2 acc'
+        | none => none
 
   | .mk (.alt g1 g2) =>
     printGrammar fuel' prods g1 t acc <|> printGrammar fuel' prods g2 t acc

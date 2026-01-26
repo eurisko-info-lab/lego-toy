@@ -18,54 +18,70 @@ lang RosettaToScala :=
 --   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")
 --
 -- Scala target AST:
---   (decl (enumDecl Name enumCase1 enumCase2...))
+--   (decl (enumDecl Name (enumCases enumCase1 enumCase2...)))
 -- Based on Scala grammar: decl ::= annotation* declBody
 --   where declBody ::= ... | enumDecl
+--   and enumCases wraps the enum cases
 -- 
--- Grammar: visibility* "enum" <ident> typeParamList? extendsClause? "{" enumCase* "}"
+-- Grammar: visibility* "enum" <ident> typeParamList? extendsClause? enumCases
 -----------------------------------------------------
 piece AdtToEnum
-  -- ADT with NO params, NO constructors 
-  rule adtToEnumEmptyNoParams: (adtDef "adt" $name (unit) "{" "}")
-    ~~> (decl (enumDecl $name)) ;
+  -- Variadic ADT transformation using @map
+  rule adtToEnum: (adtDef "adt" $name (unit) "{" $constrs... "}")
+    ~~> (decl (enumDecl $name (enumCases @map transformConstrScala $constrs...))) ;
   
-  -- ADT with NO params, ONE constructor
-  rule adtToEnumOneNoParams: (adtDef "adt" $name (unit) "{" $c1 "}")
-    ~~> (decl (enumDecl $name (transformConstrScala $c1))) ;
-  
-  -- ADT with NO params, TWO constructors
-  rule adtToEnumTwoNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) "}")
-    ~~> (decl (enumDecl $name (transformConstrScala $c1) (transformConstrScala $c2))) ;
-  
-  -- ADT with NO params, THREE constructors  
-  rule adtToEnumThreeNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) "}")
-    ~~> (decl (enumDecl $name (transformConstrScala $c1) (transformConstrScala $c2) (transformConstrScala $c3))) ;
-
-  -- ADT with NO params, FOUR constructors
-  rule adtToEnumFourNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) (seq "," $c4) "}")
-    ~~> (decl (enumDecl $name (transformConstrScala $c1) (transformConstrScala $c2) (transformConstrScala $c3) (transformConstrScala $c4))) ;
+  -- Helper to normalize seq wrappers from comma-separated constructors
+  rule normalizeSeqScala: (transformConstrScala (seq "," $c))
+    ~~> (transformConstrScala $c) ;
 
 -----------------------------------------------------
 -- Constructor transformation
 -- Rosetta: (constr Name ":" Type)
 -- Scala grammar: enumCase ::= "case" <ident> "(" paramList ")" | "case" <ident>
 -- For simple types, use enumCaseSimple. For function types, use enumCaseParams.
+--
+-- Actual AST from Rosetta parser:
+--   Simple: (typeExpr (typeApp GrammarExpr))
+--   One arrow: (typeExpr (typeApp A) "->" (typeExpr (typeApp B)) (unit))
+--   Two arrows: (typeExpr (typeApp A) "->" (typeExpr (typeApp B) "->" (typeExpr (typeApp C)) (unit)) (unit))
+--   Note: The trailing (unit) comes from the optional (typeArrow type)? in the grammar
 -----------------------------------------------------
 piece ConstrTransformScala
   -- Constructor with simple type (no args) -> enumCaseSimple
+  -- Pattern: (constr Name ":" (typeExpr (typeApp ReturnType)))
   rule transformConstrScalaSimple: (transformConstrScala (constr $name ":" (typeExpr (typeApp $type))))
     ~~> (enumCaseSimple $name) ;
   
-  -- Constructor with type -> enumCaseParams with single param
-  rule transformConstrScalaTyped: (transformConstrScala (constr $name ":" $type))
-    ~~> (enumCaseParams $name (paramList (param value (wrapTypeScala $type)))) ;
+  -- Constructor with ONE arrow: A -> Result (with trailing unit)
+  -- Pattern: (typeExpr (typeApp A) "->" (typeExpr (typeApp Result)) (unit))
+  -- Use string literals for param names since they need to print as identifiers
+  -- Wrap types in full chain: type -> unionTy -> intersectTy -> funTy -> tyVar
+  rule transformConstrScalaOneArg: (transformConstrScala (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $ret)) (unit))))
+    ~~> (enumCaseParams $name (paramList (param "arg1" (type (unionTy (intersectTy (funTy (tyVar $a)))))))) ;
+
+  -- Constructor with ONE arrow where arg is type application: List Term -> Result (with trailing unit)
+  rule transformConstrScalaOneArgApp: (transformConstrScala (constr $name ":" (typeExpr (typeApp $a $aArg) "->" (typeExpr (typeApp $ret)) (unit))))
+    ~~> (enumCaseParams $name (paramList (param "arg1" (type (unionTy (intersectTy (funTy (tyApp $a (typeList (type (unionTy (intersectTy (funTy (tyVar $aArg)))))))))))))) ;
   
-  -- Direct pass through
+  -- Constructor with TWO arrows: A -> B -> Result (with nested units)
+  -- Pattern: (typeExpr (typeApp A) "->" (typeExpr (typeApp B) "->" (typeExpr (typeApp C)) (unit)) (unit))
+  rule transformConstrScalaTwoArgs: (transformConstrScala (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b) "->" (typeExpr (typeApp $ret)) (unit)) (unit))))
+    ~~> (enumCaseParams $name (paramList (param "arg1" (type (unionTy (intersectTy (funTy (tyVar $a)))))) (param "arg2" (type (unionTy (intersectTy (funTy (tyVar $b)))))))) ;
+
+  -- Constructor with TWO arrows, second arg is type app: A -> List B -> Result (with nested units)
+  rule transformConstrScalaTwoArgsSecondApp: (transformConstrScala (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b $bArg) "->" (typeExpr (typeApp $ret)) (unit)) (unit))))
+    ~~> (enumCaseParams $name (paramList (param "arg1" (type (unionTy (intersectTy (funTy (tyVar $a)))))) (param "arg2" (type (unionTy (intersectTy (funTy (tyApp $b (typeList (type (unionTy (intersectTy (funTy (tyVar $bArg)))))))))))))) ;
+  
+  -- Constructor with THREE arrows: A -> B -> C -> Result (with nested units)
+  rule transformConstrScalaThreeArgs: (transformConstrScala (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b) "->" (typeExpr (typeApp $c) "->" (typeExpr (typeApp $ret)) (unit)) (unit)) (unit))))
+    ~~> (enumCaseParams $name (paramList (param "arg1" (type (unionTy (intersectTy (funTy (tyVar $a)))))) (param "arg2" (type (unionTy (intersectTy (funTy (tyVar $b)))))) (param "arg3" (type (unionTy (intersectTy (funTy (tyVar $c)))))))) ;
+
+  -- Direct pass through (fallback)
   rule transformConstrScalaDirect: (constr $name ":" $type)
-    ~~> (enumCaseParams $name (paramList (param value (wrapTypeScala $type)))) ;
+    ~~> (enumCaseParams $name (paramList)) ;
 
 -----------------------------------------------------
--- Type wrapping for Scala's grammar
+-- Type wrapping for Scala's grammar (for other contexts)
 -----------------------------------------------------
 piece TypeWrapScala
   rule wrapTypeScalaApp: (wrapTypeScala (typeExpr (typeApp $name)))
@@ -74,15 +90,67 @@ piece TypeWrapScala
   rule wrapTypeScalaSimple: (wrapTypeScala (typeApp $name))
     ~~> (tyVar $name) ;
 
+  rule wrapTypeScalaAppTwo: (wrapTypeScala (typeExpr (typeApp $name $arg)))
+    ~~> (tyApp (tyVar $name) (typeList (tyVar $arg))) ;
+
   rule wrapTypeScalaExpr: (wrapTypeScala (typeExpr $inner $rest))
     ~~> (tyVar $inner) ;
 
 -----------------------------------------------------
 -- Rewrite Rule transformation
 -- Rosetta: (rewriteRule "rewrite" name ":" lhs "~>" rhs ";")
--- Scala:   Comment (rewrite rules don't have direct Scala syntax)
+-- Scala: def name(x: T): T = x match { case pattern => rhs }
+--
+-- Rosetta compound AST: (compound "(" f arg1 arg2... ")")
 -----------------------------------------------------
 piece RewriteTransformScala
+  -- Simple rewrite: (fname (Ctor $vars...)) ~> body
+  rule rewriteToDefScala: (rewriteRule "rewrite" $name ":" (compound "(" $fname $arg ")") "~>" $rhs ";")
+    ~~> (decl (defDecl $name (paramList (param "x" (tyVar Term))) (tyVar Term) 
+              (postfixExpr (appExpr (var "x")) (matchOp (caseClause (transformPatternScala $arg) (transformTermScala $rhs)))))) ;
+
+  -- Fallback: produce a comment
   rule rewriteToCommentScala: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
-    ~~> (comment (concat "// rewrite " $name)) ;
+    ~~> (decl (lineComment "//" "rewrite" $name)) ;
+
+-----------------------------------------------------
+-- Pattern transformation (Rosetta patterns to Scala patterns)
+-----------------------------------------------------
+piece PatternTransformScala
+  -- Metavariable: (metavar "$" x) becomes x
+  rule transformPatternScalaMeta: (transformPatternScala (metavar "$" $x))
+    ~~> (patVar $x) ;
+
+  -- Constructor pattern: (compound "(" Ctor args... ")")
+  rule transformPatternScalaCtor: (transformPatternScala (compound "(" $ctor $args... ")"))
+    ~~> (patExtract $ctor @map transformPatternScala $args...) ;
+
+  -- Simple identifier
+  rule transformPatternScalaIdent: (transformPatternScala $x)
+    ~~> (patVar $x) ;
+
+-----------------------------------------------------
+-- Term transformation (Rosetta terms to Scala terms)
+-----------------------------------------------------
+piece TermTransformScala
+  -- Metavariable: (metavar "$" x) becomes var x
+  rule transformTermScalaMeta: (transformTermScala (metavar "$" $x))
+    ~~> (var $x) ;
+
+  -- Constructor/Application: (compound "(" f args... ")")
+  rule transformTermScalaApp: (transformTermScala (compound "(" $f $args... ")"))
+    ~~> (appExpr (var $f) @map transformTermArgScala $args...) ;
+  
+  rule transformTermArgScalaMeta: (transformTermArgScala (metavar "$" $x))
+    ~~> (appArg (var $x)) ;
+  
+  rule transformTermArgScalaCompound: (transformTermArgScala (compound "(" $inner... ")"))
+    ~~> (appArg (transformTermScala (compound "(" $inner... ")"))) ;
+  
+  rule transformTermArgScalaIdent: (transformTermArgScala $x)
+    ~~> (appArg (var $x)) ;
+
+  -- Simple identifier
+  rule transformTermScalaIdent: (transformTermScala $x)
+    ~~> (var $x) ;
 

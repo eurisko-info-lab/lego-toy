@@ -249,6 +249,128 @@ rewrite ruleTemplate:
   (ruleTemplate (MkRule $name $pattern $template)) ~> $template ;
 
 -----------------------------------------------------
+-- Recursion Schemes: F-Algebras and Coalgebras
+--
+-- The AST (Term = μF) is the initial F-algebra.
+-- These schemes define canonical ways to consume/produce ASTs:
+--   cata : (F A → A) → μF → A       (fold, synthesized)
+--   para : (F (μF × A) → A) → μF → A (fold with context)
+--   ana  : (A → F A) → A → μF       (unfold, generation)
+--   hylo : ana then cata            (transform via intermediate)
+-----------------------------------------------------
+
+-- F-Algebra: carrier type A with structure map F(A) → A
+-- For Term, this is: (String → A) × (String → A) × (String → List A → A)
+-- representing how to handle Var, Lit, Con respectively
+adt FAlgebra {
+  MkFAlgebra : (String -> a)            -- handleVar
+            -> (String -> a)            -- handleLit
+            -> (String -> List a -> a)  -- handleCon
+            -> FAlgebra a
+}
+
+-- Catamorphism: fold AST bottom-up (synthesized attributes)
+-- cata alg : μF → A
+rewrite cata_var:
+  (cata (MkFAlgebra $hVar $hLit $hCon) (Var $x)) ~>
+    (App $hVar $x) ;
+
+rewrite cata_lit:
+  (cata (MkFAlgebra $hVar $hLit $hCon) (Lit $s)) ~>
+    (App $hLit $s) ;
+
+rewrite cata_con:
+  (cata (MkFAlgebra $hVar $hLit $hCon) (Con $name $children)) ~>
+    (App (App $hCon $name) (map (Lam c . (cata (MkFAlgebra $hVar $hLit $hCon) c)) $children)) ;
+
+-- F-Coalgebra: carrier type A with structure map A → F(A)
+-- Used for unfolding / generation
+adt FCoalgebra {
+  MkFCoalgebra : (a -> CoalgResult a) -> FCoalgebra a
+}
+
+-- Result of coalgebra step: either done (Term) or continue unfolding
+adt CoalgResult {
+  CoalgVar : String -> CoalgResult a,
+  CoalgLit : String -> CoalgResult a,
+  CoalgCon : String -> List a -> CoalgResult a
+}
+
+-- Anamorphism: unfold to AST (code generation)
+-- ana coalg : A → μF
+rewrite ana:
+  (ana (MkFCoalgebra $step) $seed) ~>
+    (case (App $step $seed)
+      (CoalgVar $x)       (Var $x)
+      (CoalgLit $s)       (Lit $s)
+      (CoalgCon $n $seeds) (Con $n (map (Lam s . (ana (MkFCoalgebra $step) s)) $seeds))) ;
+
+-- Paramorphism: fold with access to original subtrees (inherited context)
+-- para f : μF → A where f : F(μF × A) → A
+adt ParaAlgebra {
+  MkParaAlgebra : (String -> a)                        -- handleVar
+               -> (String -> a)                        -- handleLit  
+               -> (String -> List (Pair Term a) -> a)  -- handleCon (original, result) pairs
+               -> ParaAlgebra a
+}
+
+rewrite para_var:
+  (para (MkParaAlgebra $hVar $hLit $hCon) (Var $x)) ~>
+    (App $hVar $x) ;
+
+rewrite para_lit:
+  (para (MkParaAlgebra $hVar $hLit $hCon) (Lit $s)) ~>
+    (App $hLit $s) ;
+
+rewrite para_con:
+  (para (MkParaAlgebra $hVar $hLit $hCon) (Con $name $children)) ~>
+    (App (App $hCon $name) 
+         (map (Lam c . (Pair c (para (MkParaAlgebra $hVar $hLit $hCon) c))) $children)) ;
+
+-- Hylomorphism: unfold then fold (no intermediate AST needed)
+-- hylo alg coalg : A → B
+rewrite hylo:
+  (hylo $alg $coalg $seed) ~>
+    (cata $alg (ana $coalg $seed)) ;
+
+-- Apomorphism: unfold with early termination
+-- apo f : A → μF where f : A → F(μF + A)
+-- (allows returning finished subtrees directly)
+
+-- Histomorphism: fold with access to all recursive results
+-- histo f : μF → A where f has access to cofree comonad of results
+
+-----------------------------------------------------
+-- Named Algebras (for attribute grammars)
+--
+-- An attribute is just a named F-algebra.
+-- A set of attributes is evaluated by running each algebra.
+-----------------------------------------------------
+
+adt NamedAlgebra {
+  MkNamedAlgebra : String -> FAlgebra a -> NamedAlgebra a
+}
+
+rewrite namedAlgName:
+  (namedAlgName (MkNamedAlgebra $name $alg)) ~> $name ;
+
+rewrite namedAlgAlg:
+  (namedAlgAlg (MkNamedAlgebra $name $alg)) ~> $alg ;
+
+-- Evaluate a single named algebra on a term
+rewrite evalNamedAlg:
+  (evalNamedAlg (MkNamedAlgebra $name $alg) $term) ~>
+    (Pair $name (cata $alg $term)) ;
+
+-- Evaluate multiple named algebras (attribute set)
+rewrite evalAlgebras:
+  (evalAlgebras Nil $term) ~> Nil ;
+
+rewrite evalAlgebras_cons:
+  (evalAlgebras (Cons $na $rest) $term) ~>
+    (Cons (evalNamedAlg $na $term) (evalAlgebras $rest $term)) ;
+
+-----------------------------------------------------
 -- Tests
 -----------------------------------------------------
 

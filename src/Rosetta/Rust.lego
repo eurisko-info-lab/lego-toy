@@ -11,6 +11,9 @@
 -- - match expressions
 -- - ownership and borrowing
 -- - Result/Option for error handling
+--
+-- BIDIRECTIONAL: parse . print = print . parse = id
+-- Layout markers (@nl, @indent, @dedent, @sp, @nsp) guide printing.
 -----------------------------------------------------
 lang Rust :=
 
@@ -28,99 +31,99 @@ piece CoreExprs
     | "false"                           → falseLit
     | "()"                              → unitLit
     -- Application/call
-    | expr "(" exprList ")"             → call
-    | expr "::" "<" typeList ">" "(" exprList ")" → turbofish
+    | expr @nsp "(" @nsp exprList @nsp ")" → call
+    | expr @nsp "::" @nsp "<" @nsp typeList @nsp ">" @nsp "(" @nsp exprList @nsp ")" → turbofish
     -- Method call
-    | expr "." <ident> "(" exprList ")" → methodCall
-    | expr "." <ident>                  → fieldAccess
-    | expr "." <number>                 → tupleAccess
+    | expr @nsp "." @nsp <ident> @nsp "(" @nsp exprList @nsp ")" → methodCall
+    | expr @nsp "." @nsp <ident>        → fieldAccess
+    | expr @nsp "." @nsp <number>       → tupleAccess
     -- Closure
-    | "|" paramList "|" expr            → closure
-    | "|" paramList "|" "{" stmtList "}" → closureBlock
-    | "move" "|" paramList "|" expr     → moveClosure
+    | "|" @nsp paramList @nsp "|" @sp expr → closure
+    | "|" @nsp paramList @nsp "|" @sp "{" @nl @indent stmtList @dedent "}" → closureBlock
+    | "move" @sp "|" @nsp paramList @nsp "|" @sp expr → moveClosure
     -- If-else
     | "if" expr block elseClause?       → ifExpr
-    | "if" "let" pattern "=" expr block elseClause? → ifLetExpr
+    | "if" "let" pattern @sp "=" @sp expr block elseClause? → ifLetExpr
     -- Match
-    | "match" expr "{" matchArm* "}"    → matchExpr
+    | "match" expr @sp "{" @nl @indent matchArm* @dedent "}" → matchExpr
     -- Loops
     | "loop" block                      → loopExpr
     | "while" expr block                → whileExpr
-    | "while" "let" pattern "=" expr block → whileLetExpr
+    | "while" "let" pattern @sp "=" @sp expr block → whileLetExpr
     | "for" pattern "in" expr block     → forExpr
     -- Block
     | block                             → blockExpr
     -- Let
-    | "let" pattern typeAnn? "=" expr   → letExpr
-    | "let" "mut" pattern typeAnn? "=" expr → letMutExpr
+    | "let" pattern typeAnn? @sp "=" @sp expr → letExpr
+    | "let" "mut" pattern typeAnn? @sp "=" @sp expr → letMutExpr
     -- Tuples
-    | "(" exprList ")"                  → tuple
+    | "(" @nsp exprList @nsp ")"        → tuple
     -- Arrays/Vectors
-    | "[" exprList "]"                  → arrayLit
-    | "vec!" "[" exprList "]"           → vecLit
+    | "[" @nsp exprList @nsp "]"        → arrayLit
+    | "vec!" @nsp "[" @nsp exprList @nsp "]" → vecLit
     -- Option
     | "None"                            → noneLit
-    | "Some" "(" expr ")"               → someLit
+    | "Some" @nsp "(" @nsp expr @nsp ")" → someLit
     -- Result
-    | "Ok" "(" expr ")"                 → okLit
-    | "Err" "(" expr ")"                → errLit
+    | "Ok" @nsp "(" @nsp expr @nsp ")"  → okLit
+    | "Err" @nsp "(" @nsp expr @nsp ")" → errLit
     -- Operators (arithmetic)
-    | expr "+" expr                     → add
-    | expr "-" expr                     → sub
-    | expr "*" expr                     → mul
-    | expr "/" expr                     → div
-    | expr "%" expr                     → mod
-    | "-" expr                          → neg
+    | expr @sp "+" @sp expr             → add
+    | expr @sp "-" @sp expr             → sub
+    | expr @sp "*" @sp expr             → mul
+    | expr @sp "/" @sp expr             → div
+    | expr @sp "%" @sp expr             → mod
+    | "-" @nsp expr                     → neg
     -- Operators (comparison)
-    | expr "==" expr                    → eq
-    | expr "!=" expr                    → neq
-    | expr "<" expr                     → lt
-    | expr ">" expr                     → gt
-    | expr "<=" expr                    → le
-    | expr ">=" expr                    → ge
+    | expr @sp "==" @sp expr            → eq
+    | expr @sp "!=" @sp expr            → neq
+    | expr @sp "<" @sp expr             → lt
+    | expr @sp ">" @sp expr             → gt
+    | expr @sp "<=" @sp expr            → le
+    | expr @sp ">=" @sp expr            → ge
     -- Operators (logical)
-    | expr "&&" expr                    → and
-    | expr "||" expr                    → or
-    | "!" expr                          → not
+    | expr @sp "&&" @sp expr            → and
+    | expr @sp "||" @sp expr            → or
+    | "!" @nsp expr                     → not
     -- References
-    | "&" expr                          → ref
+    | "&" @nsp expr                     → ref
     | "&" "mut" expr                    → refMut
-    | "*" expr                          → deref
+    | "*" @nsp expr                     → deref
     -- Box
-    | "Box" "::" "new" "(" expr ")"     → boxNew
+    | "Box" @nsp "::" @nsp "new" @nsp "(" @nsp expr @nsp ")" → boxNew
     -- Return/break/continue
     | "return" expr?                    → returnExpr
     | "break" expr?                     → breakExpr
     | "continue"                        → continueExpr
     -- Panic/unreachable
-    | "panic!" "(" <string> ")"         → panicExpr
-    | "unreachable!" "(" ")"            → unreachableExpr
-    | "todo!" "(" ")"                   → todoExpr
+    | "panic!" @nsp "(" @nsp <string> @nsp ")" → panicExpr
+    | "unreachable!" @nsp "(" @nsp ")"  → unreachableExpr
+    | "todo!" @nsp "(" @nsp ")"         → todoExpr
     -- Question mark (error propagation)
-    | expr "?"                          → tryExpr
+    | expr @nsp "?"                     → tryExpr
     -- Parentheses
-    | "(" expr ")"                      → paren
+    | "(" @nsp expr @nsp ")"            → paren
     -- Range
-    | expr ".." expr                    → range
-    | expr "..=" expr                   → rangeInclusive
+    | expr @nsp ".." @nsp expr          → range
+    | expr @nsp "..=" @nsp expr         → rangeInclusive
     -- Struct literal
-    | <ident> "{" fieldInit* "}"        → structLit
-    | <ident> "{" fieldInit* ".." expr "}" → structUpdate
+    | <ident> @sp "{" @sp fieldInit* @sp "}" → structLit
+    | <ident> @sp "{" @sp fieldInit* @sp ".." @sp expr @sp "}" → structUpdate
     -- Macro invocation
-    | <ident> "!" "(" exprList ")"      → macroCall
-    | <ident> "!" "[" exprList "]"      → macroCallBracket
+    | <ident> @nsp "!" @nsp "(" @nsp exprList @nsp ")" → macroCall
+    | <ident> @nsp "!" @nsp "[" @nsp exprList @nsp "]" → macroCallBracket
     ;
 
-  exprList ::= expr ("," expr)*         → exprList ;
-  block ::= "{" stmtList "}"            → block ;
+  exprList ::= expr ("," @sp expr)*     → exprList ;
+  block ::= "{" @nl @indent stmtList @dedent "}" → block ;
   stmtList ::= stmt* expr?              → stmtList ;
-  stmt ::= expr ";"                     → stmtExpr
-         | "let" pattern typeAnn? "=" expr ";" → stmtLet
-         | "let" "mut" pattern typeAnn? "=" expr ";" → stmtLetMut
+  stmt ::= expr ";" @nl                 → stmtExpr
+         | "let" pattern typeAnn? @sp "=" @sp expr ";" @nl → stmtLet
+         | "let" "mut" pattern typeAnn? @sp "=" @sp expr ";" @nl → stmtLetMut
          | item                         → stmtItem
          ;
-  elseClause ::= "else" block           → elseBlock
-               | "else" ifExpr          → elseIf
+  elseClause ::= @sp "else" @sp block   → elseBlock
+               | @sp "else" @sp ifExpr  → elseIf
                ;
 
 -----------------------------------------------------
@@ -129,27 +132,27 @@ piece CoreExprs
 -----------------------------------------------------
 piece Types
   type ::= <ident>                      → tyPath
-         | <ident> "<" typeList ">"     → tyGeneric
+         | <ident> @nsp "<" @nsp typeList @nsp ">" → tyGeneric
          | "&" lifetime? "mut"? type    → tyRef
          | "*" "const" type             → tyRawConst
          | "*" "mut" type               → tyRawMut
-         | "(" typeList ")"             → tyTuple
-         | "[" type "]"                 → tySlice
-         | "[" type ";" <number> "]"    → tyArray
-         | "fn" "(" typeList ")" "->" type → tyFn
+         | "(" @nsp typeList @nsp ")"   → tyTuple
+         | "[" @nsp type @nsp "]"       → tySlice
+         | "[" @nsp type ";" @sp <number> @nsp "]" → tyArray
+         | "fn" @nsp "(" @nsp typeList @nsp ")" @sp "->" @sp type → tyFn
          | "impl" <ident>               → tyImpl
          | "dyn" <ident>                → tyDyn
-         | "Box" "<" type ">"           → tyBox
-         | "Option" "<" type ">"        → tyOption
-         | "Result" "<" type "," type ">" → tyResult
-         | "Vec" "<" type ">"           → tyVec
+         | "Box" @nsp "<" @nsp type @nsp ">" → tyBox
+         | "Option" @nsp "<" @nsp type @nsp ">" → tyOption
+         | "Result" @nsp "<" @nsp type "," @sp type @nsp ">" → tyResult
+         | "Vec" @nsp "<" @nsp type @nsp ">" → tyVec
          | "()"                         → tyUnit
          | "!"                          → tyNever
          | "_"                          → tyInfer
          ;
-  typeList ::= type ("," type)*         → typeList ;
-  typeAnn ::= ":" type                  → typeAnn ;
-  lifetime ::= "'" <ident>              → lifetime ;
+  typeList ::= type ("," @sp type)*     → typeList ;
+  typeAnn ::= @sp ":" @sp type          → typeAnn ;
+  lifetime ::= "'" @nsp <ident>         → lifetime ;
 
 -----------------------------------------------------
 -- Patterns
@@ -163,50 +166,50 @@ piece Patterns
             | "true"                    → patTrue
             | "false"                   → patFalse
             | "()"                      → patUnit
-            | <ident> "{" fieldPat* "}" → patStruct
-            | <ident> "(" patternList ")" → patTupleStruct
-            | "(" patternList ")"       → patTuple
-            | "[" patternList "]"       → patSlice
-            | pattern "|" pattern       → patOr
-            | pattern "@" pattern       → patAt
+            | <ident> @sp "{" @sp fieldPat* @sp "}" → patStruct
+            | <ident> @nsp "(" @nsp patternList @nsp ")" → patTupleStruct
+            | "(" @nsp patternList @nsp ")" → patTuple
+            | "[" @nsp patternList @nsp "]" → patSlice
+            | pattern @sp "|" @sp pattern → patOr
+            | pattern @sp "@" @sp pattern → patAt
             | "ref" pattern             → patRef
             | "ref" "mut" pattern       → patRefMut
             | "mut" pattern             → patMut
-            | "&" pattern               → patDeref
-            | pattern ".." pattern      → patRange
+            | "&" @nsp pattern          → patDeref
+            | pattern @nsp ".." @nsp pattern → patRange
             | ".."                      → patRest
             ;
-  patternList ::= pattern ("," pattern)* → patternList ;
-  fieldPat ::= <ident> ":" pattern      → fieldPat
+  patternList ::= pattern ("," @sp pattern)* → patternList ;
+  fieldPat ::= <ident> @sp ":" @sp pattern → fieldPat
              | <ident>                  → fieldPatShort
              ;
-  matchArm ::= pattern guard? "=>" expr "," → matchArm ;
-  guard ::= "if" expr                   → guard ;
+  matchArm ::= pattern guard? @sp "=>" @sp expr "," @nl → matchArm ;
+  guard ::= @sp "if" expr               → guard ;
 
 -----------------------------------------------------
 -- Parameters
 -----------------------------------------------------
 piece Parameters
-  param ::= <ident> ":" type            → param
-          | "mut" <ident> ":" type      → paramMut
+  param ::= <ident> @sp ":" @sp type    → param
+          | "mut" <ident> @sp ":" @sp type → paramMut
           | "&" "self"                  → selfRef
           | "&" "mut" "self"            → selfRefMut
           | "self"                      → selfOwned
           ;
-  paramList ::= param ("," param)*      → paramList ;
+  paramList ::= param ("," @sp param)*  → paramList ;
   typeParam ::= <ident>                 → typeParam
-              | <ident> ":" typeBound   → typeParamBound
+              | <ident> @sp ":" @sp typeBound → typeParamBound
               ;
-  typeParamList ::= "<" typeParam ("," typeParam)* ">" → typeParamList ;
-  typeBound ::= <ident> ("+" <ident>)*  → typeBound ;
-  whereClause ::= "where" wherePred ("," wherePred)* → whereClause ;
-  wherePred ::= type ":" typeBound      → wherePred ;
+  typeParamList ::= "<" @nsp typeParam ("," @sp typeParam)* @nsp ">" → typeParamList ;
+  typeBound ::= <ident> ("+" @sp <ident>)* → typeBound ;
+  whereClause ::= "where" wherePred ("," @sp wherePred)* → whereClause ;
+  wherePred ::= type @sp ":" @sp typeBound → wherePred ;
 
 -----------------------------------------------------
 -- Field Initializers
 -----------------------------------------------------
 piece Fields
-  fieldInit ::= <ident> ":" expr        → fieldInit
+  fieldInit ::= <ident> @sp ":" @sp expr → fieldInit
               | <ident>                 → fieldInitShort
               ;
 
@@ -216,44 +219,44 @@ piece Fields
 piece Items
   item ::= 
     -- Enum (ADT)
-    visibility? "enum" <ident> typeParamList? whereClause? "{" @nl @indent enumVariant* @dedent "}" @nl @nl
+    visibility? "enum" <ident> typeParamList? whereClause? @sp "{" @nl @indent enumVariant* @dedent "}" @nl @nl
       → enumItem
     -- Struct
-    | visibility? "struct" <ident> typeParamList? whereClause? "{" @nl @indent structField* @dedent "}" @nl
+    | visibility? "struct" <ident> typeParamList? whereClause? @sp "{" @nl @indent structField* @dedent "}" @nl
       → structItem
-    | visibility? "struct" <ident> typeParamList? @nsp "(" tupleField* ")" ";" @nl
+    | visibility? "struct" <ident> typeParamList? @nsp "(" @nsp tupleField* @nsp ")" ";" @nl
       → tupleStructItem
     | visibility? "struct" <ident> ";" @nl
       → unitStructItem
     -- Trait
-    | visibility? "trait" <ident> typeParamList? superTraits? whereClause? "{" @nl @indent traitItem* @dedent "}" @nl
+    | visibility? "trait" <ident> typeParamList? superTraits? whereClause? @sp "{" @nl @indent traitItem* @dedent "}" @nl
       → traitItem
     -- Impl
-    | "impl" typeParamList? type whereClause? "{" @nl @indent implItem* @dedent "}" @nl
+    | "impl" typeParamList? type whereClause? @sp "{" @nl @indent implItem* @dedent "}" @nl
       → implBlock
-    | "impl" typeParamList? <ident> "for" type whereClause? "{" @nl @indent implItem* @dedent "}" @nl
+    | "impl" typeParamList? <ident> "for" type whereClause? @sp "{" @nl @indent implItem* @dedent "}" @nl
       → implTraitBlock
     -- Function
-    | visibility? "fn" <ident> typeParamList? @nsp "(" paramList ")" returnType? whereClause? block @nl
+    | visibility? "fn" <ident> typeParamList? @nsp "(" @nsp paramList @nsp ")" returnType? whereClause? @sp block @nl
       → fnItem
-    | visibility? "const" "fn" <ident> typeParamList? @nsp "(" paramList ")" returnType? block @nl
+    | visibility? "const" "fn" <ident> typeParamList? @nsp "(" @nsp paramList @nsp ")" returnType? @sp block @nl
       → constFnItem
-    | visibility? "async" "fn" <ident> typeParamList? @nsp "(" paramList ")" returnType? block @nl
+    | visibility? "async" "fn" <ident> typeParamList? @nsp "(" @nsp paramList @nsp ")" returnType? @sp block @nl
       → asyncFnItem
     -- Const/static
-    | visibility? "const" <ident> ":" type "=" expr ";" @nl
+    | visibility? "const" <ident> @sp ":" @sp type @sp "=" @sp expr ";" @nl
       → constItem
-    | visibility? "static" "mut"? <ident> ":" type "=" expr ";" @nl
+    | visibility? "static" "mut"? <ident> @sp ":" @sp type @sp "=" @sp expr ";" @nl
       → staticItem
     -- Type alias
-    | visibility? "type" <ident> typeParamList? "=" type ";" @nl
+    | visibility? "type" <ident> typeParamList? @sp "=" @sp type ";" @nl
       → typeAliasItem
     -- Use/mod
     | visibility? "use" usePath ";" @nl
       → useItem
     | visibility? "mod" <ident> ";" @nl
       → modDeclItem
-    | visibility? "mod" <ident> "{" @nl @indent item* @dedent "}" @nl
+    | visibility? "mod" <ident> @sp "{" @nl @indent item* @dedent "}" @nl
       → modDefItem
     -- Comments (for generated code)
     | "//" <ident>* @nl
@@ -261,28 +264,28 @@ piece Items
     ;
 
   visibility ::= "pub"                  → pubVis
-               | "pub" @nsp "(" "crate" ")"  → pubCrateVis
-               | "pub" @nsp "(" "super" ")"  → pubSuperVis
+               | "pub" @nsp "(" @nsp "crate" @nsp ")" → pubCrateVis
+               | "pub" @nsp "(" @nsp "super" @nsp ")" → pubSuperVis
                ;
   enumVariant ::= <ident> "," @nl       → enumVariantUnit
-                | <ident> @nsp "(" tupleField ("," tupleField)* ")" "," @nl → enumVariantTuple
-                | <ident> "{" @nl @indent structField* @dedent "}" "," @nl → enumVariantStruct
+                | <ident> @nsp "(" @nsp tupleField ("," @sp tupleField)* @nsp ")" "," @nl → enumVariantTuple
+                | <ident> @sp "{" @nl @indent structField* @dedent "}" "," @nl → enumVariantStruct
                 ;
-  structField ::= visibility? <ident> ":" type "," @nl → structField ;
+  structField ::= visibility? <ident> @sp ":" @sp type "," @nl → structField ;
   tupleField ::= visibility? type       → tupleField ;
-  returnType ::= "->" type              → returnType ;
-  superTraits ::= ":" typeBound         → superTraits ;
-  traitItem ::= "fn" <ident> "(" paramList ")" returnType? ";" → traitFnSig
-              | "fn" <ident> "(" paramList ")" returnType? block → traitFnDefault
-              | "type" <ident> typeBounds? ";" → traitTypeAssoc
+  returnType ::= @sp "->" @sp type      → returnType ;
+  superTraits ::= @sp ":" @sp typeBound → superTraits ;
+  traitItem ::= "fn" <ident> @nsp "(" @nsp paramList @nsp ")" returnType? ";" @nl → traitFnSig
+              | "fn" <ident> @nsp "(" @nsp paramList @nsp ")" returnType? @sp block @nl → traitFnDefault
+              | "type" <ident> typeBounds? ";" @nl → traitTypeAssoc
               ;
-  typeBounds ::= ":" typeBound          → typeBounds ;
-  implItem ::= visibility? "fn" <ident> "(" paramList ")" returnType? block → implFn
-             | "type" <ident> "=" type ";" → implType
+  typeBounds ::= @sp ":" @sp typeBound  → typeBounds ;
+  implItem ::= visibility? "fn" <ident> @nsp "(" @nsp paramList @nsp ")" returnType? @sp block @nl → implFn
+             | "type" <ident> @sp "=" @sp type ";" @nl → implType
              ;
-  usePath ::= <ident> ("::" <ident>)*   → usePath
-            | <ident> "::" "*"          → useGlob
-            | <ident> "::" "{" useTree ("," useTree)* "}" → useGroup
+  usePath ::= <ident> (@nsp "::" @nsp <ident>)* → usePath
+            | <ident> @nsp "::" @nsp "*" → useGlob
+            | <ident> @nsp "::" @nsp "{" @nsp useTree ("," @sp useTree)* @nsp "}" → useGroup
             ;
   useTree ::= <ident>                   → useTreeIdent
             | <ident> "as" <ident>      → useTreeRename

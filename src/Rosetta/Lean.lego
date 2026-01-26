@@ -107,49 +107,52 @@ token Token
 -- Basic Lean expressions
 -- Grammar is structured to avoid left-recursion:
 --   term -> arrowExpr -> orExpr -> andExpr -> cmpExpr -> addExpr -> mulExpr -> unaryExpr -> appExpr -> atomExpr
+-- 
+-- BIDIRECTIONAL: parse . print = print . parse = id
+-- Layout markers (@nl, @indent, @dedent, @sp, @nsp) guide printing.
 -----------------------------------------------------
 piece CoreTerms
   -- Top level: arrow types (right-associative)
   term ::= arrowExpr                              → term ;
   
-  arrowExpr ::= orExpr "→" arrowExpr              → arrowTy
-              | orExpr "×" arrowExpr              → prodTy
+  arrowExpr ::= orExpr @sp "→" @sp arrowExpr      → arrowTy
+              | orExpr @sp "×" @sp arrowExpr      → prodTy
               | orExpr                            → arrowExpr
               ;
   
   -- Logical or
-  orExpr ::= andExpr "||" orExpr                  → or
+  orExpr ::= andExpr @sp "||" @sp orExpr          → or
            | andExpr                              → orExpr
            ;
   
   -- Logical and
-  andExpr ::= cmpExpr "&&" andExpr                → and
+  andExpr ::= cmpExpr @sp "&&" @sp andExpr        → and
             | cmpExpr                             → andExpr
             ;
   
   -- Comparison operators (non-associative)
-  cmpExpr ::= addExpr "==" addExpr                → beq
-            | addExpr "!=" addExpr                → bne
-            | addExpr "<" addExpr                 → lt
-            | addExpr ">" addExpr                 → gt
-            | addExpr "<=" addExpr                → le
-            | addExpr ">=" addExpr                → ge
+  cmpExpr ::= addExpr @sp "==" @sp addExpr        → beq
+            | addExpr @sp "!=" @sp addExpr        → bne
+            | addExpr @sp "<" @sp addExpr         → lt
+            | addExpr @sp ">" @sp addExpr         → gt
+            | addExpr @sp "<=" @sp addExpr        → le
+            | addExpr @sp ">=" @sp addExpr        → ge
             | addExpr                             → cmpExpr
             ;
   
   -- Additive operators (left-to-right via iteration)
   addExpr ::= mulExpr addOp*                      → addExpr ;
-  addOp ::= "+" mulExpr                           → addOp
-          | "-" mulExpr                           → subOp
-          | "++" mulExpr                          → appendOp
-          | "::" mulExpr                          → consOp
+  addOp ::= @sp "+" @sp mulExpr                   → addOp
+          | @sp "-" @sp mulExpr                   → subOp
+          | @sp "++" @sp mulExpr                  → appendOp
+          | @sp "::" @sp mulExpr                  → consOp
           ;
   
   -- Multiplicative operators
   mulExpr ::= unaryExpr mulOp*                    → mulExpr ;
-  mulOp ::= "*" unaryExpr                         → mulOp
-          | "/" unaryExpr                         → divOp
-          | "%" unaryExpr                         → modOp
+  mulOp ::= @sp "*" @sp unaryExpr                 → mulOp
+          | @sp "/" @sp unaryExpr                 → divOp
+          | @sp "%" @sp unaryExpr                 → modOp
           ;
   
   -- Unary operators
@@ -162,17 +165,17 @@ piece CoreTerms
   -- Application (juxtaposition, left-associative via iteration)
   -- Includes postfix operators like projections
   appExpr ::= primaryExpr postfixOp*              → appExpr ;
-  postfixOp ::= "@" primaryExpr                   → explicitArg
+  postfixOp ::= "@" @nsp primaryExpr              → explicitArg
               | argExpr                           → appArg
-              | ".1"                              → fstOp
-              | ".2"                              → sndOp
-              | ".fst"                            → fstOp
-              | ".snd"                            → sndOp
-              | "." <ident>                       → projOp
-              | "$" term                          → dollarOp
-              | "|>" term                         → pipeRightOp
-              | "<|" term                         → pipeLeftOp
-              | "with" "{" fieldAssign* "}"       → structUpdateOp
+              | @nsp ".1"                         → fstOp
+              | @nsp ".2"                         → sndOp
+              | @nsp ".fst"                       → fstOp
+              | @nsp ".snd"                       → sndOp
+              | @nsp "." @nsp <ident>             → projOp
+              | @sp "$" @sp term                  → dollarOp
+              | @sp "|>" @sp term                 → pipeRightOp
+              | @sp "<|" @sp term                 → pipeLeftOp
+              | @sp "with" @sp "{" fieldAssign* "}" → structUpdateOp
               ;
 
   -- Argument expressions: subset of primaryExpr that doesn't include
@@ -224,39 +227,39 @@ piece CoreTerms
     | "()"                                        → unitLit
     | "Unit.unit"                                 → unitLit
     -- Anonymous dot constructor (type-directed)
-    | "." <ident>                                 → dotCtor
+    | "." @nsp <ident>                            → dotCtor
     -- Lambda and function
-    | "fun" binder+ "=>" term                     → lam
-    | "λ" binder+ "=>" term                       → lamUnicode
+    | "fun" binder+ @sp "=>" @sp term             → lam
+    | "λ" binder+ @sp "=>" @sp term               → lamUnicode
     -- Pi/forall/sigma types
-    | "∀" binder+ "," term                        → forallTy
-    | "Π" binder+ "," term                        → piTy
-    | "Σ" binder+ "," term                        → sigmaTy
+    | "∀" binder+ "," @sp term                    → forallTy
+    | "Π" binder+ "," @sp term                    → piTy
+    | "Σ" binder+ "," @sp term                    → sigmaTy
     -- Let expressions
-    | "let" <ident> typeAnn? ":=" term "in"? term → letExpr
-    | "let" "rec" <ident> typeAnn? ":=" term "in"? term → letRecExpr
+    | "let" <ident> typeAnn? @sp ":=" @sp term "in"? @sp term → letExpr
+    | "let" "rec" <ident> typeAnn? @sp ":=" @sp term "in"? @sp term → letRecExpr
     -- Conditionals
-    | "if" term "then" term "else" term           → ifExpr
-    | "if" "let" pattern ":=" term "then" term "else" term → ifLetExpr
+    | "if" term "then" @sp term @sp "else" @sp term → ifExpr
+    | "if" "let" pattern @sp ":=" @sp term "then" @sp term @sp "else" @sp term → ifLetExpr
     -- Match (including monadic match with ←)
-    | "match" termList "with" matchAlt*           → matchExpr
-    | "match" "←" term "with" matchAlt*           → matchBindExpr
+    | "match" termList "with" @nl @indent matchAlt* @dedent → matchExpr
+    | "match" "←" term "with" @nl @indent matchAlt* @dedent → matchBindExpr
     -- Lists and arrays
-    | "[" termList? "]"                           → listLit
-    | "#[" termList? "]"                          → arrayLit
+    | "[" @nsp termList? @nsp "]"                 → listLit
+    | "#[" @nsp termList? @nsp "]"                → arrayLit
     -- Option
     | "none"                                      → noneLit
     | "some" primaryExpr                          → someLit
     | "Option" primaryExpr                        → optionTy
     -- Do notation
-    | "do" doElem+                                → doBlock
+    | "do" @nl @indent doElem+ @dedent            → doBlock
     -- Tactics
-    | "by" tactic+                                → byTactic
+    | "by" @sp tactic+                            → byTactic
     -- Parenthesized expressions
-    | "(" term ")"                                → paren
-    | "(" term "," term ")"                       → pair
+    | "(" @nsp term @nsp ")"                      → paren
+    | "(" @nsp term "," @sp term @nsp ")"         → pair
     -- Anonymous constructors
-    | "⟨" termList "⟩"                            → anonCtor
+    | "⟨" @nsp termList @nsp "⟩"                  → anonCtor
     -- Structure literals
     | "{" fieldAssign* "}"                        → structLit
     -- Hole and sorry
@@ -265,7 +268,7 @@ piece CoreTerms
     | "panic!" <string>                           → panic
     ;
 
-  termList ::= term ("," term)*                   → termList ;
+  termList ::= term ("," @sp term)*               → termList ;
   level ::= <number>                              → levelLit
           | "max" level level                     → levelMax
           | "imax" level level                    → levelIMax
@@ -278,12 +281,12 @@ piece CoreTerms
 -----------------------------------------------------
 piece Binders
   binder ::= <ident>                              → simpleBinder
-           | "(" <ident> ":" term ")"             → explicitBinder
-           | "{" <ident> ":" term "}"             → implicitBinder
-           | "[" <ident> ":" term "]"             → instBinder
-           | "(" <ident> ")"                      → parenBinder
+           | "(" @nsp <ident> @sp ":" @sp term @nsp ")" → explicitBinder
+           | "{" @nsp <ident> @sp ":" @sp term @nsp "}" → implicitBinder
+           | "[" @nsp <ident> @sp ":" @sp term @nsp "]" → instBinder
+           | "(" @nsp <ident> @nsp ")"            → parenBinder
            ;
-  typeAnn ::= ":" term                            → typeAnn ;
+  typeAnn ::= @sp ":" @sp term                    → typeAnn ;
 
 -----------------------------------------------------
 -- Patterns
@@ -294,21 +297,21 @@ piece Patterns
             | "_"                                 → patWild
             | <number>                            → patNum
             | <string>                            → patStr
-            | "." <ident>                         → patCtor
+            | "." @nsp <ident>                    → patCtor
             | <ident> pattern*                    → patApp
             | "some" pattern                      → patSome
             | "none"                              → patNone
-            | "(" patternList ")"                 → patTuple
-            | "⟨" patternList "⟩"                 → patAnon
-            | "[" patternList? "]"                → patList
-            | "#[" patternList? "]"               → patArray
-            | pattern "::" pattern                → patCons
-            | pattern "+" <number>                → patSucc
+            | "(" @nsp patternList @nsp ")"       → patTuple
+            | "⟨" @nsp patternList @nsp "⟩"       → patAnon
+            | "[" @nsp patternList? @nsp "]"      → patList
+            | "#[" @nsp patternList? @nsp "]"     → patArray
+            | pattern @sp "::" @sp pattern        → patCons
+            | pattern @sp "+" @sp <number>        → patSucc
             ;
-  patternList ::= pattern ("," pattern)*          → patternList ;
+  patternList ::= pattern ("," @sp pattern)*      → patternList ;
   -- Match alternatives can contain either a single term or a sequence of doElems
-  matchAlt ::= "|" patternList "=>" doElem+       → matchAltDo
-             | "|" patternList "=>" term @nl      → matchAlt
+  matchAlt ::= "|" patternList @sp "=>" @sp doElem+ → matchAltDo
+             | "|" patternList @sp "=>" @sp term @nl → matchAlt
              ;
 
 -----------------------------------------------------
@@ -316,14 +319,14 @@ piece Patterns
 -- Monadic do blocks
 -----------------------------------------------------
 piece DoNotation
-  doElem ::= "let" <ident> "←" term               → doLetBind
-           | "let" <ident> ":=" term              → doLetPure
-           | <ident> "←" term                     → doBind
-           | "return" term                        → doReturn
-           | "pure" term                          → doPure
-           | "if" term "then" doElem+ "else"? doElem* → doIf
-           | "for" <ident> "in" appExpr "do" doElem+ → doFor
-           | term                                 → doExpr
+  doElem ::= "let" <ident> @sp "←" @sp term @nl   → doLetBind
+           | "let" <ident> @sp ":=" @sp term @nl  → doLetPure
+           | <ident> @sp "←" @sp term @nl         → doBind
+           | "return" term @nl                    → doReturn
+           | "pure" term @nl                      → doPure
+           | "if" term "then" @nl @indent doElem+ @dedent "else"? @nl @indent doElem* @dedent → doIf
+           | "for" <ident> "in" appExpr "do" @nl @indent doElem+ @dedent → doFor
+           | term @nl                             → doExpr
            ;
 
 -----------------------------------------------------
@@ -355,62 +358,64 @@ piece Tactics
 -- Top-level declarations
 -- Note: Layout markers (@nl, @indent, @dedent) are for pretty-printing only.
 -- During parsing, they are ignored - block structure is determined by keywords.
+--
+-- BIDIRECTIONAL: parse . print = print . parse = id
 -----------------------------------------------------
 piece Declarations
   decl ::= 
     -- Inductive types
-    "inductive" <ident> param* whereCtors? derivingClause?
+    "inductive" <ident> param* whereCtors? derivingClause? @nl
       → inductiveDecl
     -- Structures  
-    | "structure" <ident> param* extendsClause? "where" fieldDecl* derivingClause?
+    | "structure" <ident> param* extendsClause? "where" @nl @indent fieldDecl* @dedent derivingClause?
       → structureDecl
     -- Classes
-    | "class" <ident> param* extendsClause? "where" fieldDecl*
+    | "class" <ident> param* extendsClause? "where" @nl @indent fieldDecl* @dedent
       → classDecl
     -- Instances
-    | "instance" instName? ":" term "where" fieldDef*
+    | "instance" instName? @sp ":" @sp term "where" @nl @indent fieldDef* @dedent
       → instanceDecl
     -- Definitions - these are the key ones
-    | "def" <ident> param* typeAnn? whereClause? ":=" term
+    | "def" <ident> param* typeAnn? whereClause? @sp ":=" @sp term @nl
       → defDecl
     | "def" <ident> typeAnn? @nl @indent matchAlt+ @dedent
       → defDeclMatch
-    | "partial" "def" <ident> param* typeAnn? ":=" term
+    | "partial" "def" <ident> param* typeAnn? @sp ":=" @sp term @nl
       → partialDefDecl
-    | "abbrev" <ident> param* typeAnn? ":=" term
+    | "abbrev" <ident> param* typeAnn? @sp ":=" @sp term @nl
       → abbrevDecl
     -- Theorems
-    | "theorem" <ident> param* ":" term ":=" term
+    | "theorem" <ident> param* @sp ":" @sp term @sp ":=" @sp term @nl
       → theoremDecl
-    | "lemma" <ident> param* ":" term ":=" term
+    | "lemma" <ident> param* @sp ":" @sp term @sp ":=" @sp term @nl
       → lemmaDecl
-    | "example" ":" term ":=" term
+    | "example" @sp ":" @sp term @sp ":=" @sp term @nl
       → exampleDecl
     -- Namespaces - use 'end' keyword as explicit delimiter
-    | "namespace" modulePath nsBody "end" modulePath
+    | "namespace" modulePath @nl @indent nsBody @dedent "end" modulePath @nl
       → namespaceDecl
-    | "section" <ident>? nsBody "end" <ident>?
+    | "section" <ident>? @nl @indent nsBody @dedent "end" <ident>? @nl
       → sectionDecl
     -- Imports and opens  
-    | "import" modulePath
+    | "import" modulePath @nl
       → importDecl
-    | "open" modulePath inClause?
+    | "open" modulePath inClause? @nl
       → openDecl
     -- Variables
-    | "variable" varDecl+
+    | "variable" varDecl+ @nl
       → variableDecl
     -- Attributes
-    | "attribute" "[" <ident> "]" <ident>
+    | "attribute" "[" @nsp <ident> @nsp "]" <ident> @nl
       → attributeDecl
     -- Set options
-    | "set_option" modulePath term
+    | "set_option" modulePath term @nl
       → setOptionDecl
     -- Notation and macros
-    | "macro" <ident> param* ":" <ident> ":=" term
+    | "macro" <ident> param* @sp ":" @sp <ident> @sp ":=" @sp term @nl
       → macroDecl
-    | "notation" <string> ":=" term
+    | "notation" <string> @sp ":=" @sp term @nl
       → notationDecl
-    | "syntax" term* ":" <ident>
+    | "syntax" term* @sp ":" @sp <ident> @nl
       → syntaxDecl
     -- Private/protected modifiers
     | "private" decl
@@ -418,12 +423,12 @@ piece Declarations
     | "protected" decl
       → protectedDecl
     -- @[simp] style attributes
-    | "@[" <ident> "]" decl
+    | "@[" @nsp <ident> @nsp "]" decl
       → attrDecl
     -- #check, #eval, #print commands
-    | "#check" term
+    | "#check" term @nl
       → checkCmd
-    | "#eval" term
+    | "#eval" term @nl
       → evalCmd
     | "#print" <ident> @nl
       → printCmd
@@ -439,21 +444,21 @@ piece Declarations
           ;
   whereCtors ::= "where" @indent @nl ctor* @dedent → whereCtors ;
   ctor ::= "|" <ident> param* ":" term @nl        → ctor ;
-  derivingClause ::= "deriving" <ident> ("," <ident>)* → derivingClause ;
-  fieldDecl ::= <ident> ":" term defaultVal?      → fieldDecl ;
-  fieldDef ::= <ident> ":=" term                  → fieldDef ;
+  derivingClause ::= "deriving" <ident> ("," @sp <ident>)* → derivingClause ;
+  fieldDecl ::= <ident> @sp ":" @sp term defaultVal? @nl → fieldDecl ;
+  fieldDef ::= <ident> @sp ":=" @sp term @nl      → fieldDef ;
   -- Field assignments in struct literals
-  fieldAssign ::= <ident> ":=" term               → fieldAssign ;
-  defaultVal ::= term                             → defaultVal ;
+  fieldAssign ::= <ident> @sp ":=" @sp term       → fieldAssign ;
+  defaultVal ::= @sp term                         → defaultVal ;
   extendsClause ::= "extends" term                → extendsClause ;
   instName ::= <ident>                            → instName ;
-  modulePath ::= <ident> ("." <ident>)*           → modulePath ;
+  modulePath ::= <ident> ("." @nsp <ident>)*      → modulePath ;
   inClause ::= "in" term                          → inClause ;
-  varDecl ::= "(" <ident> ":" term ")"            → explicitVarDecl
-            | "{" <ident> ":" term "}"            → implicitVarDecl
+  varDecl ::= "(" @nsp <ident> @sp ":" @sp term @nsp ")" → explicitVarDecl
+            | "{" @nsp <ident> @sp ":" @sp term @nsp "}" → implicitVarDecl
             ;
-  whereClause ::= "where" letDecl*                → whereClause ;
-  letDecl ::= <ident> ":=" term                   → letDecl ;
+  whereClause ::= "where" @nl @indent letDecl* @dedent → whereClause ;
+  letDecl ::= <ident> @sp ":=" @sp term @nl       → letDecl ;
   -- Namespace body: declarations until 'end' keyword
   nsBody ::= decl*                                → nsBody ;
 

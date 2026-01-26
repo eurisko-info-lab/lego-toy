@@ -11,6 +11,9 @@
 -- - do-notation
 -- - where clauses
 -- - guards
+--
+-- BIDIRECTIONAL: parse . print = print . parse = id
+-- Layout markers (@nl, @indent, @dedent, @sp, @nsp) guide printing.
 -----------------------------------------------------
 lang Haskell :=
 
@@ -30,58 +33,58 @@ piece CoreTerms
     -- Application (juxtaposition)
     | expr expr                         → app
     -- Lambda
-    | "\\" pattern+ "->" expr           → lam
+    | "\\" pattern+ @sp "->" @sp expr   → lam
     -- Let
-    | "let" letBind+ "in" expr          → letExpr
-    | "let" "{" letBind+ "}" "in" expr  → letExprBraces
+    | "let" @nl @indent letBind+ @dedent "in" @sp expr → letExpr
+    | "let" "{" @sp letBind+ @sp "}" "in" @sp expr → letExprBraces
     -- Where (at expression level via do)
-    | expr "where" letBind+             → whereExpr
+    | expr "where" @nl @indent letBind+ @dedent → whereExpr
     -- If-then-else
-    | "if" expr "then" expr "else" expr → ifExpr
+    | "if" expr "then" @sp expr @sp "else" @sp expr → ifExpr
     -- Case
-    | "case" expr "of" caseAlt+         → caseExpr
-    | "case" expr "of" "{" caseAlt+ "}" → caseExprBraces
+    | "case" expr "of" @nl @indent caseAlt+ @dedent → caseExpr
+    | "case" expr "of" "{" @sp caseAlt+ @sp "}" → caseExprBraces
     -- Tuples
-    | "(" exprList ")"                  → tuple
+    | "(" @nsp exprList @nsp ")"        → tuple
     | "fst" expr                        → fst
     | "snd" expr                        → snd
     -- Lists
-    | "[" exprList "]"                  → listLit
+    | "[" @nsp exprList @nsp "]"        → listLit
     | "[]"                              → nilLit
-    | expr ":" expr                     → cons
-    | expr "++" expr                    → append
-    | "[" expr "|" qual+ "]"            → listComp
+    | expr @sp ":" @sp expr             → cons
+    | expr @sp "++" @sp expr            → append
+    | "[" @nsp expr @sp "|" @sp qual+ @nsp "]" → listComp
     -- Operators (sections)
-    | "(" expr op ")"                   → leftSection
-    | "(" op expr ")"                   → rightSection
+    | "(" @nsp expr op @nsp ")"         → leftSection
+    | "(" @nsp op expr @nsp ")"         → rightSection
     -- Operators (arithmetic)
-    | expr "+" expr                     → add
-    | expr "-" expr                     → sub
-    | expr "*" expr                     → mul
-    | expr "/" expr                     → div
-    | expr "`div`" expr                 → intDiv
-    | expr "`mod`" expr                 → mod
-    | "-" expr                          → neg
+    | expr @sp "+" @sp expr             → add
+    | expr @sp "-" @sp expr             → sub
+    | expr @sp "*" @sp expr             → mul
+    | expr @sp "/" @sp expr             → div
+    | expr @sp "`div`" @sp expr         → intDiv
+    | expr @sp "`mod`" @sp expr         → mod
+    | "-" @nsp expr                     → neg
     -- Operators (comparison)
-    | expr "==" expr                    → eq
-    | expr "/=" expr                    → neq
-    | expr "<" expr                     → lt
-    | expr ">" expr                     → gt
-    | expr "<=" expr                    → le
-    | expr ">=" expr                    → ge
+    | expr @sp "==" @sp expr            → eq
+    | expr @sp "/=" @sp expr            → neq
+    | expr @sp "<" @sp expr             → lt
+    | expr @sp ">" @sp expr             → gt
+    | expr @sp "<=" @sp expr            → le
+    | expr @sp ">=" @sp expr            → ge
     -- Operators (logical)
-    | expr "&&" expr                    → and
-    | expr "||" expr                    → or
+    | expr @sp "&&" @sp expr            → and
+    | expr @sp "||" @sp expr            → or
     | "not" expr                        → not
     -- Function composition/application
-    | expr "." expr                     → compose
-    | expr "$" expr                     → dollarApp
+    | expr @sp "." @sp expr             → compose
+    | expr @sp "$" @sp expr             → dollarApp
     -- Do notation
-    | "do" doStmt+                      → doExpr
-    | "do" "{" doStmt+ "}"              → doExprBraces
+    | "do" @nl @indent doStmt+ @dedent  → doExpr
+    | "do" "{" @sp doStmt+ @sp "}"      → doExprBraces
     -- Monadic
-    | expr ">>=" expr                   → bind
-    | expr ">>" expr                    → seqOp
+    | expr @sp ">>=" @sp expr           → bind
+    | expr @sp ">>" @sp expr            → seqOp
     | "return" expr                     → returnExpr
     | "pure" expr                       → pureExpr
     -- Maybe
@@ -94,47 +97,47 @@ piece CoreTerms
     | "error" <string>                  → errorExpr
     | "undefined"                       → undefinedExpr
     -- Parentheses
-    | "(" expr ")"                      → paren
+    | "(" @nsp expr @nsp ")"            → paren
     -- Type annotation
-    | expr "::" type                    → typeAnn
+    | expr @sp "::" @sp type            → typeAnn
     -- Record syntax
-    | <ident> "{" fieldBind+ "}"        → recordCtor
-    | expr "{" fieldBind+ "}"           → recordUpdate
+    | <ident> @sp "{" @sp fieldBind+ @sp "}" → recordCtor
+    | expr @sp "{" @sp fieldBind+ @sp "}" → recordUpdate
     -- Field access
-    | expr "." <ident>                  → fieldAccess
+    | expr @nsp "." @nsp <ident>        → fieldAccess
     ;
 
-  exprList ::= expr ("," expr)*         → exprList ;
+  exprList ::= expr ("," @sp expr)*     → exprList ;
   op ::= "+" | "-" | "*" | "/" | "." | "$" | "==" | "<" | ">" | ":" | "++" → op ;
 
 -----------------------------------------------------
 -- Let Bindings
 -----------------------------------------------------
 piece LetBindings
-  letBind ::= <ident> "=" expr          → letBind
-            | <ident> pattern* "=" expr → funBind
-            | <ident> pattern* guards   → funBindGuards
+  letBind ::= <ident> @sp "=" @sp expr @nl → letBind
+            | <ident> pattern* @sp "=" @sp expr @nl → funBind
+            | <ident> pattern* guards @nl → funBindGuards
             ;
   guards ::= guard+                     → guards ;
-  guard ::= "|" expr "=" expr           → guard ;
+  guard ::= "|" expr @sp "=" @sp expr   → guard ;
 
 -----------------------------------------------------
 -- Do Notation
 -----------------------------------------------------
 piece DoNotation
-  doStmt ::= <ident> "<-" expr          → doBind
-           | "let" letBind+             → doLet
-           | "let" "{" letBind+ "}"     → doLetBraces
-           | expr                       → doExpr
+  doStmt ::= <ident> @sp "<-" @sp expr @nl → doBind
+           | "let" @nl @indent letBind+ @dedent → doLet
+           | "let" "{" @sp letBind+ @sp "}" → doLetBraces
+           | expr @nl                   → doExpr
            ;
 
 -----------------------------------------------------
 -- List Comprehension
 -----------------------------------------------------
 piece ListComprehension
-  qual ::= <ident> "<-" expr            → genQual
+  qual ::= <ident> @sp "<-" @sp expr    → genQual
          | expr                         → filterQual
-         | "let" <ident> "=" expr       → letQual
+         | "let" <ident> @sp "=" @sp expr → letQual
          ;
 
 -----------------------------------------------------
@@ -143,17 +146,17 @@ piece ListComprehension
 -----------------------------------------------------
 piece Types
   type ::= <ident>                      → tyVar
-         | "(" <ident> type+ ")"        → tyApp
-         | type "->" type               → tyFun
-         | "(" typeList ")"             → tyTuple
-         | "[" type "]"                 → tyList
+         | "(" @nsp <ident> type+ @nsp ")" → tyApp
+         | type @sp "->" @sp type       → tyFun
+         | "(" @nsp typeList @nsp ")"   → tyTuple
+         | "[" @nsp type @nsp "]"       → tyList
          | "Maybe" type                 → tyMaybe
          | "Either" type type           → tyEither
          | "IO" type                    → tyIO
-         | "forall" <ident>+ "." type   → tyForall
-         | "(" type ")"                 → tyParen
+         | "forall" <ident>+ @sp "." @sp type → tyForall
+         | "(" @nsp type @nsp ")"       → tyParen
          ;
-  typeList ::= type ("," type)*         → typeList ;
+  typeList ::= type ("," @sp type)*     → typeList ;
 
 -----------------------------------------------------
 -- Patterns
@@ -167,25 +170,25 @@ piece Patterns
             | "True"                    → patTrue
             | "False"                   → patFalse
             | <ident> pattern*          → patCtor
-            | "(" patternList ")"       → patTuple
-            | "[" patternList "]"       → patList
+            | "(" @nsp patternList @nsp ")" → patTuple
+            | "[" @nsp patternList @nsp "]" → patList
             | "[]"                      → patNil
-            | pattern ":" pattern       → patCons
-            | pattern "@" pattern       → patAs
-            | "(" pattern ")"           → patParen
-            | <ident> "{" fieldPat+ "}" → patRecord
+            | pattern @sp ":" @sp pattern → patCons
+            | pattern @sp "@" @sp pattern → patAs
+            | "(" @nsp pattern @nsp ")" → patParen
+            | <ident> @sp "{" @sp fieldPat+ @sp "}" → patRecord
             ;
-  patternList ::= pattern ("," pattern)* → patternList ;
-  fieldPat ::= <ident> "=" pattern      → fieldPat ;
-  caseAlt ::= pattern "->" expr         → caseAlt
-            | pattern guards            → caseAltGuards
+  patternList ::= pattern ("," @sp pattern)* → patternList ;
+  fieldPat ::= <ident> @sp "=" @sp pattern → fieldPat ;
+  caseAlt ::= pattern @sp "->" @sp expr @nl → caseAlt
+            | pattern guards @nl        → caseAltGuards
             ;
 
 -----------------------------------------------------
 -- Field Bindings (Records)
 -----------------------------------------------------
 piece Records
-  fieldBind ::= <ident> "=" expr        → fieldBind ;
+  fieldBind ::= <ident> @sp "=" @sp expr → fieldBind ;
 
 -----------------------------------------------------
 -- Declarations
@@ -199,15 +202,15 @@ piece Declarations
     | "data" <ident> tyVarList? "where" @nl @indent gadtCon* @dedent derivingClause? @nl
       → gadtDecl
     -- Newtype
-    | "newtype" <ident> tyVarList? "=" <ident> type derivingClause? @nl
+    | "newtype" <ident> tyVarList? @sp "=" @sp <ident> type derivingClause? @nl
       → newtypeDecl
     -- Type synonym
-    | "type" <ident> tyVarList? "=" type @nl
+    | "type" <ident> tyVarList? @sp "=" @sp type @nl
       → typeSynDecl
     -- Function definition
-    | <ident> "::" type @nl
+    | <ident> @sp "::" @sp type @nl
       → typeSigDecl
-    | <ident> pattern* "=" expr whereClause? @nl
+    | <ident> pattern* @sp "=" @sp expr whereClause? @nl
       → funDecl
     | <ident> pattern* guards whereClause? @nl
       → funDeclGuards
@@ -234,34 +237,34 @@ piece Declarations
     ;
 
   dataCon ::= <ident> type*             → dataCon
-            | <ident> "{" fieldDecl+ "}" → dataConRecord
+            | <ident> @sp "{" @sp fieldDecl+ @sp "}" → dataConRecord
             ;
-  gadtCon ::= <ident> "::" type @nl     → gadtCon ;
-  fieldDecl ::= <ident> "::" type       → fieldDecl ;
+  gadtCon ::= <ident> @sp "::" @sp type @nl → gadtCon ;
+  fieldDecl ::= <ident> @sp "::" @sp type → fieldDecl ;
   tyVarList ::= <ident>+                → tyVarList ;
-  derivingClause ::= @indent "deriving" @nsp "(" <ident> ("," <ident>)* ")" @dedent → derivingClause
+  derivingClause ::= @indent "deriving" @nsp "(" @nsp <ident> ("," @sp <ident>)* @nsp ")" @dedent → derivingClause
                    | @indent "deriving" <ident> @dedent → derivingClauseSimple
                    ;
-  context ::= "(" constraint ("," constraint)* ")" "=>" → context
-            | constraint "=>"           → contextSimple
+  context ::= "(" @nsp constraint ("," @sp constraint)* @nsp ")" @sp "=>" → context
+            | constraint @sp "=>"       → contextSimple
             ;
   constraint ::= <ident> type+          → constraint ;
-  classMethod ::= <ident> "::" type     → classMethod ;
-  instMethod ::= <ident> pattern* "=" expr → instMethod ;
-  whereClause ::= "where" letBind+      → whereClause ;
-  modulePath ::= <ident> ("." <ident>)* → modulePath ;
-  exports ::= "(" exportItem ("," exportItem)* ")" → exports ;
+  classMethod ::= <ident> @sp "::" @sp type @nl → classMethod ;
+  instMethod ::= <ident> pattern* @sp "=" @sp expr @nl → instMethod ;
+  whereClause ::= "where" @nl @indent letBind+ @dedent → whereClause ;
+  modulePath ::= <ident> ("." @nsp <ident>)* → modulePath ;
+  exports ::= "(" @nsp exportItem ("," @sp exportItem)* @nsp ")" → exports ;
   exportItem ::= <ident>                → exportItem
-               | <ident> "(..)"         → exportAll
+               | <ident> @nsp "(..)"    → exportAll
                | "module" <ident>       → exportModule
                ;
   qualified ::= "qualified"             → qualified ;
-  importSpec ::= "(" importItem ("," importItem)* ")" → importSpec
-               | "hiding" "(" importItem ("," importItem)* ")" → importHiding
+  importSpec ::= "(" @nsp importItem ("," @sp importItem)* @nsp ")" → importSpec
+               | "hiding" "(" @nsp importItem ("," @sp importItem)* @nsp ")" → importHiding
                | "as" <ident>           → importAs
                ;
   importItem ::= <ident>                → importItem
-               | <ident> "(..)"         → importItemAll
+               | <ident> @nsp "(..)"    → importItemAll
                ;
 
 -----------------------------------------------------

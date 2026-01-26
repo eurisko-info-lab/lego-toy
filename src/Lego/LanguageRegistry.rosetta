@@ -1,0 +1,238 @@
+-----------------------------------------------------
+-- LanguageRegistry.rosetta: Dynamic Language Registration System
+--
+-- Provides a flexible way to register and load grammar files
+-- for different target languages without modifying Runtime.
+--
+-- Usage:
+--   Register a new language, then load all registered grammars,
+--   then parse files with the appropriate grammar.
+-----------------------------------------------------
+
+import Grammar;
+
+-----------------------------------------------------
+-- Language Configuration
+-----------------------------------------------------
+
+adt LanguageConfig {
+  MkLanguageConfig : String       -- grammarPath
+                  -> String       -- fileExtension
+                  -> String       -- startProduction
+                  -> List String  -- excludePatterns
+                  -> String       -- description
+                  -> LanguageConfig
+}
+
+-- Accessors for LanguageConfig
+rewrite configGrammarPath:
+  (configGrammarPath (MkLanguageConfig $path $ext $start $excl $desc)) ~> $path ;
+
+rewrite configFileExtension:
+  (configFileExtension (MkLanguageConfig $path $ext $start $excl $desc)) ~> $ext ;
+
+rewrite configStartProduction:
+  (configStartProduction (MkLanguageConfig $path $ext $start $excl $desc)) ~> $start ;
+
+rewrite configExcludePatterns:
+  (configExcludePatterns (MkLanguageConfig $path $ext $start $excl $desc)) ~> $excl ;
+
+rewrite configDescription:
+  (configDescription (MkLanguageConfig $path $ext $start $excl $desc)) ~> $desc ;
+
+-----------------------------------------------------
+-- Loaded Language (with grammar)
+-----------------------------------------------------
+
+adt LoadedLanguage {
+  MkLoadedLanguage : LanguageConfig -> LoadedGrammar -> LoadedLanguage
+}
+
+-- Accessors
+rewrite loadedLangConfig:
+  (loadedLangConfig (MkLoadedLanguage $config $grammar)) ~> $config ;
+
+rewrite loadedLangGrammar:
+  (loadedLangGrammar (MkLoadedLanguage $config $grammar)) ~> $grammar ;
+
+-----------------------------------------------------
+-- Registry: List of (name, config) pairs
+-----------------------------------------------------
+
+adt Registry {
+  EmptyRegistry : Registry,
+  RegistryCons  : String -> LanguageConfig -> Registry -> Registry
+}
+
+-- Create empty registry
+rewrite registryEmpty:
+  registryEmpty ~> EmptyRegistry ;
+
+-- Register a new language
+rewrite registryRegister:
+  (registryRegister $reg $name $config) ~>
+    (RegistryCons $name $config $reg) ;
+
+-- Get language config by name
+rewrite registryGetEmpty:
+  (registryGet EmptyRegistry $name) ~> None ;
+
+rewrite registryGetFound:
+  (registryGet (RegistryCons $name $config $rest) $name) ~>
+    (Some $config) ;
+
+rewrite registryGetMiss:
+  (registryGet (RegistryCons $n1 $config $rest) $n2) ~>
+    (registryGet $rest $n2)
+  when (not (eq $n1 $n2)) ;
+
+-- Get language config by file extension
+rewrite registryGetByExtensionEmpty:
+  (registryGetByExtension EmptyRegistry $ext) ~> None ;
+
+rewrite registryGetByExtensionFound:
+  (registryGetByExtension (RegistryCons $name $config $rest) $ext) ~>
+    (if (eq (configFileExtension $config) $ext)
+        (Some (Pair $name $config))
+        (registryGetByExtension $rest $ext)) ;
+
+-- List all registered language names
+rewrite registryNamesEmpty:
+  (registryNames EmptyRegistry) ~> Nil ;
+
+rewrite registryNamesCons:
+  (registryNames (RegistryCons $name $config $rest)) ~>
+    (Cons $name (registryNames $rest)) ;
+
+-----------------------------------------------------
+-- Default Registry with built-in languages
+-----------------------------------------------------
+
+rewrite defaultRegistry:
+  defaultRegistry ~>
+    (registryRegister
+      (registryRegister
+        (registryRegister registryEmpty
+          "lego"
+          (MkLanguageConfig
+            "./src/Lego/Lego.lego"
+            ".lego"
+            "File.legoFile"
+            (Cons "./test/lego/Bootstrap.lego"
+              (Cons "./src/Lego/Lego.lego"
+                (Cons "./src/Rosetta/Rosetta.lego"
+                  (Cons "./src/Rosetta/Lean.lego" Nil))))
+            "Lego grammar and rule files"))
+        "rosetta"
+        (MkLanguageConfig
+          "./src/Rosetta/Rosetta.lego"
+          ".rosetta"
+          "File.rosettaFile"
+          Nil
+          "Rosetta IR files for multi-target codegen"))
+      "lean"
+      (MkLanguageConfig
+        "./src/Rosetta/Lean.lego"
+        ".lean"
+        "Module.module"
+        (Cons "./.lake/*" (Cons "./.cache/*" Nil))
+        "Lean 4 source files")) ;
+
+-----------------------------------------------------
+-- Loaded Grammars Map
+-----------------------------------------------------
+
+adt LoadedGrammars {
+  EmptyLoadedGrammars : LoadedGrammars,
+  LoadedGrammarsCons  : String -> LoadedLanguage -> LoadedGrammars -> LoadedGrammars
+}
+
+-- Load a single language grammar
+rewrite loadLanguage:
+  (loadLanguage $baseGrammar $name $config) ~>
+    (case (readFile (configGrammarPath $config))
+      (Some $content)
+        (case (parseWithGrammar $baseGrammar $content)
+          (Some $ast)
+            (let $prods (extractProductions $ast)
+              (let $tokProds (extractTokenProductions $ast)
+                (let $mergedProds (append $prods (grammarProds $baseGrammar))
+                  (let $mergedTokProds (append $tokProds (grammarTokProds $baseGrammar))
+                    (let $syms (extractSymbols $mergedProds)
+                      (let $kws (extractKeywords $mergedProds)
+                        (Ok (MkLoadedLanguage $config
+                              (MkGrammar $mergedProds $mergedTokProds $syms 
+                                        (configStartProduction $config))))))))))
+          None (Err (concat "Failed to parse " (configGrammarPath $config))))
+      None (Err (concat "Cannot read file " (configGrammarPath $config)))) ;
+
+-- Load all languages in registry
+rewrite loadAllLanguagesEmpty:
+  (loadAllLanguages EmptyRegistry $baseGrammar) ~> (Ok EmptyLoadedGrammars) ;
+
+rewrite loadAllLanguagesCons:
+  (loadAllLanguages (RegistryCons $name $config $rest) $baseGrammar) ~>
+    (case (loadLanguage $baseGrammar $name $config)
+      (Ok $loaded)
+        (case (loadAllLanguages $rest $baseGrammar)
+          (Ok $restLoaded) (Ok (LoadedGrammarsCons $name $loaded $restLoaded))
+          (Err $e) (Err $e))
+      (Err $e) (Err $e)) ;
+
+-- Get loaded grammar by name
+rewrite getGrammarEmpty:
+  (getGrammar EmptyLoadedGrammars $name) ~> None ;
+
+rewrite getGrammarFound:
+  (getGrammar (LoadedGrammarsCons $name $lang $rest) $name) ~>
+    (Some $lang) ;
+
+rewrite getGrammarMiss:
+  (getGrammar (LoadedGrammarsCons $n1 $lang $rest) $n2) ~>
+    (getGrammar $rest $n2)
+  when (not (eq $n1 $n2)) ;
+
+-- Get loaded grammar by file extension
+rewrite getGrammarByExtensionEmpty:
+  (getGrammarByExtension EmptyLoadedGrammars $ext) ~> None ;
+
+rewrite getGrammarByExtensionCons:
+  (getGrammarByExtension (LoadedGrammarsCons $name $lang $rest) $ext) ~>
+    (if (eq (configFileExtension (loadedLangConfig $lang)) $ext)
+        (Some (Pair $name $lang))
+        (getGrammarByExtension $rest $ext)) ;
+
+-----------------------------------------------------
+-- File Parsing with Registry
+-----------------------------------------------------
+
+-- Parse a file using appropriate grammar based on extension
+rewrite parseFileWithRegistry:
+  (parseFileWithRegistry $grammars $path) ~>
+    (let $ext (fileExtension $path)
+      (case (getGrammarByExtension $grammars $ext)
+        (Some (Pair $name $lang))
+          (case (readFile $path)
+            (Some $content)
+              (case (parseWithGrammar (loadedLangGrammar $lang) $content)
+                (Some $ast) (Ok $ast)
+                None (Err "parse failed"))
+            None (Err (concat "Cannot read file " $path)))
+        None (Err (concat "No grammar registered for extension: " $ext)))) ;
+
+-- Helper to extract file extension
+rewrite fileExtension:
+  (fileExtension $path) ~>
+    (if (endsWith $path ".lego") ".lego"
+    (if (endsWith $path ".rosetta") ".rosetta"
+    (if (endsWith $path ".lean") ".lean"
+    ""))) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "registry_get_empty": (registryGet EmptyRegistry "foo") ~~> None ;
+
+test "registry_names": (registryNames (RegistryCons "a" (MkLanguageConfig "p" ".a" "s" Nil "") EmptyRegistry)) ~~> (Cons "a" Nil) ;
+

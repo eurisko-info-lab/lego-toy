@@ -110,68 +110,71 @@ token Token
 -- Core Terms
 -- Basic Scala expressions
 -- Structured for precedence: term > orExpr > andExpr > cmpExpr > addExpr > mulExpr > unaryExpr > postfixExpr > atomExpr
+--
+-- BIDIRECTIONAL: parse . print = print . parse = id
+-- Layout markers (@nl, @indent, @dedent, @sp, @nsp) guide printing.
 -----------------------------------------------------
 piece CoreTerms
   -- Top level: function types (right-associative)
-  term ::= orExpr "=>" term               → tyFun
+  term ::= orExpr @sp "=>" @sp term        → tyFun
          | orExpr                          → term
          ;
   
   -- Logical or
-  orExpr ::= andExpr "||" orExpr           → or
+  orExpr ::= andExpr @sp "||" @sp orExpr   → or
            | andExpr                       → orExpr
            ;
   
   -- Logical and
-  andExpr ::= cmpExpr "&&" andExpr         → and
+  andExpr ::= cmpExpr @sp "&&" @sp andExpr → and
             | cmpExpr                      → andExpr
             ;
   
   -- Comparison (non-associative)
-  cmpExpr ::= addExpr "==" addExpr         → eq
-            | addExpr "!=" addExpr         → neq
-            | addExpr "<" addExpr          → lt
-            | addExpr ">" addExpr          → gt
-            | addExpr "<=" addExpr         → le
-            | addExpr ">=" addExpr         → ge
+  cmpExpr ::= addExpr @sp "==" @sp addExpr → eq
+            | addExpr @sp "!=" @sp addExpr → neq
+            | addExpr @sp "<" @sp addExpr  → lt
+            | addExpr @sp ">" @sp addExpr  → gt
+            | addExpr @sp "<=" @sp addExpr → le
+            | addExpr @sp ">=" @sp addExpr → ge
             | addExpr                      → cmpExpr
             ;
   
   -- Additive (left-associative via iteration)
   addExpr ::= mulExpr addOp*               → addExpr ;
-  addOp ::= "+" mulExpr                    → addOp
-          | "-" mulExpr                    → subOp
-          | "++" mulExpr                   → concatOp
-          | "::" mulExpr                   → consOp
+  addOp ::= @sp "+" @sp mulExpr            → addOp
+          | @sp "-" @sp mulExpr            → subOp
+          | @sp "++" @sp mulExpr           → concatOp
+          | @sp "::" @sp mulExpr           → consOp
           ;
   
   -- Multiplicative
   mulExpr ::= unaryExpr mulOp*             → mulExpr ;
-  mulOp ::= "*" unaryExpr                  → mulOp
-          | "/" unaryExpr                  → divOp
-          | "%" unaryExpr                  → modOp
+  mulOp ::= @sp "*" @sp unaryExpr          → mulOp
+          | @sp "/" @sp unaryExpr          → divOp
+          | @sp "%" @sp unaryExpr          → modOp
           ;
   
   -- Unary
-  unaryExpr ::= "!" postfixExpr            → not
-              | "-" postfixExpr            → neg
+  unaryExpr ::= "!" @nsp postfixExpr       → not
+              | "-" @nsp postfixExpr       → neg
               | postfixExpr                → unaryExpr
               ;
   
   -- Postfix: method calls, field access, projections
   postfixExpr ::= appExpr postfixOp*       → postfixExpr ;
-  postfixOp ::= "." <ident> "(" termList? ")" → methodCall
-              | "." <ident>                → select
-              | "._1"                      → fst
-              | "._2"                      → snd
-              | "." "_" <number>           → projN
-              | "match" "{" caseClause* "}" → matchOp
+  postfixOp ::= @nsp "." @nsp <ident> @nsp "(" @nsp termList? @nsp ")" → methodCall
+              | @nsp "." @nsp <ident>      → select
+              | @nsp "._1"                 → fst
+              | @nsp "._2"                 → snd
+              | @nsp "." "_" @nsp <number> → projN
+              | @sp "match" @sp "{" @nl @indent caseClause* @dedent "}" → matchOp
               ;
   
   -- Application and type application
   appExpr ::= atomExpr appArg*             → appExpr ;
-  appArg ::= "(" termList? ")"             → appArg
-           | "[" typeList "]"              → typeArg
+  appArg ::= @nsp "(" @nsp termList? @nsp ")" → appArg
+           | @nsp "[" @nsp typeList @nsp "]" → typeArg
            ;
   
   -- Atoms: literals, identifiers, compound expressions
@@ -187,91 +190,93 @@ piece CoreTerms
     | "Nil"                                → nilLit
     | "_"                                  → hole
     -- Lambdas
-    | "(" paramList ")" "=>" term          → lam
-    | <ident> "=>" term                    → lamSimple
-    | "{" paramList "=>" term "}"          → lamBlock
+    | "(" @nsp paramList @nsp ")" @sp "=>" @sp term → lam
+    | <ident> @sp "=>" @sp term            → lamSimple
+    | "{" @sp paramList @sp "=>" @sp term @sp "}" → lamBlock
     -- Conditionals
-    | "if" term "then" term "else" term    → ifExpr
-    | "if" "(" term ")" term "else" term   → ifExprParen
+    | "if" term "then" @sp term @sp "else" @sp term → ifExpr
+    | "if" @sp "(" @nsp term @nsp ")" @sp term @sp "else" @sp term → ifExprParen
     -- For comprehensions
-    | "for" "{" forGen* "}" "yield" term   → forYield
-    | "for" "{" forGen* "}" term           → forDo
+    | "for" @sp "{" @nl @indent forGen* @dedent "}" @sp "yield" @sp term → forYield
+    | "for" @sp "{" @nl @indent forGen* @dedent "}" @sp term → forDo
     -- Option/List constructors
-    | "Some" "(" term ")"                  → someLit
-    | "List" "(" termList? ")"             → listLit
+    | "Some" @nsp "(" @nsp term @nsp ")"   → someLit
+    | "List" @nsp "(" @nsp termList? @nsp ")" → listLit
     -- New/throw/try
-    | "new" <ident> "(" termList? ")"      → newExpr
+    | "new" <ident> @nsp "(" @nsp termList? @nsp ")" → newExpr
     | "throw" term                         → throwExpr
-    | "try" term "catch" "{" caseClause* "}" finallyClause? → tryExpr
+    | "try" @sp term @sp "catch" @sp "{" @nl @indent caseClause* @dedent "}" finallyClause? → tryExpr
     -- Block and val expressions
-    | "{" stmt* term "}"                   → block
-    | "val" <ident> typeAnn? "=" term term? → valExpr
+    | "{" @nl @indent stmt* term @dedent "}" → block
+    | "val" <ident> typeAnn? @sp "=" @sp term term? → valExpr
     -- Tuple/parens (disambiguation handled by termList)
-    | "(" term ")"                         → paren
-    | "(" termList ")"                     → tuple
+    | "(" @nsp term @nsp ")"               → paren
+    | "(" @nsp termList @nsp ")"           → tuple
     ;
 
-  termList ::= term ("," term)*            → termList ;
-  stmt ::= term ";"?                       → stmtExpr
-         | "val" <ident> typeAnn? "=" term ";"? → stmtVal
-         | "var" <ident> typeAnn? "=" term ";"? → stmtVar
+  termList ::= term ("," @sp term)*        → termList ;
+  stmt ::= term ";"? @nl                   → stmtExpr
+         | "val" <ident> typeAnn? @sp "=" @sp term ";"? @nl → stmtVal
+         | "var" <ident> typeAnn? @sp "=" @sp term ";"? @nl → stmtVar
          ;
 
 -----------------------------------------------------
 -- Types
 -- Scala type expressions with proper precedence
 -- type > unionTy > intersectTy > funTy > atomTy
+--
+-- BIDIRECTIONAL: parse . print = print . parse = id
 -----------------------------------------------------
 piece Types
   type ::= unionTy                         → type ;
   
-  unionTy ::= intersectTy "|" unionTy      → tyUnion
+  unionTy ::= intersectTy @sp "|" @sp unionTy → tyUnion
             | intersectTy                  → unionTy
             ;
   
-  intersectTy ::= funTy "&" intersectTy    → tyIntersect
+  intersectTy ::= funTy @sp "&" @sp intersectTy → tyIntersect
                 | funTy                    → intersectTy
                 ;
   
-  funTy ::= atomTy "=>" funTy              → tyFun
+  funTy ::= atomTy @sp "=>" @sp funTy      → tyFun
           | atomTy                         → funTy
           ;
   
-  atomTy ::= <ident> "[" typeList "]"      → tyApp
+  atomTy ::= <ident> @nsp "[" @nsp typeList @nsp "]" → tyApp
            | <ident>                       → tyVar
-           | "(" typeList ")"              → tyTuple
-           | "(" type ")"                  → tyParen
+           | "(" @nsp typeList @nsp ")"    → tyTuple
+           | "(" @nsp type @nsp ")"        → tyParen
            | "Any"                         → tyAny
            | "Nothing"                     → tyNothing
            | "Unit"                        → tyUnit
-           | "?" "=>" type                 → tyContextFun
+           | "?" @sp "=>" @sp type         → tyContextFun
            ;
   
-  typeList ::= type ("," type)*            → typeList ;
-  typeAnn ::= ":" type                     → typeAnn ;
+  typeList ::= type ("," @sp type)*        → typeList ;
+  typeAnn ::= @sp ":" @sp type             → typeAnn ;
 
 -----------------------------------------------------
 -- Parameters
 -- Function/method parameters with defaults and variance
 -----------------------------------------------------
 piece Parameters
-  param ::= <ident> ":" type "=" term      → paramDefault
-          | <ident> ":" type               → param
+  param ::= <ident> @sp ":" @sp type @sp "=" @sp term → paramDefault
+          | <ident> @sp ":" @sp type       → param
           | <ident>                        → paramUntyped
-          | "using" <ident> ":" type       → paramUsing
+          | "using" <ident> @sp ":" @sp type → paramUsing
           ;
-  paramList ::= (param ("," param)*)?      → paramList ;
+  paramList ::= (param ("," @sp param)*)?  → paramList ;
   
   -- Type parameters with variance and bounds
-  typeParam ::= "+" <ident> boundClause?   → typeParamCovar
-              | "-" <ident> boundClause?   → typeParamContra
+  typeParam ::= "+" @nsp <ident> boundClause? → typeParamCovar
+              | "-" @nsp <ident> boundClause? → typeParamContra
               | <ident> boundClause?       → typeParam
               ;
-  boundClause ::= "<:" type                → upperBound
-                | ">:" type                → lowerBound
-                | "<:" type ">:" type      → bothBounds
+  boundClause ::= @sp "<:" @sp type        → upperBound
+                | @sp ">:" @sp type        → lowerBound
+                | @sp "<:" @sp type @sp ">:" @sp type → bothBounds
                 ;
-  typeParamList ::= "[" typeParam ("," typeParam)* "]" → typeParamList ;
+  typeParamList ::= "[" @nsp typeParam ("," @sp typeParam)* @nsp "]" → typeParamList ;
   
   -- Visibility modifiers
   visibility ::= "private" scopeQual?      → visPrivate
@@ -294,23 +299,23 @@ piece Patterns
             | "_"                       → patWild
             | <number>                  → patLit
             | <string>                  → patStr
-            | <ident> "(" patternList ")" → patCtor
-            | "(" patternList ")"       → patTuple
-            | pattern "::" pattern      → patCons
-            | pattern "@" pattern       → patAs
-            | pattern ":" type          → patTyped
+            | <ident> @nsp "(" @nsp patternList @nsp ")" → patCtor
+            | "(" @nsp patternList @nsp ")" → patTuple
+            | pattern @sp "::" @sp pattern → patCons
+            | pattern @sp "@" @sp pattern → patAs
+            | pattern @sp ":" @sp type  → patTyped
             ;
-  patternList ::= pattern ("," pattern)* → patternList ;
-  caseClause ::= "case" pattern guard? "=>" term → caseClause ;
-  guard ::= "if" term                   → guard ;
+  patternList ::= pattern ("," @sp pattern)* → patternList ;
+  caseClause ::= "case" pattern guard? @sp "=>" @sp term @nl → caseClause ;
+  guard ::= @sp "if" term               → guard ;
 
 -----------------------------------------------------
 -- For Comprehension
 -----------------------------------------------------
 piece ForComprehension
-  forGen ::= <ident> "<-" term          → forBind
-           | "if" term                  → forFilter
-           | <ident> "=" term           → forVal
+  forGen ::= <ident> @sp "<-" @sp term @nl → forBind
+           | "if" term @nl              → forFilter
+           | <ident> @sp "=" @sp term @nl → forVal
            ;
 
 -----------------------------------------------------

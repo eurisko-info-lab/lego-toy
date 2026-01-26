@@ -35,34 +35,50 @@ adt Rule {
 
 -----------------------------------------------------
 -- Runtime State
+--
+-- Extended to hold multiple grammars:
+-- - grammar: Lego.lego grammar for .lego files
+-- - rosettaGrammar: Rosetta.lego grammar for .rosetta files
+-- - leanGrammar: Lean.lego grammar for .lean files
 -----------------------------------------------------
 
 adt Runtime {
-  MkRuntime : LoadedGrammar -> List Rule -> Runtime
+  MkRuntime : LoadedGrammar     -- Lego grammar
+           -> LoadedGrammar     -- Rosetta grammar
+           -> LoadedGrammar     -- Lean grammar
+           -> List Rule         -- Loaded rules
+           -> Runtime
 }
 
--- Get grammar from runtime
+-- Get Lego grammar from runtime
 rewrite rtGrammar:
-  (rtGrammar (MkRuntime $grammar $rules)) ~> $grammar ;
+  (rtGrammar (MkRuntime $grammar $rosetta $lean $rules)) ~> $grammar ;
+
+-- Get Rosetta grammar from runtime
+rewrite rtRosettaGrammar:
+  (rtRosettaGrammar (MkRuntime $grammar $rosetta $lean $rules)) ~> $rosetta ;
+
+-- Get Lean grammar from runtime
+rewrite rtLeanGrammar:
+  (rtLeanGrammar (MkRuntime $grammar $rosetta $lean $rules)) ~> $lean ;
 
 -- Get rules from runtime
 rewrite rtRules:
-  (rtRules (MkRuntime $grammar $rules)) ~> $rules ;
+  (rtRules (MkRuntime $grammar $rosetta $lean $rules)) ~> $rules ;
 
 -----------------------------------------------------
 -- Bootstrap Loading
 -----------------------------------------------------
 
 -- Load Bootstrap.lego using hardcoded grammar
+-- Returns just the grammar (not full Runtime) for composition
 rewrite loadBootstrap:
   (loadBootstrap $content) ~>
     (case (parseBootstrap $content)
       (Some $ast) 
         (let $prods (extractProductions $ast)
-          (let $rules (extractRules $ast)
-            (Some (MkRuntime 
-                    (MkGrammar $prods Nil Nil "File.legoFile")
-                    $rules))))
+          (let $tokProds (extractTokenProductions $ast)
+            (Some (MkGrammar $prods $tokProds Nil "File.legoFile"))))
       None None) ;
 
 -- Parse Bootstrap.lego with hardcoded grammar (built-in)
@@ -74,32 +90,52 @@ rewrite parseBootstrap:
 -- Load Lego.lego (after bootstrap)
 -----------------------------------------------------
 
+-- Load Lego.lego using Bootstrap grammar, returns merged grammar
 rewrite loadLego:
-  (loadLego $bootstrapRt $content) ~>
-    (case (parseLegoFile $bootstrapRt $content)
+  (loadLego $bootstrapGrammar $content) ~>
+    (case (parseWithGrammar $bootstrapGrammar $content)
       (Some $ast)
         (let $prods (extractProductions $ast)
-          (let $rules (extractRules $ast)
-            (let $bootstrapProds (rtGrammar $bootstrapRt)
-              (Some (MkRuntime
-                      (MkGrammar (append $prods (grammarProds $bootstrapProds)) Nil Nil "File.legoFile")
-                      (append $rules (rtRules $bootstrapRt)))))))
+          (let $tokProds (extractTokenProductions $ast)
+            (let $mergedProds (append $prods (grammarProds $bootstrapGrammar))
+              (let $mergedTokProds (append $tokProds (grammarTokProds $bootstrapGrammar))
+                (Some (MkGrammar $mergedProds $mergedTokProds 
+                                 (extractSymbols $mergedProds) "File.legoFile"))))))
       None None) ;
 
 -----------------------------------------------------
--- Parsing with Runtime Grammar
+-- Load Rosetta.lego (after Lego.lego)
 -----------------------------------------------------
 
-rewrite parseLegoFile:
-  (parseLegoFile $rt $content) ~>
-    (parseWithGrammar (rtGrammar $rt) $content) ;
+-- Load Rosetta.lego using Lego grammar, returns merged grammar
+rewrite loadRosetta:
+  (loadRosetta $legoGrammar $content) ~>
+    (case (parseWithGrammar $legoGrammar $content)
+      (Some $ast)
+        (let $prods (extractProductions $ast)
+          (let $tokProds (extractTokenProductions $ast)
+            (let $mergedProds (append $prods (grammarProds $legoGrammar))
+              (let $mergedTokProds (append $tokProds (grammarTokProds $legoGrammar))
+                (Some (MkGrammar $mergedProds $mergedTokProds
+                                 (extractSymbols $mergedProds) "File.rosettaFile"))))))
+      None None) ;
 
--- Parse with error handling
-rewrite parseLegoFileE:
-  (parseLegoFileE $rt $content) ~>
-    (case (parseWithGrammar (rtGrammar $rt) $content)
-      (ParseOk $t $s) (Ok $t)
-      (ParseFail $msg $s) (Err $msg)) ;
+-----------------------------------------------------
+-- Load Lean.lego (after Lego.lego)
+-----------------------------------------------------
+
+-- Load Lean.lego using Lego grammar, returns merged grammar
+rewrite loadLean:
+  (loadLean $legoGrammar $content) ~>
+    (case (parseWithGrammar $legoGrammar $content)
+      (Some $ast)
+        (let $prods (extractProductions $ast)
+          (let $tokProds (extractTokenProductions $ast)
+            (let $mergedProds (append $prods (grammarProds $legoGrammar))
+              (let $mergedTokProds (append $tokProds (grammarTokProds $legoGrammar))
+                (Some (MkGrammar $mergedProds $mergedTokProds
+                                 (extractSymbols $mergedProds) "Module.module"))))))
+      None None) ;
 
 -----------------------------------------------------
 -- Load a Language from .lego file with Inheritance
@@ -293,15 +329,106 @@ rewrite tokenToStringSym:
 -- Full Bootstrap Chain
 -----------------------------------------------------
 
--- Initialize runtime: load Bootstrap.lego then Lego.lego
+-- Initialize runtime: load Bootstrap.lego then Lego.lego then Rosetta.lego then Lean.lego
 rewrite initRuntime:
-  (initRuntime $bootstrapContent $legoContent) ~>
+  (initRuntime $bootstrapContent $legoContent $rosettaContent $leanContent) ~>
     (case (loadBootstrap $bootstrapContent)
       (Some $bootstrapRt)
         (case (loadLego $bootstrapRt $legoContent)
-          (Some $legoRt) (Ok $legoRt)
+          (Some $legoGrammar)
+            (case (loadRosetta $legoGrammar $rosettaContent)
+              (Some $rosettaGrammar)
+                (case (loadLean $legoGrammar $leanContent)
+                  (Some $leanGrammar)
+                    (Ok (MkRuntime $legoGrammar $rosettaGrammar $leanGrammar 
+                                   (append (extractRules $legoContent)
+                                           (append (extractRules $rosettaContent)
+                                                   (extractRules $leanContent)))))
+                  None (Err "failed to load Lean.lego"))
+              None (Err "failed to load Rosetta.lego"))
           None (Err "failed to load Lego.lego"))
       None (Err "failed to load Bootstrap.lego")) ;
+
+-- Quiet initialization (no logging) - same as initRuntime but silent
+rewrite initRuntimeQuiet:
+  (initRuntimeQuiet $bootstrapContent $legoContent $rosettaContent $leanContent) ~>
+    (initRuntime $bootstrapContent $legoContent $rosettaContent $leanContent) ;
+
+-----------------------------------------------------
+-- Singleton Pattern (optional caching)
+-----------------------------------------------------
+
+-- A cached runtime state (mutable cell conceptually)
+adt RuntimeCache {
+  CacheEmpty : RuntimeCache,
+  CacheFull  : Runtime -> RuntimeCache
+}
+
+-- Initialize once and reuse (reduces repeated loading)
+rewrite initSingleton:
+  (initSingleton $cache $bootstrapContent $legoContent $rosettaContent $leanContent $quiet) ~>
+    (case $cache
+      CacheEmpty 
+        (let $result (if $quiet 
+                        (initRuntimeQuiet $bootstrapContent $legoContent $rosettaContent $leanContent)
+                        (initRuntime $bootstrapContent $legoContent $rosettaContent $leanContent))
+          (case $result
+            (Ok $rt) (Pair (CacheFull $rt) $rt)
+            (Err $e) (Pair CacheEmpty (Err $e))))
+      (CacheFull $rt) (Pair (CacheFull $rt) $rt)) ;
+
+-----------------------------------------------------
+-- File Parsing Helpers
+-----------------------------------------------------
+
+-- Parse .lego file using Lego grammar
+rewrite parseLegoFile:
+  (parseLegoFile $rt $content) ~>
+    (parseWithGrammar (rtGrammar $rt) $content) ;
+
+-- Parse .rosetta file using Rosetta grammar
+rewrite parseRosettaFile:
+  (parseRosettaFile $rt $content) ~>
+    (parseWithGrammar (rtRosettaGrammar $rt) $content) ;
+
+-- Parse .lean file using Lean grammar
+rewrite parseLeanFile:
+  (parseLeanFile $rt $content) ~>
+    (parseWithGrammar (rtLeanGrammar $rt) $content) ;
+
+-- Parse with error handling
+rewrite parseLegoFileE:
+  (parseLegoFileE $rt $content) ~>
+    (case (parseWithGrammar (rtGrammar $rt) $content)
+      (ParseOk $t $s) (Ok $t)
+      (ParseFail $msg $s) (Err $msg)) ;
+
+rewrite parseRosettaFileE:
+  (parseRosettaFileE $rt $content) ~>
+    (case (parseWithGrammar (rtRosettaGrammar $rt) $content)
+      (ParseOk $t $s) (Ok $t)
+      (ParseFail $msg $s) (Err $msg)) ;
+
+rewrite parseLeanFileE:
+  (parseLeanFileE $rt $content) ~>
+    (case (parseWithGrammar (rtLeanGrammar $rt) $content)
+      (ParseOk $t $s) (Ok $t)
+      (ParseFail $msg $s) (Err $msg)) ;
+
+-- Convenience: initialize and parse a file in one step
+rewrite initAndParse:
+  (initAndParse $path $bootstrapContent $legoContent $rosettaContent $leanContent) ~>
+    (case (initRuntime $bootstrapContent $legoContent $rosettaContent $leanContent)
+      (Ok $rt)
+        (case (readFile $path)
+          (Some $content)
+            (if (endsWith $path ".rosetta")
+                (parseRosettaFileE $rt $content)
+            (if (endsWith $path ".lean")
+                (parseLeanFileE $rt $content)
+                (parseLegoFileE $rt $content)))
+          None (Err (concat "Cannot read file " $path)))
+      (Err $e) (Err $e)) ;
 
 -----------------------------------------------------
 -- Tests

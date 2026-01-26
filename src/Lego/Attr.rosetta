@@ -1,20 +1,29 @@
 -----------------------------------------------------
--- Lego.Attr: Attribute Grammars as Catamorphisms + Paramorphisms
+-- Lego.Attr: Attribute Grammars as Named F-Algebras
 --
 -- Mathematical Foundation:
---   Synthesized (Syn) = Catamorphism: F-algebra A, cata alg : Fix F → A
---   Inherited   (Inh) = Paramorphism: para coalg : (Fix F, A) → A
---   Both        = Hylomorphism: ana ∘ cata
+--   Synthesized (Syn) = Catamorphism: cata alg : μF → A
+--   Inherited   (Inh) = Paramorphism: para alg : μF → A (with context)
+--   Both        = Hylomorphism: hylo alg coalg
 --
--- Pushout Compatibility:
---   (L₁, A₁) ⊔ (L₂, A₂) = (L₁ ⊔ L₂, A₁ ⋈ A₂)
---   where A₁ ⋈ A₂ is the coproduct of attribute algebras
+-- This module builds on the recursion schemes in Algebra.rosetta.
+-- An attribute is simply a *named* F-algebra, allowing us to:
+--   1. Give semantic meaning to the algebra (e.g., "type", "value")
+--   2. Compose multiple attributes (coproduct of algebras)
+--   3. Support language pushouts: (L₁, A₁) ⊔ (L₂, A₂) = (L₁ ⊔ L₂, A₁ ⋈ A₂)
+--
+-- See Algebra.rosetta for: FAlgebra, cata, para, ana, hylo
 -----------------------------------------------------
 
-import Grammar;
+import Algebra;
 
 -----------------------------------------------------
 -- Attribute Flow Direction
+--
+-- Determines which recursion scheme to use:
+--   Syn    → cata (bottom-up fold)
+--   Inh    → para (top-down with context)
+--   SynInh → both passes
 -----------------------------------------------------
 
 adt AttrFlow {
@@ -150,11 +159,31 @@ rewrite findRuleMiss:
 
 -----------------------------------------------------
 -- Catamorphism: Synthesized Attribute Evaluation
+--
+-- Uses cata from Algebra.rosetta.
+-- Synthesized = bottom-up fold: children evaluated first,
+-- then parent rule uses child results.
 -----------------------------------------------------
 
--- Bottom-up evaluation of synthesized attributes
--- cata alg : Fix F → A where alg : F A → A
+-- Convert AttrDef to FAlgebra for synthesized evaluation
+rewrite attrDefToSynAlgebra:
+  (attrDefToSynAlgebra (MkAttrDef $attrName $flow $ty $rules)) ~>
+    (MkFAlgebra
+      (Lam x . EmptyAttrEnv)  -- Var: no attributes
+      (Lam s . EmptyAttrEnv)  -- Lit: no attributes
+      (Lam prod childEnvs .   -- Con: merge child envs, apply rule
+        (let env (foldl attrEnvMerge EmptyAttrEnv childEnvs)
+         (match (findRule prod Empty $rules)
+           (Some (MkAttrRule $p $t $expr))
+             (attrEnvInsert env Empty $attrName (evalAttrExpr $expr env))
+           None env)))) ;
 
+-- Evaluate synthesized attribute using cata
+rewrite evalSyn:
+  (evalSyn $def $term) ~>
+    (cata (attrDefToSynAlgebra $def) $term) ;
+
+-- Legacy direct rules (for compatibility)
 rewrite evalSynVar:
   (evalSyn $def (Var $x)) ~> EmptyAttrEnv ;
 
@@ -180,11 +209,36 @@ rewrite evalSynConHelper:
 
 -----------------------------------------------------
 -- Paramorphism: Inherited Attribute Evaluation
+--
+-- Uses para from Algebra.rosetta.
+-- Inherited = top-down with context: parent evaluated first,
+-- then child rules can reference parent environment.
 -----------------------------------------------------
 
--- Top-down evaluation of inherited attributes
--- para coalg : (Fix F, A) → A
+-- Convert AttrDef to ParaAlgebra for inherited evaluation
+rewrite attrDefToInhAlgebra:
+  (attrDefToInhAlgebra (MkAttrDef $attrName $flow $ty $rules) $parentEnv) ~>
+    (MkParaAlgebra
+      (Lam x . $parentEnv)        -- Var: inherit parent env
+      (Lam s . $parentEnv)        -- Lit: inherit parent env
+      (Lam prod childPairs .      -- Con: compute child envs from parent + rules
+        (foldWithIndex
+          (Lam idx pair env .
+            (let child (Fst pair)
+             (let childResult (Snd pair)
+              (match (findRule prod (PathCon (concat "child" (toString idx)) Empty) $rules)
+                (Some (MkAttrRule $p $t $expr))
+                  (attrEnvMerge env (attrEnvInsert EmptyAttrEnv $t $attrName (evalAttrExpr $expr env)))
+                None (attrEnvMerge env childResult)))))
+          $parentEnv
+          childPairs))) ;
 
+-- Evaluate inherited attribute using para
+rewrite evalInh:
+  (evalInh $def $term $parentEnv) ~>
+    (para (attrDefToInhAlgebra $def $parentEnv) $term) ;
+
+-- Legacy direct rules (for compatibility)
 rewrite evalInhVar:
   (evalInh $def (Var $x) $parentEnv) ~> $parentEnv ;
 

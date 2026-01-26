@@ -261,6 +261,98 @@ def errorTests : IO (List TestResult) := do
 
 end ErrorTests
 
+/-! ## Unicode Handling Tests -/
+
+section UnicodeTests
+
+/-- Test that Unicode identifiers are handled correctly -/
+def testUnicodeIdent : IO TestResult := do
+  let rt ← Lego.Runtime.init
+  -- Greek letters in identifiers
+  let input := "lang Αlpha :=\n  piece Βeta\n    γ ::= \"δ\" ;\n"
+  let tokens := Lego.Loader.tokenizeForGrammar rt.grammar input
+  -- Should have some identifier tokens with Unicode
+  let hasUnicode := tokens.any fun t => match t with
+    | .ident s => s.any (fun c => c.val > 127)
+    | _ => false
+  return assertTrue "unicode_ident" hasUnicode s!"Tokens: {tokens.length}"
+
+/-- Test that Unicode operators and symbols work -/
+def testUnicodeOperators : IO TestResult := do
+  let rt ← Lego.Runtime.init
+  -- Unicode arrows and math symbols
+  let input := "lang Test :=\n  piece Core\n    x ::= \"→\" | \"λ\" | \"∀\" ;\n"
+  let tokens := Lego.Loader.tokenizeForGrammar rt.grammar input
+  -- Should have literal tokens with Unicode
+  let hasUnicodeOp := tokens.any fun t => match t with
+    | .lit s => s.any (fun c => c.val > 127)
+    | _ => false
+  return assertTrue "unicode_operators" hasUnicodeOp s!"Tokens: {tokens.length}"
+
+/-- Test that emoji and special Unicode are handled -/
+def testUnicodeEmoji : IO TestResult := do
+  let rt ← Lego.Runtime.init
+  -- Emoji in string literals
+  let input := "lang Test :=\n  piece Core\n    x ::= \"🎉\" ;\n"
+  let tokens := Lego.Loader.tokenizeForGrammar rt.grammar input
+  return assertTrue "unicode_emoji" (tokens.length > 5) s!"Tokens: {tokens.length}"
+
+def unicodeTests : IO (List TestResult) := do
+  let t1 ← testUnicodeIdent
+  let t2 ← testUnicodeOperators
+  let t3 ← testUnicodeEmoji
+  return [t1, t2, t3]
+
+end UnicodeTests
+
+/-! ## Edge Case Tests -/
+
+section EdgeCaseTests
+
+/-- Test empty input handling -/
+def testEmptyInput : IO TestResult := do
+  let rt ← Lego.Runtime.init
+  let input := ""
+  let tokens := Lego.Loader.tokenizeForGrammar rt.grammar input
+  return assertTrue "empty_input" (tokens.isEmpty) s!"Tokens: {tokens.length}"
+
+/-- Test whitespace-only input -/
+def testWhitespaceOnly : IO TestResult := do
+  let rt ← Lego.Runtime.init
+  let input := "   \n\n\t\t  \n"
+  let tokens := Lego.Loader.tokenizeForGrammar rt.grammar input
+  -- Whitespace should produce few or no semantic tokens
+  return assertTrue "whitespace_only" (tokens.length <= 5) s!"Tokens: {tokens.length}"
+
+/-- Test deeply nested structures -/
+def testDeepNesting : IO TestResult := do
+  let rt ← Lego.Runtime.init
+  -- Nested parentheses in rules
+  let input := "lang Test :=\n  piece Core\n    x ::= \"(\" \"(\" \"(\" \"(\" \"a\" \")\" \")\" \")\" \")\" ;\n"
+  match Lego.Loader.parseWithGrammarE rt.grammar input with
+  | .error e => return assertTrue "deep_nesting" false s!"Parse failed: {toString e}"
+  | .ok _ => return assertTrue "deep_nesting" true "Parsed nested structure"
+
+/-- Test very long identifier -/
+def testLongIdentifier : IO TestResult := do
+  let rt ← Lego.Runtime.init
+  let longName := String.mk (List.replicate 100 'a')
+  let input := s!"lang {longName} :=\n  piece Core\n    x ::= \"a\" ;\n"
+  let tokens := Lego.Loader.tokenizeForGrammar rt.grammar input
+  let hasLongIdent := tokens.any fun t => match t with
+    | .ident s => s.length >= 100
+    | _ => false
+  return assertTrue "long_identifier" hasLongIdent s!"Tokens: {tokens.length}"
+
+def edgeCaseTests : IO (List TestResult) := do
+  let t1 ← testEmptyInput
+  let t2 ← testWhitespaceOnly
+  let t3 ← testDeepNesting
+  let t4 ← testLongIdentifier
+  return [t1, t2, t3, t4]
+
+end EdgeCaseTests
+
 /-! ## Main Test Runner -/
 
 def printResults (category : String) (results : List TestResult) : IO Nat := do
@@ -305,6 +397,18 @@ def main : IO UInt32 := do
   let errorFailed ← printResults "Error Handling Tests" errors
   totalPassed := totalPassed + errors.length - errorFailed
   totalFailed := totalFailed + errorFailed
+
+  -- Unicode tests
+  let unicode ← unicodeTests
+  let unicodeFailed ← printResults "Unicode Handling Tests" unicode
+  totalPassed := totalPassed + unicode.length - unicodeFailed
+  totalFailed := totalFailed + unicodeFailed
+
+  -- Edge case tests
+  let edgeCases ← edgeCaseTests
+  let edgeFailed ← printResults "Edge Case Tests" edgeCases
+  totalPassed := totalPassed + edgeCases.length - edgeFailed
+  totalFailed := totalFailed + edgeFailed
 
   -- Summary
   IO.println ""

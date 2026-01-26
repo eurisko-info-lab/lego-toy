@@ -197,6 +197,55 @@ def errorCaseTests : IO (List TestResult) := do
 
 end ErrorCaseTests
 
+/-! ## Rule Composition Tests -/
+
+section RuleCompositionTests
+
+/-- Test: Rules from multiple pieces are available in runtime -/
+def testRulesFromPieces : IO TestResult := do
+  let rt ← Lego.Runtime.init
+
+  -- The runtime should have rules loaded from Lego.lego and Bootstrap.lego
+  let ruleCount := rt.rules.length
+  return assertTrue "rules_from_pieces" (ruleCount > 0) s!"Found {ruleCount} rules"
+
+/-- Test: Example file has rules when parsed -/
+def testExampleFileRules : IO TestResult := do
+  let rt ← Lego.Runtime.init
+
+  -- Parse Lambda.lego and check for DRule nodes in AST
+  match ← parseLegoFilePathE rt "./examples/Lambda.lego" with
+  | .error e => return assertTrue "example_file_rules" false s!"Parse failed: {e}"
+  | .ok ast =>
+    -- Look for DRule nodes in the AST
+    let hasRules := ast.toString.containsSubstr "DRule"
+    return assertTrue "example_file_rules" hasRules "Lambda.lego should have rules"
+
+/-- Test: Multiple example languages load correctly -/
+def testMultipleExampleLanguages : IO TestResult := do
+  let rt ← Lego.Runtime.init
+  let examples := ["./examples/Lambda.lego", "./examples/Arith.lego", "./examples/K.lego"]
+
+  let mut allLoaded := true
+  let mut failedLang := ""
+
+  for ex in examples do
+    match ← parseLegoFilePathE rt ex with
+    | .error e =>
+      allLoaded := false
+      failedLang := s!"{ex}: {e}"
+    | .ok _ => pure ()
+
+  return assertTrue "multiple_example_languages" allLoaded failedLang
+
+def ruleCompositionTests : IO (List TestResult) := do
+  let t1 ← testRulesFromPieces
+  let t2 ← testExampleFileRules
+  let t3 ← testMultipleExampleLanguages
+  return [t1, t2, t3]
+
+end RuleCompositionTests
+
 /-! ## Main Test Runner -/
 
 def printResults (category : String) (results : List TestResult) : IO Nat := do
@@ -241,6 +290,12 @@ def main : IO UInt32 := do
   let errorsFailed ← printResults "Error Case Tests" errors
   totalPassed := totalPassed + errors.length - errorsFailed
   totalFailed := totalFailed + errorsFailed
+
+  -- Rule composition tests
+  let rules ← ruleCompositionTests
+  let rulesFailed ← printResults "Rule Composition Tests" rules
+  totalPassed := totalPassed + rules.length - rulesFailed
+  totalFailed := totalFailed + rulesFailed
 
   -- Summary
   IO.println ""

@@ -106,3 +106,23 @@ lean_exe «tolean» where
 -- Multi-target pipeline: .lego/.rosetta → Lean/Rust/Haskell/Scala
 lean_exe «multi-target» where
   root := `tools.MultiTargetPipeline
+
+-- Grammar interpreter unit tests
+lean_exe «lego-test-grammar» where
+  root := `test.lean.TestGrammarInterp
+  moreLinkArgs := #["-lInit"]
+
+-- Composition unit tests
+lean_exe «lego-test-compose» where
+  root := `test.lean.TestComposition
+  moreLinkArgs := #["-lInit"]
+
+-- Integration pipeline tests
+lean_exe «lego-test-pipeline» where
+  root := `test.lean.TestIntegration
+  moreLinkArgs := #["-lInit"]
+
+-- Code generator comparison tests
+lean_exe «lego-test-codegen-compare» where
+  root := `test.lean.TestCodeGenComparison
+  moreLinkArgs := #["-lInit"]

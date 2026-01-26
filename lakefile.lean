@@ -146,3 +146,8 @@ lean_exe «lego-coverage» where
 lean_exe «lego-test-algebra» where
   root := `test.lean.TestAlgebra
   moreLinkArgs := #["-lInit"]
+
+-- Loader module tests
+lean_exe «lego-test-loader» where
+  root := `test.lean.TestLoaderUnit
+  moreLinkArgs := #["-lInit"]

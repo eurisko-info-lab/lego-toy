@@ -136,3 +136,8 @@ lean_exe «lego-test-codegen-compare» where
 lean_exe «lego-test-all» where
   root := `test.lean.TestAll
   moreLinkArgs := #["-lInit"]
+
+-- Coverage analysis tool
+lean_exe «lego-coverage» where
+  root := `test.lean.TestCoverage
+  moreLinkArgs := #["-lInit"]

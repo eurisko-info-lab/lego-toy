@@ -1,5 +1,26 @@
 # Test Consolidation Plan
 
+## Status: Phases 1-4 Complete ✓
+
+### Phase 1: Create Shared Test Utilities ✅
+- Created `test/lean/TestUtils.lean` with common test framework
+- Added to lakefile as `TestUtils` library
+
+### Phase 2: Migrate Test Files ✅
+- Migrated TestGrammarInterp, TestComposition, TestIntegration, TestCodeGenComparison
+- Removed ~95 lines of duplicate framework code
+
+### Phase 3: Unified Test Runner ✅
+- Created `lake exe lego-test-all` command
+- Options: `--quick`, `--verbose`, `--help`
+- Runs all 5 test suites with unified summary
+
+### Phase 4: Improved Coverage ✅
+- Added Unicode handling tests (3 tests)
+- Added edge case tests (4 tests)
+- Added rule composition tests (3 tests)
+- Total tests: 159 → 169 (quick mode)
+
 ## Current Test Inventory
 
 ### Registered Test Executables (lakefile.lean)
@@ -217,10 +238,16 @@ lake exe lego-test-all --file=TestGrammarInterp
 
 ## Migration Path
 
-1. **Week 1**: Create TestUtils.lean, migrate Test.lean to use it
-2. **Week 2**: Migrate new test files (TestGrammarInterp, TestComposition, etc.)
-3. **Week 3**: Create unified test runner, deprecate old files
-4. **Week 4**: Add missing coverage, improve error messages
+### Completed
+1. ✅ **Phase 1**: Created TestUtils.lean, added to lakefile
+2. ✅ **Phase 2**: Migrated new test files to use TestUtils
+3. ✅ **Phase 3**: Created unified test runner (`lego-test-all`)
+4. ✅ **Phase 4**: Added Unicode, edge case, and rule composition tests
+
+### Remaining
+5. **Week 5**: Migrate legacy Test.lean to use TestUtils
+6. **Week 6**: Deprecate/remove redundant test files
+7. **Week 7**: Add more comprehensive coverage (pending)
 
 ## Success Metrics
 

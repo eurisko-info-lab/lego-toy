@@ -270,3 +270,20 @@ Some errors like unused import referring to a non-existent class might not be re
 2026.01.26 16:07:22 INFO  time: compiled toy_a2f0c65cd7 in 0.39s[0m
 2026.01.26 16:08:28 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
 2026.01.26 16:08:28 INFO  time: compiled toy_a2f0c65cd7 in 0.54s[0m
+2026.01.26 19:15:06 INFO  Started: Metals version 1.6.5 in folders '/home/patrick/IdeaProjects/lego/toy' for client Visual Studio Code 1.108.1.[0m
+2026.01.26 19:15:06 INFO  Memory monitor started[0m
+2026.01.26 19:15:06 WARN  Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.[0m
+2026.01.26 19:15:06 INFO  Attempting to connect to the build server...[0m
+2026.01.26 19:15:06 INFO  Running BSP server List(/home/patrick/.local/share/coursier/bin/.scala-cli.aux, bsp, --json-options, /home/patrick/IdeaProjects/lego/toy/.scala-build/ide-options-v2.json, --json-launcher-options, /home/patrick/IdeaProjects/lego/toy/.scala-build/ide-launcher-options.json, --envs-file, /home/patrick/IdeaProjects/lego/toy/.scala-build/ide-envs.json, /home/patrick/IdeaProjects/lego/toy)[0m
+2026.01.26 19:15:06 INFO  tracing is disabled for protocol BSP, to enable tracing of incoming and outgoing JSON messages create an empty file at /home/patrick/IdeaProjects/lego/toy/.metals/bsp.trace.json or /home/patrick/.cache/metals/bsp.trace.json[0m
+2026.01.26 19:15:06 INFO  time: Connected to build server in 0.61s[0m
+2026.01.26 19:15:07 INFO  Connected to Build server: scala-cli v1.6.1[0m
+2026.01.26 19:15:06 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.26 19:15:08 WARN  Invalid text document uri received from build server: file:///home/patrick/IdeaProjects/lego/toy/tmp/test-scala/Runtime.scala[0m
+2026.01.26 19:15:08 INFO  time: compiled toy_a2f0c65cd7 in 1.43s[0m
+2026.01.26 19:15:08 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.26 19:15:08 WARN  Using H2 2.4.240 which is newer than the version Flyway has been verified with. The latest verified version of H2 is 2.3.232.[0m
+2026.01.26 19:15:08 INFO  time: indexed workspace in 1.88s[0m
+2026.01.26 19:15:08 INFO  time: compiled toy_a2f0c65cd7 in 0.5s[0m
+2026.01.26 19:15:08 INFO  compiling toy_a2f0c65cd7 (1 scala source)[0m
+2026.01.26 19:15:10 INFO  time: compiled toy_a2f0c65cd7 in 0.58s[0m

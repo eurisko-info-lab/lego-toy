@@ -456,6 +456,34 @@ def init (bootstrapPath : String := defaultBootstrapPath)
   IO.println s!"[Lego] Runtime initialized with {rt.grammar.productions.length} lego, {rt.rosettaGrammar.productions.length} rosetta, {rt.leanGrammar.productions.length} lean productions"
   return rt
 
+/-- Quiet initialization (no logging). -/
+def initQuiet (bootstrapPath : String := defaultBootstrapPath)
+             (legoPath : String := defaultLegoPath)
+             (rosettaPath : String := defaultRosettaPath)
+             (leanPath : String := defaultLeanPath) : IO Runtime := do
+  let rt ← loadBootstrapOrError bootstrapPath legoPath rosettaPath leanPath
+  return rt
+
+/-! ## Singleton Initialization (optional) -/
+
+initialize runtimeCache : IO.Ref (Option Runtime) ← IO.mkRef none
+
+/-- Initialize once and reuse the runtime (reduces repeated loading/log spam). -/
+def initSingleton (bootstrapPath : String := defaultBootstrapPath)
+                  (legoPath : String := defaultLegoPath)
+                  (rosettaPath : String := defaultRosettaPath)
+                  (leanPath : String := defaultLeanPath)
+                  (quiet : Bool := true) : IO Runtime := do
+  let cached ← runtimeCache.get
+  match cached with
+  | some rt => return rt
+  | none =>
+    let rt ← if quiet
+      then initQuiet bootstrapPath legoPath rosettaPath leanPath
+      else init bootstrapPath legoPath rosettaPath leanPath
+    runtimeCache.set (some rt)
+    return rt
+
 /-- Convenience: Initialize and parse a file in one step.
     Use this when you just need to parse a single file. -/
 def initAndParse (path : String)

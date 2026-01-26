@@ -13,6 +13,15 @@
 lang RosettaToScala :=
 
 -----------------------------------------------------
+-- Import declarations
+-- Rosetta: (DImport "import" (modulePath ...) ";")
+-- Scala: (decl (importDecl (importPath (modulePath ...))))
+-----------------------------------------------------
+piece ImportTransformScala
+  rule importToScala: (DImport "import" $path ";")
+    ~~> (decl (importDecl (importPath $path))) ;
+
+-----------------------------------------------------
 -- ADT to Enum
 -- Rosetta AST structure from parser:
 --   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")
@@ -102,12 +111,14 @@ piece TypeWrapScala
 -- Scala: def name(x: T): T = x match { case pattern => rhs }
 --
 -- Rosetta compound AST: (compound "(" f arg1 arg2... ")")
+-- Note: Types must be fully wrapped: type -> unionTy -> intersectTy -> funTy -> tyVar
+-- Note: Terms must be fully wrapped: term -> orExpr -> andExpr -> cmpExpr -> addExpr -> mulExpr -> unaryExpr -> postfixExpr
 -----------------------------------------------------
 piece RewriteTransformScala
   -- Simple rewrite: (fname (Ctor $vars...)) ~> body
   rule rewriteToDefScala: (rewriteRule "rewrite" $name ":" (compound "(" $fname $arg ")") "~>" $rhs ";")
-    ~~> (decl (defDecl $name (paramList (param "x" (tyVar Term))) (tyVar Term) 
-              (postfixExpr (appExpr (var "x")) (matchOp (caseClause (transformPatternScala $arg) (transformTermScala $rhs)))))) ;
+    ~~> (decl (defDecl $name (paramList (param "x" (type (unionTy (intersectTy (funTy (tyVar "Term"))))))) (type (unionTy (intersectTy (funTy (tyVar "Term"))))) 
+              (term (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var "x")) (matchOp (caseClause (transformPatternScala $arg) (transformTermScala $rhs))))))))))))) ;
 
   -- Fallback: produce a comment
   rule rewriteToCommentScala: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
@@ -131,26 +142,27 @@ piece PatternTransformScala
 
 -----------------------------------------------------
 -- Term transformation (Rosetta terms to Scala terms)
+-- Note: Terms must be fully wrapped: term -> orExpr -> andExpr -> cmpExpr -> addExpr -> mulExpr -> unaryExpr -> postfixExpr -> appExpr
 -----------------------------------------------------
 piece TermTransformScala
-  -- Metavariable: (metavar "$" x) becomes var x
+  -- Metavariable: (metavar "$" x) becomes var x wrapped in full term chain
   rule transformTermScalaMeta: (transformTermScala (metavar "$" $x))
-    ~~> (var $x) ;
+    ~~> (term (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var $x)))))))))) ;
 
   -- Constructor/Application: (compound "(" f args... ")")
   rule transformTermScalaApp: (transformTermScala (compound "(" $f $args... ")"))
-    ~~> (appExpr (var $f) @map transformTermArgScala $args...) ;
+    ~~> (term (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var $f) @map transformTermArgScala $args...))))))))) ;
   
   rule transformTermArgScalaMeta: (transformTermArgScala (metavar "$" $x))
     ~~> (appArg (var $x)) ;
   
   rule transformTermArgScalaCompound: (transformTermArgScala (compound "(" $inner... ")"))
-    ~~> (appArg (transformTermScala (compound "(" $inner... ")"))) ;
+    ~~> (appArg (paren (transformTermScala (compound "(" $inner... ")")))) ;
   
   rule transformTermArgScalaIdent: (transformTermArgScala $x)
     ~~> (appArg (var $x)) ;
 
   -- Simple identifier
   rule transformTermScalaIdent: (transformTermScala $x)
-    ~~> (var $x) ;
+    ~~> (term (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var $x)))))))))) ;
 

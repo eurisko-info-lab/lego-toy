@@ -13,6 +13,15 @@
 lang RosettaToHaskell :=
 
 -----------------------------------------------------
+-- Import declarations
+-- Rosetta: (DImport "import" (modulePath ...) ";")
+-- Haskell: (importDecl (modulePath ...))
+-----------------------------------------------------
+piece ImportTransformHaskell
+  rule importToHaskell: (DImport "import" $path ";")
+    ~~> (importDecl $path) ;
+
+-----------------------------------------------------
 -- ADT to Data Declaration
 -- Rosetta AST structure from parser:
 --   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")

@@ -13,6 +13,16 @@
 lang RosettaToRust :=
 
 -----------------------------------------------------
+-- Import declarations
+-- Rosetta: (DImport "import" (modulePath (ident Name) ...) ";")
+-- Rust: (useItem (usePath Name))
+-- Note: Rust uses "use" instead of "import"
+-----------------------------------------------------
+piece ImportTransformRust
+  rule importToRust: (DImport "import" (modulePath (ident $name) $rest) ";")
+    ~~> (useItem (usePath $name)) ;
+
+-----------------------------------------------------
 -- ADT to Enum
 -- Rosetta AST structure from parser:
 --   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")

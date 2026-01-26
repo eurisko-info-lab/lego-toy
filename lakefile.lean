@@ -62,6 +62,11 @@ lean_lib «ToolsLib» where
   srcDir := "tools"
   roots := #[`MultiTargetPipeline, `GrammarDrivenPipeline, `ToLean]
 
+-- Shared test utilities library
+lean_lib «TestUtils» where
+  srcDir := "test/lean"
+  roots := #[`TestUtils]
+
 lean_exe «test-grammar-driven» where
   root := `test.lean.TestGrammarDriven
 

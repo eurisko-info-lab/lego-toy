@@ -81,6 +81,11 @@ piece ConstrTransformRust
   rule transformConstrRustThreeArgs: (transformConstrRust (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b) "->" (typeExpr (typeApp $c) "->" (typeExpr (typeApp $ret)) (unit)) (unit)) (unit))))
     ~~> (enumVariantTuple $name (tupleField (tyPath $a)) (tupleField (tyPath $b)) (tupleField (tyPath $c))) ;
 
+  -- Constructor with FOUR arrows: A -> B -> C -> D -> Result
+  -- For LoadedGrammar: List Production -> List Production -> List String -> String -> LoadedGrammar
+  rule transformConstrRustFourArgs: (transformConstrRust (constr $name ":" (typeExpr (typeApp $a $aArg) "->" (typeExpr (typeApp $b $bArg) "->" (typeExpr (typeApp $c $cArg) "->" (typeExpr (typeApp $d) "->" (typeExpr (typeApp $ret)) (unit)) (unit)) (unit)) (unit))))
+    ~~> (enumVariantTuple $name (tupleField (tyGeneric $a (typeList (tyPath $aArg)))) (tupleField (tyGeneric $b (typeList (tyPath $bArg)))) (tupleField (tyGeneric $c (typeList (tyPath $cArg)))) (tupleField (tyPath $d))) ;
+
   -- Direct pass through (fallback)
   rule transformConstrRustDirect: (constr $name ":" $type)
     ~~> (enumVariantUnit $name) ;
@@ -121,6 +126,7 @@ piece RewriteTransformRust
 
 -----------------------------------------------------
 -- Pattern transformation (Rosetta patterns to Rust patterns)
+-- patTupleStruct expects (patternList ...) inside
 -----------------------------------------------------
 piece PatternTransformRust
   -- Metavariable: (metavar "$" x) becomes x
@@ -128,8 +134,9 @@ piece PatternTransformRust
     ~~> (patIdent $x) ;
 
   -- Constructor pattern: (compound "(" Ctor args... ")")
+  -- Rust patTupleStruct needs patternList: (patTupleStruct Ctor (patternList pat1 pat2...))
   rule transformPatternRustCtor: (transformPatternRust (compound "(" $ctor $args... ")"))
-    ~~> (patTupleStruct $ctor @map transformPatternRust $args...) ;
+    ~~> (patTupleStruct $ctor (patternList @map transformPatternRust $args...)) ;
 
   -- Simple identifier
   rule transformPatternRustIdent: (transformPatternRust $x)
@@ -137,6 +144,7 @@ piece PatternTransformRust
 
 -----------------------------------------------------
 -- Term transformation (Rosetta terms to Rust terms)
+-- Rust call syntax: (call fn (exprList arg1 arg2...))
 -----------------------------------------------------
 piece TermTransformRust
   -- Metavariable: (metavar "$" x) becomes var x
@@ -144,8 +152,9 @@ piece TermTransformRust
     ~~> (var $x) ;
 
   -- Constructor/Application: (compound "(" f args... ")")
+  -- Rust call needs exprList: (call (var f) (exprList arg1 arg2...))
   rule transformTermRustApp: (transformTermRust (compound "(" $f $args... ")"))
-    ~~> (callExpr (var $f) @map transformTermRust $args...) ;
+    ~~> (call (var $f) (exprList @map transformTermRust $args...)) ;
 
   -- Simple identifier
   rule transformTermRustIdent: (transformTermRust $x)

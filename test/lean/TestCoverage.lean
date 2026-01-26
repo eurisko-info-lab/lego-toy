@@ -12,6 +12,7 @@
     --tested      Show tested functions
     --all         Show all functions
     --by-file     Group by source file
+    --deps        Show dependency graph with coverage priority
     --help        Show help
 -/
 
@@ -25,6 +26,53 @@ structure Definition where
   line : Nat
   kind : String  -- "def", "structure", "inductive", etc.
   deriving Repr, BEq, Hashable
+
+/-! ## Dependency Graph -/
+
+/-- File dependency information -/
+structure FileDeps where
+  file : String
+  imports : List String
+  dependents : Nat  -- how many files depend on this one
+  deriving Repr
+
+/-- Extract module imports from file content -/
+def extractImports (content : String) : List String :=
+  let lines := content.splitOn "\n"
+  lines.filterMap fun line =>
+    let trimmed := line.trim
+    if trimmed.startsWith "import Lego." then
+      some (trimmed.drop 12)  -- "import Lego." length
+    else
+      none
+
+/-- Build dependency graph from src/Lego files -/
+def buildDepGraph (srcDir : FilePath) : IO (List FileDeps) := do
+  let mut fileImports : List (String × List String) := []
+  let entries ← srcDir.readDir
+  for entry in entries do
+    if entry.path.extension == some "lean" then
+      let fileName := entry.path.fileName.getD ""
+      let moduleName := fileName.dropRight 5  -- remove .lean
+      let content ← IO.FS.readFile entry.path
+      let imports := extractImports content
+      fileImports := (moduleName, imports) :: fileImports
+
+  -- Count dependents for each file
+  let allModules := fileImports.map (·.1)
+  let mut result : List FileDeps := []
+  for (moduleName, imports) in fileImports do
+    -- Count how many other files import this one
+    let dependentCount := fileImports.filter (fun (_, imps) => imps.contains moduleName) |>.length
+    result := { file := moduleName, imports := imports, dependents := dependentCount } :: result
+
+  return result.reverse
+
+/-- Calculate priority score: files with more dependents are more critical -/
+def priorityScore (deps : FileDeps) (testedPct : Nat) : Nat :=
+  -- Weight: dependents × (100 - coverage%)
+  -- Higher score = more critical to test
+  (deps.dependents + 1) * (100 - testedPct)
 
 structure CoverageResult where
   totalDefs : Nat
@@ -210,6 +258,42 @@ def printTested (result : CoverageResult) : IO Unit := do
     IO.println s!"  ✓ {def_.name}"
   IO.println ""
 
+/-- Print dependency graph with coverage priority -/
+def printDepsGraph (result : CoverageResult) : IO Unit := do
+  IO.println "── Dependency Graph & Test Priority ──"
+  IO.println ""
+  IO.println "  Priority is based on: (dependents + 1) × (100 - coverage%)"
+  IO.println "  Higher score = more critical to test"
+  IO.println ""
+
+  -- Build dependency graph
+  let depGraph ← buildDepGraph ⟨"src/Lego"⟩
+
+  -- Combine with coverage data
+  let mut priorityList : List (String × Nat × Nat × Nat × Nat) := []  -- (file, tested, total, dependents, priority)
+  for (file, tested, total) in result.byFile do
+    let shortFile := file.splitOn "/" |>.getLast! |>.dropRight 5  -- remove .lean
+    let deps := depGraph.find? (·.file == shortFile)
+    let dependentCount := deps.map (·.dependents) |>.getD 0
+    let coveragePct := if total > 0 then (tested * 100) / total else 100
+    let priority := (dependentCount + 1) * (100 - coveragePct)
+    priorityList := (shortFile, tested, total, dependentCount, priority) :: priorityList
+
+  -- Sort by priority (highest first)
+  let sorted := priorityList.toArray.qsort (fun a b => a.2.2.2.2 > b.2.2.2.2)
+
+  IO.println "  File                    Coverage    Deps  Priority"
+  IO.println "  ────────────────────────────────────────────────────"
+  for (file, tested, total, deps, priority) in sorted do
+    let pct := formatPercent tested total
+    let paddedFile := file ++ String.mk (List.replicate (20 - min 20 file.length) ' ')
+    let paddedPct := pct ++ String.mk (List.replicate (8 - min 8 pct.length) ' ')
+    let priorityStr := if priority > 200 then s!"🔴 {priority}" else if priority > 100 then s!"🟡 {priority}" else s!"🟢 {priority}"
+    IO.println s!"  {paddedFile} {tested}/{total} ({paddedPct})  {deps}     {priorityStr}"
+  IO.println ""
+  IO.println "  Legend: 🔴 High priority  🟡 Medium  🟢 Low"
+  IO.println ""
+
 /-! ## CLI -/
 
 structure Config where
@@ -217,6 +301,7 @@ structure Config where
   showUntested : Bool := false
   showTested : Bool := false
   showByFile : Bool := false
+  showDeps : Bool := false
   showHelp : Bool := false
 
 def parseArgs (args : List String) : Config :=
@@ -226,7 +311,8 @@ def parseArgs (args : List String) : Config :=
     | "--untested" :: rest => go { cfg with showUntested := true, showSummary := true } rest
     | "--tested" :: rest => go { cfg with showTested := true, showSummary := true } rest
     | "--by-file" :: rest => go { cfg with showByFile := true, showSummary := true } rest
-    | "--all" :: rest => go { cfg with showUntested := true, showTested := true, showByFile := true, showSummary := true } rest
+    | "--deps" :: rest => go { cfg with showDeps := true, showSummary := true } rest
+    | "--all" :: rest => go { cfg with showUntested := true, showTested := true, showByFile := true, showDeps := true, showSummary := true } rest
     | "--help" :: rest => go { cfg with showHelp := true } rest
     | "-h" :: rest => go { cfg with showHelp := true } rest
     | _ :: rest => go cfg rest
@@ -242,6 +328,7 @@ def showHelp : IO Unit := do
   IO.println "  --untested    Show untested functions"
   IO.println "  --tested      Show tested functions"
   IO.println "  --by-file     Show coverage breakdown by file"
+  IO.println "  --deps        Show dependency graph with test priority"
   IO.println "  --all         Show all information"
   IO.println "  --help, -h    Show this help"
   IO.println ""
@@ -263,6 +350,9 @@ def main (args : List String) : IO UInt32 := do
 
   if cfg.showByFile then
     printByFile result
+
+  if cfg.showDeps then
+    printDepsGraph result
 
   if cfg.showUntested then
     printUntested result

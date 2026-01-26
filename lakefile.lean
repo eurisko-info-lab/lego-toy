@@ -141,3 +141,8 @@ lean_exe «lego-test-all» where
 lean_exe «lego-coverage» where
   root := `test.lean.TestCoverage
   moreLinkArgs := #["-lInit"]
+
+-- Algebra module tests (highest dependency priority)
+lean_exe «lego-test-algebra» where
+  root := `test.lean.TestAlgebra
+  moreLinkArgs := #["-lInit"]

@@ -715,7 +715,11 @@ partial def parseGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (s
     (some (.con "unit" [], st), st.memo)
 
 /-- Interpret a GrammarExpr for printing (backward direction).
-    Uses fuel for termination. -/
+    Uses fuel for termination.
+
+    Key insight: In print mode, we match grammar elements against AST children
+    and emit corresponding surface syntax. Literals in grammar must match
+    literals in AST (consuming them), then emit the text. -/
 def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term) (acc : List Token) : Option (List Token) :=
   match fuel with
   | 0 => none  -- fuel exhausted
@@ -723,7 +727,18 @@ def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term)
   match g with
   | .mk .empty => some acc
 
-  | .mk (.lit s) => some (acc ++ [.sym s])
+  | .mk (.lit s) =>
+    -- Literal: emit the text, but check AST to see if we should consume
+    -- For printing, literals in grammar are OUTPUT tokens, not matched against AST
+    -- The AST may have the literal (to verify correctness) or be empty/unit
+    let shouldEmit := match t with
+      | .lit s' => s == s'     -- AST has literal - verify and consume
+      | .var s' => s == s'     -- Identifier matching literal
+      | .con "unit" [] => true -- Empty/optional - just output
+      | .con "seq" [] => true  -- Empty seq - just output
+      | _ => false
+    if shouldEmit then some (acc ++ [.sym s])
+    else none
 
   | .mk (.ref name) =>
     -- Handle built-in token types (TOKEN.*) specially
@@ -742,44 +757,155 @@ def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term)
       | _, _ => none
     else
       -- Use findAllProductions to combine multiple alternatives
+      dbg_trace s!"ref lookup: {name}, t={t}"
       match findAllProductions prods name with
-      | some g' => printGrammar fuel' prods g' t acc
-      | none => none
+      | some g' =>
+        dbg_trace s!"ref found production for {name}"
+        printGrammar fuel' prods g' t acc
+      | none =>
+        dbg_trace s!"ref: no production found for {name}"
+        none
 
   | .mk (.seq g1 g2) =>
-    let (t1, t2) := splitSeq t
-    match printGrammar fuel' prods g1 t1 acc with
-    | some acc' => printGrammar fuel' prods g2 t2 acc'
-    | none => none
+    -- Layout markers don't consume AST, so don't split for them
+    let isLayout := match g1 with
+      | .mk (.layout _) => true
+      | _ => false
+    -- Literals don't consume AST either - they just emit tokens
+    let isLiteral := match g1 with
+      | .mk (.lit _) => true
+      | _ => false
+    -- Check if g1 is a star pattern and g2 is only layouts
+    let g1IsStar := match g1 with
+      | .mk (.star _) => true
+      | _ => false
+    let g2IsOnlyLayout :=
+      let rec allLayout (g : GrammarExpr) : Bool := match g with
+        | .mk (.layout _) => true
+        | .mk (.seq g1' g2') => allLayout g1' && allLayout g2'
+        | _ => false
+      allLayout g2
+    let g1Desc := match g1 with
+      | .mk (.layout l) => s!"layout({l})"
+      | .mk (.star _) => "star(...)"
+      | .mk (.lit s) => s!"lit({s})"
+      | .mk (.ref r) => s!"ref({r})"
+      | .mk (.seq _ _) => "seq(...)"
+      | _ => "other"
+    let g2Desc := match g2 with
+      | .mk (.layout l) => s!"layout({l})"
+      | .mk (.star _) => "star(...)"
+      | .mk (.lit s) => s!"lit({s})"
+      | .mk (.ref r) => s!"ref({r})"
+      | .mk (.seq _ _) => "seq(...)"
+      | .mk (.empty) => "empty"
+      | .mk (.alt _ _) => "alt(...)"
+      | .mk (.bind _ _) => "bind(...)"
+      | .mk (.node _ _) => "node(...)"
+      | .mk (.cut _) => "cut(...)"
+      | .mk (.ordered _ _) => "ordered(...)"
+      | .mk (.longest _) => "longest(...)"
+    dbg_trace s!"seq: g1=star={g1IsStar}, g2={g2Desc}, g2IsOnlyLayout={g2IsOnlyLayout}"
+    if isLayout then
+      -- Layout marker: process g1 with current term (emits token), then g2 with same term
+      match printGrammar fuel' prods g1 t acc with
+      | some acc' => printGrammar fuel' prods g2 t acc'
+      | none => none
+    else if isLiteral then
+      -- Literal: emit token, pass AST unchanged to g2
+      match printGrammar fuel' prods g1 (.con "unit" []) acc with
+      | some acc' => printGrammar fuel' prods g2 t acc'
+      | none => none
+    else if g1IsStar then
+      -- Star pattern: iterate through children, match as many as possible
+      -- Pass remaining unmatched children to g2
+      dbg_trace s!"seq with star: giving full t to star"
+      let ts := match t with
+        | .con "seq" children => children
+        | .con "unit" [] => []
+        | other => [other]
+      -- Track both matched tokens and remaining children
+      let rec goStar (f : Nat) (ts : List Term) (acc : List Token) : Option (List Token × List Term) :=
+        match f, ts with
+        | 0, _ => some (acc, ts)
+        | _, [] => some (acc, [])
+        | f' + 1, t' :: rest =>
+          match g1 with
+          | .mk (.star g') =>
+            dbg_trace s!"star trying child: {t'}"
+            match printGrammar f' prods g' t' acc with
+            | some acc' =>
+              dbg_trace s!"star child matched"
+              goStar f' rest acc'
+            | none =>
+              dbg_trace s!"star child failed, returning remaining {ts.length} children"
+              some (acc, ts)  -- Star stops, return remaining children
+          | _ => some (acc, ts)  -- Not a star (shouldn't happen)
+      match goStar fuel' ts acc with
+      | some (acc', remaining) =>
+        -- g2 gets the remaining unmatched children
+        let remainingTerm := match remaining with
+          | [] => Term.con "unit" []
+          | [x] => x
+          | xs => Term.con "seq" xs
+        dbg_trace s!"star done, passing remaining {remaining.length} children to g2"
+        printGrammar fuel' prods g2 remainingTerm acc'
+      | none => none
+    else
+      -- Normal: split term between g1 and g2
+      let (t1, t2) := splitSeq t
+      dbg_trace s!"seq split: t1={t1}, t2={t2}"
+      match printGrammar fuel' prods g1 t1 acc with
+      | some acc' => printGrammar fuel' prods g2 t2 acc'
+      | none => none
 
   | .mk (.alt g1 g2) =>
     printGrammar fuel' prods g1 t acc <|> printGrammar fuel' prods g2 t acc
 
   | .mk (.star g') =>
-    match t with
-    | .con "seq" ts =>
-      let rec go (f : Nat) (ts : List Term) (acc : List Token) : Option (List Token) :=
-        match f, ts with
-        | 0, _ => some acc
-        | _, [] => some acc
-        | f' + 1, t' :: rest =>
-          match printGrammar f' prods g' t' acc with
-          | some acc' => go f' rest acc'
-          | none => none
-      go fuel' ts acc
-    | _ => some acc
+    -- Star: zero or more matches
+    -- First try to match the whole term as single item (for grammars like X* where X → seq)
+    -- Then fall back to iterating through children
+    dbg_trace s!"star input: t={t}"
+    let ts := match t with
+      | .con "seq" children => children
+      | .con "unit" [] => []
+      | other => [other]  -- Treat non-seq as single element list
+    -- Iterate through the items and try to match each
+    dbg_trace s!"star iterating over {ts.length} children: {ts}"
+    let rec go (f : Nat) (ts : List Term) (acc : List Token) : Option (List Token) :=
+      match f, ts with
+      | 0, _ => some acc
+      | _, [] => some acc
+      | f' + 1, t' :: rest =>
+        dbg_trace s!"star trying child: {t'}"
+        match printGrammar f' prods g' t' acc with
+        | some acc' =>
+          dbg_trace s!"star child matched, acc now has {acc'.length} tokens"
+          go f' rest acc'
+        | none =>
+          dbg_trace s!"star child failed, stopping with {acc.length} tokens"
+          some acc  -- Star allows zero matches, return what we have
+    go fuel' ts acc
 
   | .mk (.bind _ g') => printGrammar fuel' prods g' t acc
 
   | .mk (.node name g') =>
     -- Only succeed if the term is a node with matching name
+    dbg_trace s!"node matching: name={name}, t={t}"
     match t with
     | .con n ts =>
       if n == name then
-        let t' := Term.con "seq" ts
+        -- Single child: pass directly. Multiple children: wrap in seq.
+        let t' := if ts.length == 1 then ts.head! else Term.con "seq" ts
+        dbg_trace s!"node matched! children={ts.length}, t'={t'}"
         printGrammar fuel' prods g' t' acc
-      else none  -- Node name doesn't match
-    | _ => none  -- Not a node
+      else
+        dbg_trace s!"node name mismatch: expected {name}, got {n}"
+        none  -- Node name doesn't match
+    | _ =>
+      dbg_trace s!"node not a con"
+      none  -- Not a node
 
   -- PEG extensions
 
@@ -798,10 +924,10 @@ def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term)
   | .mk (.layout kind) =>
     -- Layout annotations produce special tokens for pretty-printing
     match kind with
-    | "nl"     => some (acc ++ [.sym "\n"])
-    | "indent" => some (acc ++ [.sym "⟨indent⟩"])  -- Placeholder - actual indent handled by formatter
-    | "dedent" => some (acc ++ [.sym "⟨dedent⟩"])
-    | "sp"     => some (acc ++ [.sym " "])
+    | "nl"     => some (acc ++ [.nl])
+    | "indent" => some (acc ++ [.indent])
+    | "dedent" => some (acc ++ [.dedent])
+    | "sp"     => some (acc ++ [.sp])
     | "nsp"    => some acc  -- No space - just succeed without adding anything
     | _        => some acc  -- Unknown layout, ignore
 

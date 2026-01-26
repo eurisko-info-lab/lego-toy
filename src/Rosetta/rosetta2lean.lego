@@ -1,0 +1,102 @@
+-----------------------------------------------------
+-- rosetta2lean.lego: Transform Rosetta AST to Lean AST
+--
+-- Rosetta is the portable IR; Lean.lego defines Lean syntax.
+-- This file bridges them with rewrite rules.
+--
+-- Usage: 
+--   1. Parse .rosetta file with Rosetta.lego grammar
+--   2. Apply these rules to transform AST
+--   3. Print with Lean.lego grammar
+-----------------------------------------------------
+
+lang RosettaToLean :=
+
+-----------------------------------------------------
+-- ADT to Inductive
+-- Rosetta AST structure from parser:
+--   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")
+-- Note: Constructors are NOT wrapped in a single node; they appear as
+--       individual children with (seq "," ...) separators.
+--
+-- Lean target AST:
+--   (inductiveDecl Name whereCtors) - when no params, no deriving
+--   (inductiveDecl Name param1 param2... whereCtors) - when params
+-- Based on test: (inductiveDecl Term (whereCtors (ctor Var params type)))
+-- 
+-- Grammar: "inductive" <ident> param* whereCtors? derivingClause?
+-- param* and whereCtors? each consume their children from AST in order.
+-- If param* is empty, no children. If whereCtors? absent, no child.
+-----------------------------------------------------
+piece AdtToInductive
+  -- ADT with NO params, NO constructors 
+  rule adtToInductiveEmptyNoParams: (adtDef "adt" $name (unit) "{" "}")
+    ~~> (inductiveDecl $name (whereCtors)) ;
+  
+  -- ADT with NO params, ONE constructor
+  rule adtToInductiveOneNoParams: (adtDef "adt" $name (unit) "{" $c1 "}")
+    ~~> (inductiveDecl $name (whereCtors (transformConstr $c1))) ;
+  
+  -- ADT with NO params, TWO constructors
+  rule adtToInductiveTwoNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) "}")
+    ~~> (inductiveDecl $name (whereCtors (transformConstr $c1) (transformConstr $c2))) ;
+  
+  -- ADT with NO params, THREE constructors  
+  rule adtToInductiveThreeNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) "}")
+    ~~> (inductiveDecl $name (whereCtors (transformConstr $c1) (transformConstr $c2) (transformConstr $c3))) ;
+
+  -- ADT with NO params, FOUR constructors
+  rule adtToInductiveFourNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) (seq "," $c4) "}")
+    ~~> (inductiveDecl $name (whereCtors (transformConstr $c1) (transformConstr $c2) (transformConstr $c3) (transformConstr $c4))) ;
+
+  -- TODO: Add rules for ADT WITH type params when needed
+  rule transformParams: (transformParams (typeParams $ps))
+    ~~> (transformParamList $ps) ;
+  rule transformParamList: (transformParamList (seq $p $rest))
+    ~~> (seq (transformParam $p) (transformParamList $rest)) ;
+  rule transformParamListOne: (transformParamList $p)
+    ~~> (transformParam $p) ;
+  rule transformParam: (transformParam (paramGroup $names $colon $type))
+    ~~> (explicitParam $names $type) ;
+
+-----------------------------------------------------
+-- Constructor transformation
+-- Rosetta: (constr Name ":" Type)
+-- Lean grammar: ctor ::= "|" <ident> param* ":" term @nl
+-- Grammar provides "|" and ":" literals; AST is: (ctor name type)
+-- When no constructor params, no children for param*.
+-----------------------------------------------------
+piece ConstrTransform
+  rule transformConstr: (transformConstr (constr $name ":" $type))
+    ~~> (ctor $name (wrapType $type)) ;
+  
+  -- Just pass through constr directly
+  rule transformConstrDirect: (constr $name ":" $type)
+    ~~> (ctor $name (wrapType $type)) ;
+
+-----------------------------------------------------
+-- Type wrapping for Lean's grammar
+-- Lean term grammar: term → arrowExpr → ... → appExpr → var
+-----------------------------------------------------
+piece TypeWrap
+  rule wrapTypeApp: (wrapType (typeExpr (typeApp $name)))
+    ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name)))))))))) ;
+  
+  rule wrapTypeSimple: (wrapType (typeApp $name))
+    ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (var $name)))))))))) ;
+
+  rule wrapTypeExpr: (wrapType (typeExpr $inner $rest))
+    ~~> (term (arrowExpr (orExpr (andExpr (cmpExpr (addExpr (mulExpr (unaryExpr (appExpr (wrapTypeInner $inner)))))))))) ;
+
+  rule wrapTypeInner: (wrapTypeInner (typeApp $name))
+    ~~> (var $name) ;
+
+-----------------------------------------------------
+-- Rewrite Rule transformation
+-- Rosetta: (rewriteRule "rewrite" name ":" lhs "~>" rhs ";")
+-- Lean:    Comment (rewrite rules don't have direct Lean syntax)
+-----------------------------------------------------
+piece RewriteTransform
+  rule rewriteToComment: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
+    ~~> (comment (concat "-- rewrite " $name)) ;
+

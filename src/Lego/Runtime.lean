@@ -374,7 +374,7 @@ where
 /-- Print a term back to source using the runtime grammar -/
 def printTerm (rt : Runtime) (t : Term) (prodName : String) : Option String :=
   match Loader.printWithGrammar rt.grammar prodName t with
-  | some tokens => some (tokens.map Token.toString |> String.intercalate " ")
+  | some tokens => some (Token.renderTokens tokens)
   | none => none
 
 /-! ## Transform Pipeline -/

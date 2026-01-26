@@ -132,6 +132,45 @@ def parseArgs (args : List String) : IO (Option Args) := do
 
   return some { sourcePaths, outDir, targets, quiet, outputMode }
 
+/-! ## Rosetta → Target Language AST Transformations
+
+    Transformation rules are defined in .lego files:
+    - src/Rosetta/rosetta2lean.lego for Lean
+    - (TODO) rosetta2scala.lego, rosetta2haskell.lego, rosetta2rust.lego
+
+    The rules are loaded at runtime and applied using Lego.Runtime.transform.
+-/
+
+/-- Cache for loaded transformation rules to avoid reloading -/
+abbrev TransformCache := Std.HashMap String (List Rule)
+
+/-- Load transformation rules for a target language.
+    Returns cached rules if already loaded. -/
+def loadTransformRulesForTarget (rt : Runtime) (lang : TargetLang)
+    (cache : IO.Ref TransformCache) : IO (Except String (List Rule)) := do
+  let path := match lang with
+    | .Lean => "./src/Rosetta/rosetta2lean.lego"
+    | .Scala => "./src/Rosetta/rosetta2scala.lego"  -- TODO: create these
+    | .Haskell => "./src/Rosetta/rosetta2haskell.lego"
+    | .Rust => "./src/Rosetta/rosetta2rust.lego"
+
+  -- Check cache first
+  let cached ← cache.get
+  if let some rules := cached.get? path then
+    return .ok rules
+
+  -- Load from file
+  match ← Runtime.loadTransformRules rt path with
+  | .error e => return .error s!"Failed to load transform rules from {path}: {e}"
+  | .ok rules =>
+    -- Cache for future use
+    cache.modify (·.insert path rules)
+    return .ok rules
+
+/-- Transform Rosetta AST for a specific target language using rule-based transformation -/
+def transformForTargetWithRules (rules : List Rule) (ast : Term) : Term :=
+  Runtime.transform rules ast
+
 /-- Get the name of an ADT definition -/
 def getAdtName (t : Term) : Option String :=
   match t with
@@ -422,7 +461,7 @@ structure ModuleResult where
 
 /-- Run pipeline for a single source file, generating per-module output -/
 def runForModule (rt : Runtime) (sourceAst : Term) (sourcePath : String) (lang : TargetLang)
-    (outDir : String) (packagePrefix : String) (_quiet : Bool := false)
+    (outDir : String) (packagePrefix : String) (transformRules : List Rule) (_quiet : Bool := false)
     : IO (Except String ModuleResult) := do
   let moduleName := extractModuleName sourcePath
 
@@ -437,19 +476,72 @@ def runForModule (rt : Runtime) (sourceAst : Term) (sourcePath : String) (lang :
   let externalDeps := getExternalDeps sourceAst |>.filter (!builtinTypes.contains ·)
   let externalCtorDeps := getExternalConstructorDeps sourceAst
 
-  -- 3. Pretty-print using grammar interpreter
+  -- 3. Transform AST for target language using .lego transformation rules
+  -- Rules are loaded from src/Rosetta/rosetta2<target>.lego
+  let targetAst := if transformRules.isEmpty then sourceAst
+                   else transformForTargetWithRules transformRules sourceAst
+  dbg_trace s!"sourceAst: {sourceAst}"
+  dbg_trace s!"targetAst: {targetAst}"
+
+  -- 4. Pretty-print using grammar interpreter
   -- The grammar's layout annotations (@nl, @indent, etc.) control formatting
-  let code := match printToString grammar "file" sourceAst with
-    | some s => s
-    | none =>
-      match printToString grammar "module" sourceAst with
+  -- For Lean, use native Lean grammar. For others, try RosettaIR piece.
+  let code := match lang with
+    | .Lean =>
+      -- Wrap declarations in a module node for the Lean grammar
+      -- Lean grammar: module ::= decl* → module
+      -- targetAst is (seq decl1 decl2 ...) or (inductiveDecl ...) for single decl
+      let moduleAst := match targetAst with
+        | .con "seq" children => Term.con "module" children
+        | .con "module" _ => targetAst  -- Already a module
+        | single => Term.con "module" [single]  -- Single declaration
+
+      dbg_trace s!"Attempting to print Lean AST: {moduleAst}"
+      match printToString grammar "Module.module" moduleAst with
+      | some s =>
+        dbg_trace s!"Printed with Module.module"
+        s
+      | none =>
+        dbg_trace s!"Module.module failed, trying module..."
+        match printToString grammar "module" moduleAst with
+        | some s =>
+          dbg_trace s!"Printed with module"
+          s
+        | none =>
+          dbg_trace s!"module failed, trying decl on original..."
+          -- Try individual declarations from original targetAst
+          match targetAst with
+          | .con "seq" children =>
+            dbg_trace s!"Found seq with {children.length} children"
+            let printed := children.filterMap fun child =>
+              dbg_trace s!"Trying to print child"
+              printToString grammar "Declarations.decl" child
+                <|> printToString grammar "decl" child
+            if printed.isEmpty then
+              s!"-- Failed to print Lean AST\n-- AST: {targetAst}"
+            else
+              "\n".intercalate printed
+          | _ =>
+            s!"-- Failed to print Lean AST\n-- AST: {targetAst}"
+    | _ =>
+      -- For other targets, use RosettaIR piece
+      match printToString grammar "RosettaIR.rosettaFile" sourceAst with
       | some s => s
       | none =>
-        match printToString grammar "program" sourceAst with
+        match printToString grammar "rosettaFile" sourceAst with
         | some s => s
-        | none => s!"-- Failed to print AST for {lang}\n-- AST: {sourceAst}"
+        | none =>
+          match printToString grammar "file" sourceAst with
+          | some s => s
+          | none =>
+            match printToString grammar "module" sourceAst with
+            | some s => s
+            | none =>
+              match printToString grammar "program" sourceAst with
+              | some s => s
+              | none => s!"-- Failed to print AST for {lang}\n-- AST: {sourceAst}"
 
-  -- 4. Build result (header will be added later when we know which modules exist)
+  -- 5. Build result (header will be added later when we know which modules exist)
   let outPath := match lang with
     | .Rust => s!"{outDir}/{moduleName.toLower}{lang.ext}"
     | _ => s!"{outDir}/{moduleName}{lang.ext}"
@@ -593,7 +685,19 @@ def runSeparate (rt : Runtime) (args : Args) : IO (Except String (List TargetRes
   let mut allResults : List TargetResult := []
   let packagePrefix := "Generated"
 
+  -- Create a cache for transformation rules
+  let transformCache ← IO.mkRef (Std.HashMap.emptyWithCapacity 4 : TransformCache)
+
   for lang in targets do
+    -- Load transformation rules for this target language
+    let transformRules ← match ← loadTransformRulesForTarget rt lang transformCache with
+      | .ok rules =>
+        unless quiet do IO.println s!"      Loaded {rules.length} transformation rules for {lang}"
+        pure rules
+      | .error e =>
+        unless quiet do IO.println s!"      ⚠ No transformation rules for {lang}: {e}"
+        pure []
+
     -- Generate all modules for this language
     let mut moduleResults : List ModuleResult := []
     for (sourcePath, ast) in sourceAsts do
@@ -608,7 +712,7 @@ def runSeparate (rt : Runtime) (args : Args) : IO (Except String (List TargetRes
         | .con "seq" children => .con "seq" (importedDefs ++ children)
         | other => .con "seq" (importedDefs ++ [other])
 
-      match ← runForModule rt combinedAst sourcePath lang outDir packagePrefix quiet with
+      match ← runForModule rt combinedAst sourcePath lang outDir packagePrefix transformRules quiet with
       | .error e =>
         unless quiet do IO.println s!"      ✗ {lang}/{extractModuleName sourcePath}: {e}"
       | .ok r =>

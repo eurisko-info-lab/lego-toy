@@ -432,7 +432,7 @@ piece Declarations
           | "{" @nsp <ident> ":" term "}" @sp     → implicitParam
           | "[" @nsp <ident> ":" term "]" @sp     → instParam
           ;
-  whereCtors ::= "where" @nl @indent ctor* @dedent → whereCtors ;
+  whereCtors ::= "where" @indent @nl ctor* @dedent → whereCtors ;
   ctor ::= "|" <ident> param* ":" term @nl        → ctor ;
   derivingClause ::= "deriving" <ident> ("," <ident>)* → derivingClause ;
   fieldDecl ::= <ident> ":" term defaultVal?      → fieldDecl ;
@@ -496,9 +496,8 @@ piece RosettaIR
                | <number> → numLit
                ;
   
-  -- A file is a sequence of declarations
+  -- A file is a sequence of declarations (for parsing Rosetta IR)
   rosettaFile ::= rosettaDecl* → seq ;
-  decl ::= rosettaDecl ;
 
 -----------------------------------------------------
 -- Tests

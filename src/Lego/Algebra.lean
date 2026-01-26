@@ -191,16 +191,47 @@ inductive Token where
   | lit    : String → Token
   | sym    : String → Token
   | number : String → Token
+  | nl     : Token              -- Newline
+  | indent : Token              -- Increase indentation
+  | dedent : Token              -- Decrease indentation
+  | sp     : Token              -- Space
   deriving Repr, BEq, Inhabited
 
 namespace Token
 
-/-- Convert token back to source text -/
+/-- Convert token back to source text (layout tokens handled by renderer) -/
 def toString : Token → String
   | .ident s  => s
   | .lit s    => s
   | .sym s    => s
   | .number s => s
+  | .nl       => "\n"
+  | .indent   => ""  -- Layout, handled by renderer
+  | .dedent   => ""  -- Layout, handled by renderer
+  | .sp       => " "
+
+/-- Render tokens to string with proper indentation handling -/
+def renderTokens (tokens : List Token) : String :=
+  let rec go (indent : Nat) (acc : String) (needSpace : Bool) (toks : List Token) : String :=
+    match toks with
+    | [] => acc
+    | t :: rest =>
+      match t with
+      | .indent => go (indent + 2) acc false rest
+      | .dedent =>
+        let newIndent := if indent >= 2 then indent - 2 else 0
+        go newIndent acc false rest
+      | .nl =>
+        let spaces := String.join (List.replicate indent " ")
+        let newAcc := acc ++ "\n" ++ spaces
+        go indent newAcc false rest
+      | .sp => go indent (acc ++ " ") false rest
+      | other =>
+        let s := Token.toString other
+        let sep := if needSpace && !acc.isEmpty then " " else ""
+        let newAcc := acc ++ sep ++ s
+        go indent newAcc true rest
+  go 0 "" false tokens
 
 end Token
 

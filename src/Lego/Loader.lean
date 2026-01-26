@@ -163,10 +163,13 @@ partial def astToGrammarExpr (nameMap : HashMap String String := HashMap.emptyWi
       some (GrammarExpr.ref special)
 
   -- Sequence: (seq g1 g2 ...)
+  -- Build right-associated sequence: seq(a, seq(b, seq(c, d)))
+  -- This is important for printing: seq(g1, g2) means g1 is first element, g2 is rest
   | .con "seq" gs =>
-    gs.foldlM (fun acc g => do
-      let g' ← astToGrammarExpr nameMap g
-      pure (GrammarExpr.seq acc g')) GrammarExpr.empty
+    match gs.filterMap (astToGrammarExpr nameMap) with
+    | [] => some GrammarExpr.empty
+    | [g] => some g
+    | gs => some (gs.foldr GrammarExpr.seq GrammarExpr.empty)
 
   -- Alternative: (alt g1 "|" g2 "|" g3 ...)
   -- Split by .lit "|" tokens, then fold into nested alts
@@ -248,7 +251,7 @@ partial def astToGrammarExpr (nameMap : HashMap String String := HashMap.emptyWi
       match converted with
       | [] => none
       | [g] => some g
-      | g :: gs => some (gs.foldl GrammarExpr.seq g)  -- avoid empty prefix
+      | gs => some (gs.foldr GrammarExpr.seq GrammarExpr.empty)  -- right-fold for printing
     if gexprs.isEmpty then none
     else some (GrammarExpr.longest gexprs)
 
@@ -267,7 +270,7 @@ partial def astToGrammarExpr (nameMap : HashMap String String := HashMap.emptyWi
       match gexprs with
       | [] => none
       | [g] => some g
-      | g :: gs => some <| gs.foldl GrammarExpr.seq g
+      | gs => some (gs.foldr GrammarExpr.seq GrammarExpr.empty)  -- right-fold for printing
 
   -- Annotated: (annotated ... "→" (ident conName))
   -- This wraps a grammar expression with a constructor name
@@ -282,7 +285,7 @@ partial def astToGrammarExpr (nameMap : HashMap String String := HashMap.emptyWi
       match gexprs with
       | [] => none
       | [g] => some (GrammarExpr.node conName g)
-      | g :: gs => some (GrammarExpr.node conName (gs.foldl GrammarExpr.seq g))
+      | gs => some (GrammarExpr.node conName (gs.foldr GrammarExpr.seq GrammarExpr.empty))  -- right-fold
     | none => none  -- malformed annotated
 
   -- Layout annotations: @nl, @indent, @dedent, @sp, @nsp
@@ -334,10 +337,11 @@ def extractGrammarExpr (nameMap : HashMap String String) (gramDecl : Term) : Opt
       let cleanArgs := stripConstructorAnnotation flatArgs
       let exprArgs := cleanArgs.drop 2 |>.dropLast  -- skip name, ::=, ;
       let gexprs := exprArgs.filterMap (astToGrammarExpr nameMap)
+      -- Build right-associated sequence for proper printing
       let baseExpr := match gexprs with
         | [] => none
         | [g] => some g  -- single expression
-        | g :: gs => some <| gs.foldl GrammarExpr.seq g  -- fold to sequence
+        | gs => some (gs.foldr GrammarExpr.seq GrammarExpr.empty)  -- right-fold for printing
       -- Wrap with node if constructor annotation present
       match conName, baseExpr with
       | some name, some g => some (GrammarExpr.node name g)
@@ -873,11 +877,11 @@ def printWithGrammar (grammar : LoadedGrammar) (prodName : String) (t : Term) : 
   match findAllProductions grammar.productions prodName with
   | some g => printGrammar defaultFuel grammar.productions g t []
   | none => none
-
-/-- Print a term to string using a loaded grammar -/
 def printToString (grammar : LoadedGrammar) (prodName : String) (t : Term) : Option String :=
   match printWithGrammar grammar prodName t with
-  | some tokens => some (tokens.map Token.toString |> String.intercalate " ")
+  | some tokens =>
+    dbg_trace s!"printToString tokens ({tokens.length})"
+    some (Token.renderTokens tokens)
   | none => none
 
 /-! ## Bootstrap Loading -/

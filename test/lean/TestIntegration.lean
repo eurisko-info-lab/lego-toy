@@ -10,28 +10,13 @@
 import Lego
 import Lego.Loader
 import Lego.Runtime
+import TestUtils
 
 open Lego
 open Lego.Loader
 open Lego.Runtime
+open Lego.Test
 open System
-
-/-! ## Test Framework -/
-
-/-- Check if a string contains a substring -/
-def String.containsSubstr (s sub : String) : Bool :=
-  (s.splitOn sub).length > 1
-
-structure TestResult where
-  name : String
-  passed : Bool
-  message : String := ""
-  deriving Repr
-
-def assertTrue (name : String) (cond : Bool) (msg : String := "") : TestResult :=
-  { name := name
-    passed := cond
-    message := if cond then "✓" else s!"✗ {msg}" }
 
 /-! ## File Discovery -/
 

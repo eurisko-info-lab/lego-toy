@@ -14,44 +14,11 @@ import Lego
 import Lego.Runtime
 import Lego.Interp
 import Lego.Bootstrap
+import TestUtils
 
 open Lego
 open Lego.Runtime
-
-/-! ## Test Framework -/
-
-structure TestResult where
-  name : String
-  passed : Bool
-  message : String := ""
-  deriving Repr
-
-def assertTrue (name : String) (cond : Bool) (msg : String := "") : TestResult :=
-  { name := name
-    passed := cond
-    message := if cond then "✓" else s!"✗ {msg}" }
-
-def assertEq [BEq α] [Repr α] (name : String) (actual expected : α) : TestResult :=
-  let passed := actual == expected
-  { name := name
-    passed := passed
-    message := if passed then "✓" else s!"✗ expected {repr expected}, got {repr actual}" }
-
-def assertOk (name : String) (result : Option α) (msg : String := "") : TestResult :=
-  match result with
-  | some _ => { name := name, passed := true, message := "✓" }
-  | none => { name := name, passed := false, message := s!"✗ expected Some, got None. {msg}" }
-
-def assertNone (name : String) (result : Option α) (msg : String := "") : TestResult :=
-  match result with
-  | none => { name := name, passed := true, message := "✓" }
-  | some _ => { name := name, passed := false, message := s!"✗ expected None, got Some. {msg}" }
-
-/-! ## String Helper -/
-
-/-- Check if a string contains a substring -/
-def String.containsSubstr (s sub : String) : Bool :=
-  (s.splitOn sub).length > 1
+open Lego.Test
 
 /-! ## Token Helpers -/
 

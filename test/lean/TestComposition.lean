@@ -13,31 +13,12 @@
 import Lego
 import Lego.Loader
 import Lego.Runtime
+import TestUtils
 
 open Lego
 open Lego.Loader
 open Lego.Runtime
-
-/-! ## Test Framework -/
-
-/-- Check if a string contains a substring -/
-def String.containsSubstr (s sub : String) : Bool :=
-  (s.splitOn sub).length > 1
-
-structure TestResult where
-  name : String
-  passed : Bool
-  message : String := ""
-  deriving Repr
-
-def assertTrue (name : String) (cond : Bool) (msg : String := "") : TestResult :=
-  { name := name
-    passed := cond
-    message := if cond then "✓" else s!"✗ {msg}" }
-
-def assertGt (name : String) (actual : Nat) (min : Nat) (msg : String := "") : TestResult :=
-  let passed := actual > min
-  assertTrue name passed s!"Expected > {min}, got {actual}. {msg}"
+open Lego.Test
 
 /-! ## Inheritance Tests -/
 

@@ -18,6 +18,7 @@ import TestUtils
 open Lego
 open Lego.Test
 open Lego.Loader
+open Std (HashMap)
 
 /-! ## Test Helpers -/
 
@@ -30,19 +31,19 @@ def con (name : String) (args : List Term) : Term := Term.con name args
 def splitByPipeTests : List TestResult :=
   -- Empty list
   let r1 := splitByPipe []
-  
+
   -- Single term (no pipe)
   let r2 := splitByPipe [term "a"]
-  
+
   -- Two alternatives
   let r3 := splitByPipe [term "a", lit "|", term "b"]
-  
-  -- Three alternatives  
+
+  -- Three alternatives
   let r4 := splitByPipe [term "a", lit "|", term "b", lit "|", term "c"]
-  
+
   -- Multiple terms in one alternative (becomes seq)
   let r5 := splitByPipe [term "a", term "b", lit "|", term "c"]
-  
+
   [
     assertEq "empty list" r1 [],
     assertEq "single term" r2 [term "a"],
@@ -58,16 +59,16 @@ def splitByPipeTests : List TestResult :=
 def splitBySlashTests : List TestResult :=
   -- Empty list
   let r1 := splitBySlash []
-  
+
   -- Single term (no slash)
   let r2 := splitBySlash [term "a"]
-  
+
   -- Two alternatives (PEG ordered)
   let r3 := splitBySlash [term "a", lit "/", term "b"]
-  
+
   -- Mixed with sequence
   let r4 := splitBySlash [term "a", term "b", lit "/", term "c"]
-  
+
   [
     assertEq "empty list" r1 [],
     assertEq "single term" r2 [term "a"],
@@ -81,19 +82,19 @@ def splitBySlashTests : List TestResult :=
 def flattenSeqTests : List TestResult :=
   -- Non-seq term
   let r1 := flattenSeq (term "a")
-  
+
   -- Simple seq
   let r2 := flattenSeq (con "seq" [term "a", term "b"])
-  
+
   -- Nested seq (left-nested)
   let r3 := flattenSeq (con "seq" [con "seq" [term "a", term "b"], term "c"])
-  
-  -- Nested seq (right-nested)  
+
+  -- Nested seq (right-nested)
   let r4 := flattenSeq (con "seq" [term "a", con "seq" [term "b", term "c"]])
-  
+
   -- Other constructor not flattened
   let r5 := flattenSeq (con "other" [term "a", term "b"])
-  
+
   [
     assertEq "non-seq unchanged" r1 [term "a"],
     assertEq "simple seq" r2.length 2,
@@ -108,7 +109,7 @@ def extractParentNamesTests : List TestResult :=
   -- No imports
   let noImports := con "DLang" [lit "lang", con "ident" [term "MyLang"], lit ":=", term "body"]
   let r1 := extractParentNames noImports
-  
+
   -- With imports
   let withImports := con "DLang" [
     lit "lang",
@@ -118,7 +119,7 @@ def extractParentNamesTests : List TestResult :=
     term "body"
   ]
   let r2 := extractParentNames withImports
-  
+
   -- Single import
   let singleImport := con "DLang" [
     lit "lang",
@@ -128,7 +129,7 @@ def extractParentNamesTests : List TestResult :=
     term "body"
   ]
   let r3 := extractParentNames singleImport
-  
+
   [
     assertEq "no imports" r1 [],
     assertEq "two parents" r2.length 2,
@@ -143,15 +144,15 @@ def extractProdNameTests : List TestResult :=
   -- Valid production - direct children, not wrapped in seq
   let valid := con "DGrammar" [con "ident" [term "expr"], lit "::=", term "body", lit ";"]
   let r1 := extractProdName "Piece" valid
-  
+
   -- Another valid
   let valid2 := con "DGrammar" [con "ident" [term "term"], lit "::=", term "body", lit ";"]
   let r2 := extractProdName "Core" valid2
-  
+
   -- Invalid (no ident)
   let invalid := con "DGrammar" [lit "something"]
   let r3 := extractProdName "Piece" invalid
-  
+
   [
     assertSome "valid prod name" r1,
     assertTrue "qualified name" (r1 == some "Piece.expr"),
@@ -165,15 +166,15 @@ def extractAnnotationTests : List TestResult :=
   -- With annotation
   let withAnno := [term "a", term "b", lit "→", con "ident" [term "MyNode"]]
   let r1 := extractAnnotationFromFlat withAnno
-  
+
   -- Without annotation
   let noAnno := [term "a", term "b", term "c"]
   let r2 := extractAnnotationFromFlat noAnno
-  
+
   -- Just arrow without ident
   let partialArg := [term "a", lit "→"]
   let r3 := extractAnnotationFromFlat partialArg
-  
+
   [
     assertSome "has annotation" r1,
     assertTrue "extracted name" (r1.map (·.1) == some "MyNode"),
@@ -188,7 +189,7 @@ def stripQuotesTests : List TestResult :=
   let r2 := stripQuotes "noquotes"
   let r3 := stripQuotes "\"\""
   -- Note: stripQuotes only handles double quotes, not single quotes
-  
+
   [
     assertEq "double quotes" r1 "hello",
     assertEq "no quotes unchanged" r2 "noquotes",
@@ -206,6 +207,86 @@ def isKeywordLikeTests : List TestResult := [
   assertFalse "operator +" (isKeywordLike "+")
 ]
 
+/-! ## resolveRefName Tests -/
+
+def resolveRefNameTests : List TestResult :=
+  let nameMap := HashMap.emptyWithCapacity
+    |>.insert "expr" "Core.expr"
+    |>.insert "term" "Core.term"
+  let r1 := resolveRefName nameMap "expr"
+  let r2 := resolveRefName nameMap "Other.expr"
+  let r3 := resolveRefName nameMap "TOKEN.ident"
+  [
+    assertEq "mapped name" r1 "Core.expr",
+    assertEq "already qualified" r2 "Other.expr",
+    assertEq "token ref preserved" r3 "TOKEN.ident"
+  ]
+
+/-! ## astToGrammarExpr Tests -/
+
+def astToGrammarExprTests : List TestResult :=
+  let nameMap := HashMap.emptyWithCapacity |>.insert "X" "Piece.X"
+  let litAst := con "lit" [con "string" [lit "\"hi\""]]
+  let chrAst := con "chr" [con "char" [lit "'\\n'"]]
+  let refAst := con "ref" [con "ident" [term "X"]]
+  let specAst := con "special" [term "<ident>"]
+  let seqAst := con "seq" [litAst, refAst]
+  let altAst := con "alt" [litAst, lit "|", refAst]
+  let r1 := astToGrammarExpr nameMap litAst
+  let r2 := astToGrammarExpr nameMap chrAst
+  let r3 := astToGrammarExpr nameMap refAst
+  let r4 := astToGrammarExpr nameMap specAst
+  let r5 := astToGrammarExpr nameMap seqAst
+  let r6 := astToGrammarExpr nameMap altAst
+  [
+    assertEq "lit parses" r1 (some (GrammarExpr.lit "hi")),
+    assertEq "char parses" r2 (some (GrammarExpr.lit "\n")),
+    assertEq "ref resolves" r3 (some (GrammarExpr.ref "Piece.X")),
+    assertEq "special ident" r4 (some (GrammarExpr.ref "TOKEN.ident")),
+    assertSome "seq parses" r5,
+    assertSome "alt parses" r6
+  ]
+
+/-! ## Constructor Annotation + Grammar Extraction Tests -/
+
+def constructorAnnotationTests : List TestResult :=
+  let flatArgs := [
+    con "ident" [term "expr"],
+    lit "::=",
+    con "lit" [con "string" [lit "\"x\""]],
+    lit "→",
+    con "ident" [term "Node"],
+    lit ";"
+  ]
+  let conName := extractConstructorAnnotation flatArgs
+  let stripped := stripConstructorAnnotation flatArgs
+  let gramDecl := con "DGrammar" flatArgs
+  let gexpr := extractGrammarExpr (HashMap.emptyWithCapacity) gramDecl
+  [
+    assertEq "extract annotation" conName (some "Node"),
+    assertEq "strip annotation length" stripped.length 4,
+    assertEq "extractGrammarExpr node" gexpr (some (GrammarExpr.node "Node" (GrammarExpr.lit "x")))
+  ]
+
+/-! ## Piece Production Tests -/
+
+def pieceProductionTests : List TestResult :=
+  let gramDecl := con "DGrammar" [
+    con "ident" [term "expr"],
+    lit "::=",
+    con "lit" [con "string" [lit "\"x\""]],
+    lit ";"
+  ]
+  let pieceDecl := con "DPiece" [lit "piece", con "ident" [term "Core"], gramDecl]
+  let names := extractPieceProductionNames pieceDecl
+  let nameMap := buildNameMap names
+  let prods := extractPieceProductions nameMap pieceDecl
+  [
+    assertEq "piece names length" names.length 1,
+    assertEq "name map resolve" (resolveRefName nameMap "expr") "Core.expr",
+    assertEq "extract productions" prods.length 1
+  ]
+
 /-! ## Test Runner -/
 
 def main : IO UInt32 := do
@@ -217,7 +298,11 @@ def main : IO UInt32 := do
     ("extractProdName", extractProdNameTests),
     ("extractAnnotationFromFlat", extractAnnotationTests),
     ("stripQuotes", stripQuotesTests),
-    ("isKeywordLike", isKeywordLikeTests)
+    ("isKeywordLike", isKeywordLikeTests),
+    ("resolveRefName", resolveRefNameTests),
+    ("astToGrammarExpr", astToGrammarExprTests),
+    ("constructorAnnotation", constructorAnnotationTests),
+    ("pieceProductions", pieceProductionTests)
   ]
 
   runAllTests "Loader Module Tests (3 Dependents)" groups

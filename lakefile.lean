@@ -151,3 +151,23 @@ lean_exe «lego-test-algebra» where
 lean_exe «lego-test-loader» where
   root := `test.lean.TestLoaderUnit
   moreLinkArgs := #["-lInit"]
+
+-- Interp module tests
+lean_exe «lego-test-interp» where
+  root := `test.lean.TestInterpUnit
+  moreLinkArgs := #["-lInit"]
+
+-- Bootstrap module tests
+lean_exe «lego-test-bootstrap» where
+  root := `test.lean.TestBootstrapUnit
+  moreLinkArgs := #["-lInit"]
+
+-- Attr module tests
+lean_exe «lego-test-attr» where
+  root := `test.lean.TestAttrUnit
+  moreLinkArgs := #["-lInit"]
+
+-- Validation module tests
+lean_exe «lego-test-validation» where
+  root := `test.lean.TestValidationUnit
+  moreLinkArgs := #["-lInit"]

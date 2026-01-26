@@ -1,0 +1,83 @@
+-----------------------------------------------------
+-- rosetta2haskell.lego: Transform Rosetta AST to Haskell AST
+--
+-- Rosetta is the portable IR; Haskell.lego defines Haskell syntax.
+-- This file bridges them with rewrite rules.
+--
+-- Usage: 
+--   1. Parse .rosetta file with Rosetta.lego grammar
+--   2. Apply these rules to transform AST
+--   3. Print with Haskell.lego grammar
+-----------------------------------------------------
+
+lang RosettaToHaskell :=
+
+-----------------------------------------------------
+-- ADT to Data Declaration
+-- Rosetta AST structure from parser:
+--   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")
+--
+-- Haskell target AST:
+--   (dataDecl Name tyVarList? dataCon1 dataCon2...)
+-- Based on test: (dataDecl Maybe (tyVarList a) (dataCon Nothing) (dataCon Just (tyVar a)))
+-- 
+-- Grammar: "data" <ident> tyVarList? @nl @indent "=" dataCon @nl ("|" dataCon @nl)* @dedent
+-----------------------------------------------------
+piece AdtToData
+  -- ADT with NO params, NO constructors 
+  rule adtToDataEmptyNoParams: (adtDef "adt" $name (unit) "{" "}")
+    ~~> (dataDecl $name) ;
+  
+  -- ADT with NO params, ONE constructor
+  rule adtToDataOneNoParams: (adtDef "adt" $name (unit) "{" $c1 "}")
+    ~~> (dataDecl $name (transformConstrHaskell $c1)) ;
+  
+  -- ADT with NO params, TWO constructors
+  rule adtToDataTwoNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) "}")
+    ~~> (dataDecl $name (transformConstrHaskell $c1) (transformConstrHaskell $c2)) ;
+  
+  -- ADT with NO params, THREE constructors  
+  rule adtToDataThreeNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) "}")
+    ~~> (dataDecl $name (transformConstrHaskell $c1) (transformConstrHaskell $c2) (transformConstrHaskell $c3)) ;
+
+  -- ADT with NO params, FOUR constructors
+  rule adtToDataFourNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) (seq "," $c4) "}")
+    ~~> (dataDecl $name (transformConstrHaskell $c1) (transformConstrHaskell $c2) (transformConstrHaskell $c3) (transformConstrHaskell $c4)) ;
+
+-----------------------------------------------------
+-- Constructor transformation
+-- Rosetta: (constr Name ":" Type)
+-- Haskell grammar: dataCon ::= <ident> type*
+-- dataCon has name followed by zero or more types
+-----------------------------------------------------
+piece ConstrTransformHaskell
+  -- Constructor with type -> dataCon with type argument
+  rule transformConstrHaskell: (transformConstrHaskell (constr $name ":" $type))
+    ~~> (dataCon $name (wrapTypeHaskell $type)) ;
+  
+  -- Direct pass through
+  rule transformConstrHaskellDirect: (constr $name ":" $type)
+    ~~> (dataCon $name (wrapTypeHaskell $type)) ;
+
+-----------------------------------------------------
+-- Type wrapping for Haskell's grammar
+-----------------------------------------------------
+piece TypeWrapHaskell
+  rule wrapTypeHaskellApp: (wrapTypeHaskell (typeExpr (typeApp $name)))
+    ~~> (tyVar $name) ;
+  
+  rule wrapTypeHaskellSimple: (wrapTypeHaskell (typeApp $name))
+    ~~> (tyVar $name) ;
+
+  rule wrapTypeHaskellExpr: (wrapTypeHaskell (typeExpr $inner $rest))
+    ~~> (tyVar $inner) ;
+
+-----------------------------------------------------
+-- Rewrite Rule transformation
+-- Rosetta: (rewriteRule "rewrite" name ":" lhs "~>" rhs ";")
+-- Haskell: Comment (rewrite rules don't have direct Haskell syntax)
+-----------------------------------------------------
+piece RewriteTransformHaskell
+  rule rewriteToCommentHaskell: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
+    ~~> (comment (concat "-- rewrite " $name)) ;
+

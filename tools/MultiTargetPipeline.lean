@@ -524,22 +524,50 @@ def runForModule (rt : Runtime) (sourceAst : Term) (sourcePath : String) (lang :
           | _ =>
             s!"-- Failed to print Lean AST\n-- AST: {targetAst}"
     | _ =>
-      -- For other targets, use RosettaIR piece
-      match printToString grammar "RosettaIR.rosettaFile" sourceAst with
-      | some s => s
+      -- For other targets, wrap in module and use target grammar
+      -- targetAst is the TRANSFORMED AST (e.g., enumDecl for Scala, dataDecl for Haskell)
+      let moduleAst := match targetAst with
+        | .con "seq" children => Term.con "module" children
+        | .con "module" _ => targetAst
+        | single => Term.con "module" [single]
+
+      dbg_trace s!"Attempting to print {lang} AST: {moduleAst}"
+      match printToString grammar "Module.module" moduleAst with
+      | some s =>
+        dbg_trace s!"Printed with Module.module"
+        s
       | none =>
-        match printToString grammar "rosettaFile" sourceAst with
-        | some s => s
+        dbg_trace s!"Module.module failed, trying module..."
+        match printToString grammar "module" moduleAst with
+        | some s =>
+          dbg_trace s!"Printed with module"
+          s
         | none =>
-          match printToString grammar "file" sourceAst with
-          | some s => s
-          | none =>
-            match printToString grammar "module" sourceAst with
+          dbg_trace s!"{lang} module failed, trying decl on children..."
+          -- Try individual declarations from transformed AST
+          match targetAst with
+          | .con "seq" children =>
+            dbg_trace s!"Found seq with {children.length} children"
+            let printed := children.filterMap fun child =>
+              dbg_trace s!"Trying to print child: {child}"
+              printToString grammar "Declarations.decl" child
+                <|> printToString grammar "decl" child
+                <|> printToString grammar "declBody" child  -- Try declBody for unwrapped decls
+            if printed.isEmpty then
+              s!"-- Failed to print {lang} AST\n-- AST: {targetAst}"
+            else
+              "\n".intercalate printed
+          | single =>
+            -- Single declaration
+            match printToString grammar "Declarations.decl" single with
             | some s => s
             | none =>
-              match printToString grammar "program" sourceAst with
+              match printToString grammar "decl" single with
               | some s => s
-              | none => s!"-- Failed to print AST for {lang}\n-- AST: {sourceAst}"
+              | none =>
+                match printToString grammar "declBody" single with
+                | some s => s
+                | none => s!"-- Failed to print {lang} AST\n-- AST: {targetAst}"
 
   -- 5. Build result (header will be added later when we know which modules exist)
   let outPath := match lang with

@@ -1,0 +1,88 @@
+-----------------------------------------------------
+-- rosetta2scala.lego: Transform Rosetta AST to Scala AST
+--
+-- Rosetta is the portable IR; Scala.lego defines Scala 3 syntax.
+-- This file bridges them with rewrite rules.
+--
+-- Usage: 
+--   1. Parse .rosetta file with Rosetta.lego grammar
+--   2. Apply these rules to transform AST
+--   3. Print with Scala.lego grammar
+-----------------------------------------------------
+
+lang RosettaToScala :=
+
+-----------------------------------------------------
+-- ADT to Enum
+-- Rosetta AST structure from parser:
+--   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")
+--
+-- Scala target AST:
+--   (decl (enumDecl Name enumCase1 enumCase2...))
+-- Based on Scala grammar: decl ::= annotation* declBody
+--   where declBody ::= ... | enumDecl
+-- 
+-- Grammar: visibility* "enum" <ident> typeParamList? extendsClause? "{" enumCase* "}"
+-----------------------------------------------------
+piece AdtToEnum
+  -- ADT with NO params, NO constructors 
+  rule adtToEnumEmptyNoParams: (adtDef "adt" $name (unit) "{" "}")
+    ~~> (decl (enumDecl $name)) ;
+  
+  -- ADT with NO params, ONE constructor
+  rule adtToEnumOneNoParams: (adtDef "adt" $name (unit) "{" $c1 "}")
+    ~~> (decl (enumDecl $name (transformConstrScala $c1))) ;
+  
+  -- ADT with NO params, TWO constructors
+  rule adtToEnumTwoNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) "}")
+    ~~> (decl (enumDecl $name (transformConstrScala $c1) (transformConstrScala $c2))) ;
+  
+  -- ADT with NO params, THREE constructors  
+  rule adtToEnumThreeNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) "}")
+    ~~> (decl (enumDecl $name (transformConstrScala $c1) (transformConstrScala $c2) (transformConstrScala $c3))) ;
+
+  -- ADT with NO params, FOUR constructors
+  rule adtToEnumFourNoParams: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) (seq "," $c4) "}")
+    ~~> (decl (enumDecl $name (transformConstrScala $c1) (transformConstrScala $c2) (transformConstrScala $c3) (transformConstrScala $c4))) ;
+
+-----------------------------------------------------
+-- Constructor transformation
+-- Rosetta: (constr Name ":" Type)
+-- Scala grammar: enumCase ::= "case" <ident> "(" paramList ")" | "case" <ident>
+-- For simple types, use enumCaseSimple. For function types, use enumCaseParams.
+-----------------------------------------------------
+piece ConstrTransformScala
+  -- Constructor with simple type (no args) -> enumCaseSimple
+  rule transformConstrScalaSimple: (transformConstrScala (constr $name ":" (typeExpr (typeApp $type))))
+    ~~> (enumCaseSimple $name) ;
+  
+  -- Constructor with type -> enumCaseParams with single param
+  rule transformConstrScalaTyped: (transformConstrScala (constr $name ":" $type))
+    ~~> (enumCaseParams $name (paramList (param value (wrapTypeScala $type)))) ;
+  
+  -- Direct pass through
+  rule transformConstrScalaDirect: (constr $name ":" $type)
+    ~~> (enumCaseParams $name (paramList (param value (wrapTypeScala $type)))) ;
+
+-----------------------------------------------------
+-- Type wrapping for Scala's grammar
+-----------------------------------------------------
+piece TypeWrapScala
+  rule wrapTypeScalaApp: (wrapTypeScala (typeExpr (typeApp $name)))
+    ~~> (tyVar $name) ;
+  
+  rule wrapTypeScalaSimple: (wrapTypeScala (typeApp $name))
+    ~~> (tyVar $name) ;
+
+  rule wrapTypeScalaExpr: (wrapTypeScala (typeExpr $inner $rest))
+    ~~> (tyVar $inner) ;
+
+-----------------------------------------------------
+-- Rewrite Rule transformation
+-- Rosetta: (rewriteRule "rewrite" name ":" lhs "~>" rhs ";")
+-- Scala:   Comment (rewrite rules don't have direct Scala syntax)
+-----------------------------------------------------
+piece RewriteTransformScala
+  rule rewriteToCommentScala: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
+    ~~> (comment (concat "// rewrite " $name)) ;
+

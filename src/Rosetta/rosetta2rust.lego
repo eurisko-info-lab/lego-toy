@@ -1,0 +1,84 @@
+-----------------------------------------------------
+-- rosetta2rust.lego: Transform Rosetta AST to Rust AST
+--
+-- Rosetta is the portable IR; Rust.lego defines Rust syntax.
+-- This file bridges them with rewrite rules.
+--
+-- Usage: 
+--   1. Parse .rosetta file with Rosetta.lego grammar
+--   2. Apply these rules to transform AST
+--   3. Print with Rust.lego grammar
+-----------------------------------------------------
+
+lang RosettaToRust :=
+
+-----------------------------------------------------
+-- ADT to Enum
+-- Rosetta AST structure from parser:
+--   (adtDef "adt" Name (unit|typeParams) "{" constr1 (seq "," constr2)... "}")
+--
+-- Rust target AST:
+--   (enumItem visibility? Name enumVariant1 enumVariant2...)
+-- Based on test: (enumItem (pubVis) Term (enumVariantUnit Var) (enumVariantTuple App ...))
+-- 
+-- Grammar: visibility? "enum" <ident> typeParamList? whereClause? "{" enumVariant* "}"
+-----------------------------------------------------
+piece AdtToEnumRust
+  -- ADT with NO params, NO constructors 
+  rule adtToEnumEmptyNoParamsRust: (adtDef "adt" $name (unit) "{" "}")
+    ~~> (enumItem (pubVis) $name) ;
+  
+  -- ADT with NO params, ONE constructor
+  rule adtToEnumOneNoParamsRust: (adtDef "adt" $name (unit) "{" $c1 "}")
+    ~~> (enumItem (pubVis) $name (transformConstrRust $c1)) ;
+  
+  -- ADT with NO params, TWO constructors
+  rule adtToEnumTwoNoParamsRust: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) "}")
+    ~~> (enumItem (pubVis) $name (transformConstrRust $c1) (transformConstrRust $c2)) ;
+  
+  -- ADT with NO params, THREE constructors  
+  rule adtToEnumThreeNoParamsRust: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) "}")
+    ~~> (enumItem (pubVis) $name (transformConstrRust $c1) (transformConstrRust $c2) (transformConstrRust $c3)) ;
+
+  -- ADT with NO params, FOUR constructors
+  rule adtToEnumFourNoParamsRust: (adtDef "adt" $name (unit) "{" $c1 (seq "," $c2) (seq "," $c3) (seq "," $c4) "}")
+    ~~> (enumItem (pubVis) $name (transformConstrRust $c1) (transformConstrRust $c2) (transformConstrRust $c3) (transformConstrRust $c4)) ;
+
+-----------------------------------------------------
+-- Constructor transformation
+-- Rosetta: (constr Name ":" Type)
+-- Rust grammar: enumVariant ::= <ident> "," | <ident> "(" tupleField* ")" ","
+-- For simple types (same as ADT name), use enumVariantUnit
+-- For types with args, use enumVariantTuple
+-----------------------------------------------------
+piece ConstrTransformRust
+  -- Constructor with type -> enumVariantTuple with field
+  rule transformConstrRust: (transformConstrRust (constr $name ":" $type))
+    ~~> (enumVariantTuple $name (tupleField (wrapTypeRust $type))) ;
+  
+  -- Direct pass through
+  rule transformConstrRustDirect: (constr $name ":" $type)
+    ~~> (enumVariantTuple $name (tupleField (wrapTypeRust $type))) ;
+
+-----------------------------------------------------
+-- Type wrapping for Rust's grammar
+-----------------------------------------------------
+piece TypeWrapRust
+  rule wrapTypeRustApp: (wrapTypeRust (typeExpr (typeApp $name)))
+    ~~> (tyPath $name) ;
+  
+  rule wrapTypeRustSimple: (wrapTypeRust (typeApp $name))
+    ~~> (tyPath $name) ;
+
+  rule wrapTypeRustExpr: (wrapTypeRust (typeExpr $inner $rest))
+    ~~> (tyPath $inner) ;
+
+-----------------------------------------------------
+-- Rewrite Rule transformation
+-- Rosetta: (rewriteRule "rewrite" name ":" lhs "~>" rhs ";")
+-- Rust:    Comment (rewrite rules don't have direct Rust syntax)
+-----------------------------------------------------
+piece RewriteTransformRust
+  rule rewriteToCommentRust: (rewriteRule "rewrite" $name ":" $lhs "~>" $rhs ";")
+    ~~> (comment (concat "// rewrite " $name)) ;
+

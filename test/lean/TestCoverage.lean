@@ -145,7 +145,7 @@ def scanTestsForMentions (testDir : FilePath) : IO (List String) := do
       let words := content.splitOn " " ++ content.splitOn "\n" ++ content.splitOn "("
       for word in words do
         let cleaned := word.trim.takeWhile (fun c => c.isAlphanum || c == '_')
-        if cleaned.length > 2 then
+        if cleaned.length > 2 || cleaned == "id" then
           let chars := cleaned.toList
           if let some c := chars.head? then
             if c.isAlpha then

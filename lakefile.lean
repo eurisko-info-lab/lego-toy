@@ -171,3 +171,18 @@ lean_exe «lego-test-attr» where
 lean_exe «lego-test-validation» where
   root := `test.lean.TestValidationUnit
   moreLinkArgs := #["-lInit"]
+
+-- Language registry tests
+lean_exe «lego-test-language-registry» where
+  root := `test.lean.TestLanguageRegistryUnit
+  moreLinkArgs := #["-lInit"]
+
+-- Runtime tests
+lean_exe «lego-test-runtime-unit» where
+  root := `test.lean.TestRuntimeUnit
+  moreLinkArgs := #["-lInit"]
+
+-- AttrEval tests
+lean_exe «lego-test-attr-eval» where
+  root := `test.lean.TestAttrEvalUnit
+  moreLinkArgs := #["-lInit"]

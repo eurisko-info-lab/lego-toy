@@ -131,3 +131,8 @@ lean_exe «lego-test-pipeline» where
 lean_exe «lego-test-codegen-compare» where
   root := `test.lean.TestCodeGenComparison
   moreLinkArgs := #["-lInit"]
+
+-- Unified test runner (runs all test suites)
+lean_exe «lego-test-all» where
+  root := `test.lean.TestAll
+  moreLinkArgs := #["-lInit"]

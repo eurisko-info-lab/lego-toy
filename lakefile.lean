@@ -32,7 +32,7 @@ lean_lib «CubicalRuntime» where
 -- Rosetta code generation pipeline
 lean_lib «Rosetta» where
   srcDir := "src"
-  roots := #[`Rosetta.Rosetta, `Rosetta.CodeGen, `Rosetta.UnifiedCodeGen]
+  roots := #[`Rosetta.Rosetta, `Rosetta.CodeGen]
 
 -- Generated Cubical files (from cubical-pipeline)
 -- Uses CubicalGen to avoid module conflicts with examples/Cubical

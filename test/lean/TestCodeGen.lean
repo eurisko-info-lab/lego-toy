@@ -1,12 +1,10 @@
 /-
-  TestCodeGen.lean: Quick test of CodeGen and UnifiedCodeGen modules
+  TestCodeGen.lean: Test CodeGen.Frag rendering
 -/
 
 import Rosetta.CodeGen
-import Rosetta.UnifiedCodeGen
 
 open CodeGen
-open UnifiedCodeGen
 
 /-- Check if a string contains a substring -/
 def String.containsSubstr (s : String) (sub : String) : Bool :=
@@ -45,99 +43,26 @@ def testSepFrag : IO Unit := do
   else
     IO.println "✓ Sep render"
 
--- Test UnifiedCodeGen with sample Terms
-open Lego (Term)
-
-def testRewriteRule : IO Unit := do
-  -- Simple rule: (Add (Zero) $n) ~> $n
-  let lhs := Term.con "Add" [Term.con "Zero" [], Term.var "$n"]
-  let rhs := Term.var "$n"
-
-  let frag := emitLeanRewriteRule "addZeroLeft" lhs rhs
-  let code := render frag
-
-  if !code.containsSubstr "def addZeroLeft" then
-    IO.eprintln s!"FAIL: emitLeanRewriteRule: missing 'def addZeroLeft'"
-    IO.eprintln s!"Got:\n{code}"
-  else if !code.containsSubstr "Option Term" then
-    IO.eprintln s!"FAIL: emitLeanRewriteRule: missing 'Option Term'"
-    IO.eprintln s!"Got:\n{code}"
+def testIndentFrag : IO Unit := do
+  let inner := Frag.Lines [.Line (.Raw "inner1"), .Line (.Raw "inner2")]
+  let f := Frag.Indent inner
+  let s := render f
+  if !s.containsSubstr "  inner1" || !s.containsSubstr "  inner2" then
+    IO.eprintln s!"FAIL: Indent render: got '{s}'"
   else
-    IO.println "✓ emitLeanRewriteRule"
-    IO.println "  Generated:"
-    for line in code.splitOn "\n" do
-      IO.println s!"    {line}"
+    IO.println "✓ Indent render"
 
-def testInductive : IO Unit := do
-  let ctors := [
-    ("Zero", []),
-    ("Succ", ["Nat"])
-  ]
-  let frag := emitLeanInductive "Nat" ctors
-  let code := render frag
-
-  if !code.containsSubstr "inductive Nat where" then
-    IO.eprintln s!"FAIL: emitLeanInductive: missing 'inductive Nat where'"
-    IO.eprintln s!"Got:\n{code}"
+def testNestedIndent : IO Unit := do
+  let level2 := Frag.Indent (.Line (.Raw "deep"))
+  let level1 := Frag.Indent (.Lines [.Line (.Raw "outer"), level2])
+  let s := render level1
+  if !s.containsSubstr "    deep" then
+    IO.eprintln s!"FAIL: Nested indent render: got '{s}'"
   else
-    IO.println "✓ emitLeanInductive"
-    IO.println "  Generated:"
-    for line in code.splitOn "\n" do
-      IO.println s!"    {line}"
-
-def testScalaADT : IO Unit := do
-  let ctors := [
-    ("Zero", []),
-    ("Succ", ["Nat"])
-  ]
-  let frag := emitScalaADT "Nat" ctors
-  let code := render frag
-
-  if !code.containsSubstr "sealed trait Nat" then
-    IO.eprintln s!"FAIL: emitScalaADT: missing 'sealed trait Nat'"
-    IO.eprintln s!"Got:\n{code}"
-  else
-    IO.println "✓ emitScalaADT"
-    IO.println "  Generated:"
-    for line in code.splitOn "\n" do
-      IO.println s!"    {line}"
-
-def testHaskellADT : IO Unit := do
-  let ctors := [
-    ("Zero", []),
-    ("Succ", ["Nat"])
-  ]
-  let frag := emitHaskellADT "Nat" ctors
-  let code := render frag
-
-  if !code.containsSubstr "data Nat" then
-    IO.eprintln s!"FAIL: emitHaskellADT: missing 'data Nat'"
-    IO.eprintln s!"Got:\n{code}"
-  else
-    IO.println "✓ emitHaskellADT"
-    IO.println "  Generated:"
-    for line in code.splitOn "\n" do
-      IO.println s!"    {line}"
-
-def testRustADT : IO Unit := do
-  let ctors := [
-    ("Zero", []),
-    ("Succ", ["Nat"])
-  ]
-  let frag := emitRustADT "Nat" ctors
-  let code := render frag
-
-  if !code.containsSubstr "pub enum Nat" then
-    IO.eprintln s!"FAIL: emitRustADT: missing 'pub enum Nat'"
-    IO.eprintln s!"Got:\n{code}"
-  else
-    IO.println "✓ emitRustADT"
-    IO.println "  Generated:"
-    for line in code.splitOn "\n" do
-      IO.println s!"    {line}"
+    IO.println "✓ Nested indent render"
 
 def main : IO Unit := do
-  IO.println "=== CodeGen Module Tests ==="
+  IO.println "=== CodeGen.Frag Rendering Tests ==="
   IO.println ""
 
   IO.println "--- Basic Frag Rendering ---"
@@ -145,18 +70,8 @@ def main : IO Unit := do
   testSeqFrag
   testLineFrag
   testSepFrag
-
-  IO.println ""
-  IO.println "--- UnifiedCodeGen Emitters ---"
-  testRewriteRule
-  IO.println ""
-  testInductive
-  IO.println ""
-  testScalaADT
-  IO.println ""
-  testHaskellADT
-  IO.println ""
-  testRustADT
+  testIndentFrag
+  testNestedIndent
 
   IO.println ""
   IO.println "=== Tests Complete ==="

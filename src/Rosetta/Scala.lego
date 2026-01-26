@@ -1,8 +1,9 @@
 -----------------------------------------------------
--- Scala.lego: Scala 3 AST Definition for Rosetta
+-- Scala.lego: Scala 3 Grammar Definition
 --
--- This defines the Scala 3 abstract syntax tree as a Lego specification.
--- It serves as the TARGET representation for rosetta2scala transformation.
+-- Bidirectional grammar for Scala 3:
+-- - PARSING: tokenizer + parser for .scala files
+-- - PRINTING: layout markers for code generation
 --
 -- Scala 3 features:
 -- - enum for ADTs (replaces sealed trait + case class)
@@ -14,121 +15,275 @@
 lang Scala :=
 
 -----------------------------------------------------
+-- Token: Character-level grammar (lexer)
+-- Defines Scala 3 tokenization including comments
+-----------------------------------------------------
+token Token
+  -- Basic ASCII character classes
+  digit  ::= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
+  lower  ::= 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+           | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+           | 'u' | 'v' | 'w' | 'x' | 'y' | 'z' ;
+  upper  ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
+           | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
+           | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' ;
+  alpha  ::= lower | upper | '_' | '$' ;
+  
+  -- Symbol characters (for operators)
+  symch  ::= '+' | '-' | '*' | '/' | '=' | '<' | '>' | '!' | '@' | '#'
+           | '%' | '^' | '&' | '|' | '~' | '?' | ':' | ';' | ','
+           | '.' | '[' | ']' | '(' | ')' | '{' | '}' | '`' | '\\' ;
+  
+  -- Identifiers (Scala allows $ and backticks)
+  ident  ::= alpha (alpha | digit)* ;
+  -- Backtick identifiers for reserved words: `type`, `match`, etc.
+  btident ::= '`' (alpha | digit | ' ')+ '`' ;
+  
+  -- Numbers (including underscores in Scala 3)
+  number ::= digit (digit | '_')* ;
+  hexnum ::= '0' ('x' | 'X') (digit | 'a' | 'b' | 'c' | 'd' | 'e' | 'f'
+                                    | 'A' | 'B' | 'C' | 'D' | 'E' | 'F')+ ;
+  
+  -- String literals
+  string ::= '"' strchar* '"' ;
+  strchar ::= '\\' escape | alpha | digit | symch | ' ' | '\'' | '\t' ;
+  escape ::= 'n' | 't' | 'r' | '\\' | '"' | '\'' | '0' | 'b' | 'f' ;
+  
+  -- Raw/interpolated strings (s"...", f"...", raw"...")
+  interpstr ::= ('s' | 'f' | 'r' 'a' 'w') '"' strchar* '"' ;
+  
+  -- Multi-line strings
+  mlstring ::= '"' '"' '"' mlchar* '"' '"' '"' ;
+  mlchar ::= alpha | digit | symch | ' ' | '\t' | '\n' | '\r' | '\'' ;
+  
+  -- Character literals
+  char ::= '\'' charinner '\'' ;
+  charinner ::= '\\' escape | alpha | digit | symch | ' ' ;
+  
+  -- Whitespace
+  ws ::= ' ' | '\t' | '\n' | '\r' ;
+  
+  -- Line comments: // ...
+  comment ::= '/' '/' nonnl* ;
+  nonnl ::= alpha | digit | symch | ' ' | '\t' | '\'' | '"' | '`' ;
+  
+  -- Block comments: /* ... */ (including doc comments /** ... */)
+  blockComment ::= '/' '*' blockInner* '*' '/' ;
+  blockInner ::= alpha | digit | symch | ' ' | '\t' | '\n' | '\r' | '\'' | '"' | '*' | '/' | '@' ;
+  
+  -- Operators (maximal munch)
+  operator ::= #longest[
+      '=' '>' '=',     -- =>=
+      '=' '=' '=',     -- ===
+      '!' '=' '=',     -- !==
+      '<' '-' '-',     -- <--
+      '-' '-' '>',     -- -->
+      '.' '_' '1',     -- ._1
+      '.' '_' '2',     -- ._2
+      '=' '>',         -- =>
+      '<' '-',         -- <-
+      '-' '>',         -- -> (for type lambdas)
+      '=' '=',         -- ==
+      '!' '=',         -- !=
+      '<' '=',         -- <=
+      '>' '=',         -- >=
+      '<' ':',         -- <: (upper bound)
+      '>' ':',         -- >: (lower bound)
+      '+' ':',         -- +: (prepend)
+      ':' '+',         -- :+ (append)
+      '+' '+',         -- ++ (concat)
+      ':' ':',         -- :: (cons)
+      '&' '&',         -- && (and)
+      '|' '|',         -- || (or)
+      '|' '>',         -- |> (pipe)
+      '.' '_',         -- ._ (tuple proj prefix)
+      '@' '@',         -- @@ (annotation)
+      '?',             -- ? (optional type)
+      '+', '-', '*', '/', '%',
+      '<', '>', '=', '!',
+      '&', '|', '^', '~',
+      '(', ')', '[', ']', '{', '}',
+      ',', '.', ':', ';', '_', '@'
+    ] ;
+
+-----------------------------------------------------
 -- Core Terms
 -- Basic Scala expressions
+-- Structured for precedence: term > orExpr > andExpr > cmpExpr > addExpr > mulExpr > unaryExpr > postfixExpr > atomExpr
 -----------------------------------------------------
 piece CoreTerms
-  term ::= 
-    -- Literals
-    <ident>                             → var
-    | <number>                          → intLit
-    | <string>                          → strLit
-    | "true"                            → trueLit
-    | "false"                           → falseLit
-    | "()"                              → unitLit
-    -- Application
-    | term "(" termList ")"             → app
-    | term "[" typeList "]"             → typeApp
-    -- Lambda
-    | "(" paramList ")" "=>" term       → lam
-    | <ident> "=>" term                 → lamSimple
-    | "{" paramList "=>" term "}"       → lamBlock
-    -- If-else
-    | "if" term "then" term "else" term → ifExpr
-    | "if" "(" term ")" term "else" term → ifExprParen
-    -- Match
-    | term "match" "{" caseClause* "}"  → matchExpr
-    -- Tuples
-    | "(" termList ")"                  → tuple
-    | term "._1"                        → fst
-    | term "._2"                        → snd
-    | term "." "_" <number>             → projN
-    -- Let (val)
-    | "val" <ident> typeAnn? "=" term term? → valExpr
-    -- Blocks
-    | "{" stmt* term "}"                → block
-    -- Option
-    | "None"                            → noneLit
-    | "Some" "(" term ")"               → someLit
-    -- List
-    | "List" "(" termList ")"           → listLit
-    | "Nil"                             → nilLit
-    | term "::" term                    → cons
-    | term "++" term                    → concat
-    -- Operators (arithmetic)
-    | term "+" term                     → add
-    | term "-" term                     → sub
-    | term "*" term                     → mul
-    | term "/" term                     → div
-    | term "%" term                     → mod
-    | "-" term                          → neg
-    -- Operators (comparison)
-    | term "==" term                    → eq
-    | term "!=" term                    → neq
-    | term "<" term                     → lt
-    | term ">" term                     → gt
-    | term "<=" term                    → le
-    | term ">=" term                    → ge
-    -- Operators (logical)
-    | term "&&" term                    → and
-    | term "||" term                    → or
-    | "!" term                          → not
-    -- For comprehension
-    | "for" "{" forGen* "}" "yield" term → forYield
-    | "for" "{" forGen* "}" term        → forDo
-    -- New/constructor
-    | "new" <ident> "(" termList ")"    → newExpr
-    | <ident> "(" termList ")"          → ctorApp
-    -- Throw/try
-    | "throw" term                      → throwExpr
+  -- Top level: function types (right-associative)
+  term ::= orExpr "=>" term               → tyFun
+         | orExpr                          → term
+         ;
+  
+  -- Logical or
+  orExpr ::= andExpr "||" orExpr           → or
+           | andExpr                       → orExpr
+           ;
+  
+  -- Logical and
+  andExpr ::= cmpExpr "&&" andExpr         → and
+            | cmpExpr                      → andExpr
+            ;
+  
+  -- Comparison (non-associative)
+  cmpExpr ::= addExpr "==" addExpr         → eq
+            | addExpr "!=" addExpr         → neq
+            | addExpr "<" addExpr          → lt
+            | addExpr ">" addExpr          → gt
+            | addExpr "<=" addExpr         → le
+            | addExpr ">=" addExpr         → ge
+            | addExpr                      → cmpExpr
+            ;
+  
+  -- Additive (left-associative via iteration)
+  addExpr ::= mulExpr addOp*               → addExpr ;
+  addOp ::= "+" mulExpr                    → addOp
+          | "-" mulExpr                    → subOp
+          | "++" mulExpr                   → concatOp
+          | "::" mulExpr                   → consOp
+          ;
+  
+  -- Multiplicative
+  mulExpr ::= unaryExpr mulOp*             → mulExpr ;
+  mulOp ::= "*" unaryExpr                  → mulOp
+          | "/" unaryExpr                  → divOp
+          | "%" unaryExpr                  → modOp
+          ;
+  
+  -- Unary
+  unaryExpr ::= "!" postfixExpr            → not
+              | "-" postfixExpr            → neg
+              | postfixExpr                → unaryExpr
+              ;
+  
+  -- Postfix: method calls, field access, projections
+  postfixExpr ::= appExpr postfixOp*       → postfixExpr ;
+  postfixOp ::= "." <ident> "(" termList? ")" → methodCall
+              | "." <ident>                → select
+              | "._1"                      → fst
+              | "._2"                      → snd
+              | "." "_" <number>           → projN
+              | "match" "{" caseClause* "}" → matchOp
+              ;
+  
+  -- Application and type application
+  appExpr ::= atomExpr appArg*             → appExpr ;
+  appArg ::= "(" termList? ")"             → appArg
+           | "[" typeList "]"              → typeArg
+           ;
+  
+  -- Atoms: literals, identifiers, compound expressions
+  atomExpr ::= 
+    -- Identifiers and literals
+    <ident>                                → var
+    | <number>                             → intLit
+    | <string>                             → strLit
+    | "true"                               → trueLit
+    | "false"                              → falseLit
+    | "()"                                 → unitLit
+    | "None"                               → noneLit
+    | "Nil"                                → nilLit
+    | "_"                                  → hole
+    -- Lambdas
+    | "(" paramList ")" "=>" term          → lam
+    | <ident> "=>" term                    → lamSimple
+    | "{" paramList "=>" term "}"          → lamBlock
+    -- Conditionals
+    | "if" term "then" term "else" term    → ifExpr
+    | "if" "(" term ")" term "else" term   → ifExprParen
+    -- For comprehensions
+    | "for" "{" forGen* "}" "yield" term   → forYield
+    | "for" "{" forGen* "}" term           → forDo
+    -- Option/List constructors
+    | "Some" "(" term ")"                  → someLit
+    | "List" "(" termList? ")"             → listLit
+    -- New/throw/try
+    | "new" <ident> "(" termList? ")"      → newExpr
+    | "throw" term                         → throwExpr
     | "try" term "catch" "{" caseClause* "}" finallyClause? → tryExpr
-    -- Parentheses
-    | "(" term ")"                      → paren
-    -- Underscore (wildcard/placeholder)
-    | "_"                               → hole
-    -- Method chain
-    | term "." <ident>                  → select
-    | term "." <ident> "(" termList ")" → methodCall
+    -- Block and val expressions
+    | "{" stmt* term "}"                   → block
+    | "val" <ident> typeAnn? "=" term term? → valExpr
+    -- Tuple/parens (disambiguation handled by termList)
+    | "(" term ")"                         → paren
+    | "(" termList ")"                     → tuple
     ;
 
-  termList ::= term ("," term)*         → termList ;
-  stmt ::= term ";"?                    → stmtExpr
-         | "val" <ident> typeAnn? "=" term → stmtVal
-         | "var" <ident> typeAnn? "=" term → stmtVar
+  termList ::= term ("," term)*            → termList ;
+  stmt ::= term ";"?                       → stmtExpr
+         | "val" <ident> typeAnn? "=" term ";"? → stmtVal
+         | "var" <ident> typeAnn? "=" term ";"? → stmtVar
          ;
 
 -----------------------------------------------------
 -- Types
--- Scala type expressions
+-- Scala type expressions with proper precedence
+-- type > unionTy > intersectTy > funTy > atomTy
 -----------------------------------------------------
 piece Types
-  type ::= <ident>                      → tyVar
-         | <ident> "[" typeList "]"     → tyApp
-         | type "=>" type               → tyFun
-         | "(" typeList ")"             → tyTuple
-         | type "|" type                → tyUnion
-         | type "&" type                → tyIntersect
-         | "Any"                        → tyAny
-         | "Nothing"                    → tyNothing
-         | "Unit"                       → tyUnit
-         ;
-  typeList ::= type ("," type)*         → typeList ;
-  typeAnn ::= ":" type                  → typeAnn ;
+  type ::= unionTy                         → type ;
+  
+  unionTy ::= intersectTy "|" unionTy      → tyUnion
+            | intersectTy                  → unionTy
+            ;
+  
+  intersectTy ::= funTy "&" intersectTy    → tyIntersect
+                | funTy                    → intersectTy
+                ;
+  
+  funTy ::= atomTy "=>" funTy              → tyFun
+          | atomTy                         → funTy
+          ;
+  
+  atomTy ::= <ident> "[" typeList "]"      → tyApp
+           | <ident>                       → tyVar
+           | "(" typeList ")"              → tyTuple
+           | "(" type ")"                  → tyParen
+           | "Any"                         → tyAny
+           | "Nothing"                     → tyNothing
+           | "Unit"                        → tyUnit
+           | "?" "=>" type                 → tyContextFun
+           ;
+  
+  typeList ::= type ("," type)*            → typeList ;
+  typeAnn ::= ":" type                     → typeAnn ;
 
 -----------------------------------------------------
 -- Parameters
--- Function/method parameters
+-- Function/method parameters with defaults and variance
 -----------------------------------------------------
 piece Parameters
-  param ::= <ident> ":" type            → param
-          | <ident>                     → paramUntyped
+  param ::= <ident> ":" type "=" term      → paramDefault
+          | <ident> ":" type               → param
+          | <ident>                        → paramUntyped
+          | "using" <ident> ":" type       → paramUsing
           ;
-  paramList ::= param ("," param)*      → paramList ;
-  typeParam ::= <ident>                 → typeParam
-              | <ident> "<:" type       → typeParamUpper
-              | <ident> ">:" type       → typeParamLower
+  paramList ::= (param ("," param)*)?      → paramList ;
+  
+  -- Type parameters with variance and bounds
+  typeParam ::= "+" <ident> boundClause?   → typeParamCovar
+              | "-" <ident> boundClause?   → typeParamContra
+              | <ident> boundClause?       → typeParam
               ;
+  boundClause ::= "<:" type                → upperBound
+                | ">:" type                → lowerBound
+                | "<:" type ">:" type      → bothBounds
+                ;
   typeParamList ::= "[" typeParam ("," typeParam)* "]" → typeParamList ;
+  
+  -- Visibility modifiers
+  visibility ::= "private" scopeQual?      → visPrivate
+               | "protected" scopeQual?    → visProtected
+               | "override"                → visOverride
+               | "final"                   → visFinal
+               | "abstract"                → visAbstract
+               | "implicit"                → visImplicit
+               | "inline"                  → visInline
+               | "transparent"             → visTransparent
+               ;
+  scopeQual ::= "[" <ident> "]"            → scopeQual ;
 
 -----------------------------------------------------
 -- Patterns
@@ -160,43 +315,58 @@ piece ForComprehension
 
 -----------------------------------------------------
 -- Declarations
--- Top-level declarations
+-- Top-level declarations with visibility modifiers
 -----------------------------------------------------
 piece Declarations
   decl ::= 
+    -- Annotations
+    annotation* declBody                  → decl
+    ;
+  
+  annotation ::= "@" <ident> annotArgs?   → annotation ;
+  annotArgs ::= "(" termList? ")"         → annotArgs ;
+  
+  declBody ::=
     -- Enum (Scala 3 ADT)
-    "enum" <ident> typeParamList? extendsClause? "{" @nl @indent enumCase* @dedent "}" @nl
+    visibility* "enum" <ident> typeParamList? extendsClause? "{" @nl @indent enumCase* @dedent "}" @nl
       → enumDecl
     -- Sealed trait + case class (Scala 2 style)
-    | "sealed" "trait" <ident> typeParamList? @nl @nl
+    | visibility* "sealed" "trait" <ident> typeParamList? extendsClause? @nl @nl
       → sealedTraitDecl
-    | "case" "class" <ident> typeParamList? @nsp "(" paramList ")" extendsClause? @nl
+    | visibility* "case" "class" <ident> typeParamList? @nsp "(" paramList ")" extendsClause? @nl
       → caseClassDecl
-    | "case" "object" <ident> extendsClause? @nl
+    | visibility* "case" "object" <ident> extendsClause? @nl
       → caseObjectDecl
     -- Regular class/object
-    | "class" <ident> typeParamList? @nsp "(" paramList ")" extendsClause? "{" @nl @indent member* @dedent "}" @nl
+    | visibility* "class" <ident> typeParamList? @nsp "(" paramList ")" extendsClause? classBody?
       → classDecl
-    | "object" <ident> extendsClause? "{" @nl @indent member* @dedent "}" @nl
+    | visibility* "object" <ident> extendsClause? classBody?
       → objectDecl
-    | "trait" <ident> typeParamList? extendsClause? "{" @nl @indent member* @dedent "}" @nl
+    | visibility* "trait" <ident> typeParamList? extendsClause? classBody?
       → traitDecl
-    -- Definition
-    | "def" <ident> typeParamList? @nsp "(" paramList ")" ":" type "=" term @nl
+    -- Definitions (with body)
+    | visibility* "def" <ident> typeParamList? @nsp "(" paramList ")" ":" type "=" @nl @indent term @dedent @nl
+      → defDeclBlock
+    | visibility* "def" <ident> typeParamList? @nsp "(" paramList ")" ":" type "=" term @nl
       → defDecl
-    | "val" <ident> ":" type "=" term @nl
+    -- Abstract definitions (no body)
+    | visibility* "def" <ident> typeParamList? @nsp "(" paramList ")" ":" type @nl
+      → defDeclAbstract
+    | visibility* "val" <ident> ":" type "=" term @nl
       → valDecl
-    | "var" <ident> ":" type "=" term @nl
+    | visibility* "var" <ident> ":" type "=" term @nl
       → varDecl
-    | "lazy" "val" <ident> ":" type "=" term @nl
+    | visibility* "lazy" "val" <ident> ":" type "=" term @nl
       → lazyValDecl
     -- Type alias
-    | "type" <ident> typeParamList? "=" type @nl
+    | visibility* "type" <ident> typeParamList? "=" type @nl
       → typeAliasDecl
+    | visibility* "type" <ident> typeParamList? @nl
+      → typeAbstract
     -- Given/using (Scala 3 implicits)
     | "given" <ident>? ":" type "=" term @nl
       → givenDecl
-    | "given" <ident>? ":" type "with" "{" @nl @indent member* @dedent "}" @nl
+    | "given" <ident>? ":" type "with" classBody
       → givenWithDecl
     -- Extension
     | "extension" @nsp "(" <ident> ":" type ")" @nl @indent defDecl* @dedent
@@ -204,21 +374,35 @@ piece Declarations
     -- Package/import
     | "package" modulePath @nl
       → packageDecl
-    | "import" modulePath importSel? @nl
+    | "import" importPath @nl
       → importDecl
     ;
+  
+  classBody ::= "{" @nl @indent member* @dedent "}" @nl → classBody
+              | ":" @nl @indent member* @dedent        → classBodyIndent
+              ;
 
   enumCase ::= "case" <ident> @nsp "(" paramList ")" @nl → enumCaseParams
              | "case" <ident> @nl                       → enumCaseSimple
              ;
-  member ::= defDecl | valDecl | typeAliasDecl ;
-  extendsClause ::= "extends" type ("with" type)* → extendsClause ;
-  modulePath ::= <ident> ("." <ident>)*          → modulePath ;
-  importSel ::= "." "{" <ident> ("," <ident>)* "}" → importSel
-              | "." "_"                          → importAll
-              | "." <ident>                      → importOne
+  member ::= decl ;
+  extendsClause ::= "extends" type withClause* → extendsClause ;
+  withClause ::= "with" type                  → withClause ;
+  
+  -- Import paths with wildcards and selectors
+  importPath ::= modulePath importSel?        → importPath ;
+  modulePath ::= <ident> ("." <ident>)*       → modulePath ;
+  importSel ::= "." "{" importItem ("," importItem)* "}" → importSelMulti
+              | "." "*"                       → importAll
+              | "." "_"                       → importAllUnderscore
+              | "." <ident>                   → importOne
               ;
-  finallyClause ::= "finally" term              → finallyClause ;
+  importItem ::= <ident> "=>" <ident>         → importRename
+               | <ident> "=>" "_"             → importHide
+               | <ident>                      → importItem
+               | "*"                          → importWild
+               ;
+  finallyClause ::= "finally" term            → finallyClause ;
 
 -----------------------------------------------------
 -- Module
@@ -229,9 +413,28 @@ piece Module
 
 -----------------------------------------------------
 -- Tests
+-- Test cases using the new precedence-aware grammar
 -----------------------------------------------------
-test "lam": (lam (paramList (param x Int)) (add (var x) (intLit 1))) ;
-test "enum": (enumDecl Term (enumCaseSimple Var) (enumCaseParams App (paramList (param f Term) (param a Term)))) ;
-test "def": (defDecl id (typeParamList A) (paramList (param x (tyVar A))) (tyVar A) (var x)) ;
-test "match": (matchExpr (var x) (caseClause (patCtor Some (patVar v)) (var v)) (caseClause (patVar None) (intLit 0))) ;
+test "var": (var x) ;
+test "intLit": (intLit 42) ;
+test "strLit": (strLit "hello") ;
+test "trueLit": (trueLit) ;
+test "add": (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var x)))))
+                     (addOp (mulExpr (unaryExpr (postfixExpr (appExpr (intLit 1))))))) ;
+test "lam": (lam (paramList (param x (tyVar Int))) 
+                 (addExpr (mulExpr (unaryExpr (postfixExpr (appExpr (var x)))))
+                          (addOp (mulExpr (unaryExpr (postfixExpr (appExpr (intLit 1)))))))) ;
+test "app": (appExpr (var foo) (appArg (termList (var x) (var y)))) ;
+test "select": (postfixExpr (appExpr (var x)) (select name)) ;
+test "match": (postfixExpr (appExpr (var x)) 
+                           (matchOp (caseClause (patCtor Some (patternList (patVar v))) (var v))
+                                    (caseClause (patVar None) (intLit 0)))) ;
+test "tyApp": (tyApp (tyVar List) (typeList (tyVar Int))) ;
+test "tyFun": (tyFun (tyVar Int) (tyFun (tyVar Int) (tyVar Int))) ;
+test "tyUnion": (tyUnion (tyVar Int) (tyVar String)) ;
+test "enumDecl": (decl (enumDecl Term (enumCaseSimple Var) 
+                                       (enumCaseParams App (paramList (param f (tyVar Term)) (param a (tyVar Term)))))) ;
+test "defDecl": (decl (defDecl id (typeParamList (typeParam A)) (paramList (param x (tyVar A))) (tyVar A) (var x))) ;
+test "import": (decl (importDecl (importPath (modulePath scala collection mutable)))) ;
+test "packageDecl": (decl (packageDecl (modulePath cubical runtime))) ;
 

@@ -402,17 +402,15 @@ where
         | .con c args => .con c (args.map (go n))
         | _ => t
 
-/-! ## Complete Pipeline: Lego → Lean -/
+/-! ## Complete Pipeline: Lego → Rosetta IR -/
 
-/-- Pipeline for transforming .lego to Lean AST:
+/-- Pipeline for transforming .lego to Rosetta IR:
     1. Load source .lego file
     2. Load lego2rosetta rules
     3. Transform to Rosetta IR
-    4. Load rosetta2target rules
-    5. Transform to Lean AST
-    6. Print using Lean grammar -/
-def lego2lean (rt : Runtime) (sourcePath : String) (rosettaPath : String := "./src/Rosetta/lego2rosetta.lego")
-    (leanPath : String := "./src/Rosetta/rosetta2target.lego") : IO (Except String Term) := do
+    The Rosetta IR is then pretty-printed using the target grammar -/
+def lego2rosetta (rt : Runtime) (sourcePath : String) (rosettaPath : String := "./src/Rosetta/lego2rosetta.lego")
+    : IO (Except String Term) := do
   -- Step 1: Parse source
   match ← parseLegoFilePathE rt sourcePath with
   | .error e => return Except.error s!"Failed to parse {sourcePath}: {e}"
@@ -423,13 +421,7 @@ def lego2lean (rt : Runtime) (sourcePath : String) (rosettaPath : String := "./s
     | Except.ok rules1 =>
       -- Step 3: Transform to Rosetta IR
       let rosettaAst := transform rules1 sourceAst
-      -- Step 4: Load rosetta2lean rules
-      match ← loadTransformRules rt leanPath with
-      | Except.error e => return Except.error e
-      | Except.ok rules2 =>
-        -- Step 5: Transform to Lean AST
-        let leanAst := transform rules2 rosettaAst
-        return Except.ok leanAst
+      return Except.ok rosettaAst
 
 /-! ## Global Initialization -/
 

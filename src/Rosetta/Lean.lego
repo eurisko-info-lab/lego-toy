@@ -460,6 +460,47 @@ piece Module
   module ::= decl*                                → module ;
 
 -----------------------------------------------------
+-- Rosetta IR Support
+-- These productions PARSE Rosetta IR syntax and PRINT Lean syntax.
+-- For printing: the AST structure matches what Rosetta produces.
+-- When emitting, we output Lean keywords but consume Rosetta structure.
+--
+-- Key insight: printGrammar emits literals without consuming AST.
+-- So we use the SAME literals that Rosetta uses ("adt", "{", etc.)
+-- but they get emitted as-is. To emit DIFFERENT text, we need
+-- transformation rules BEFORE printing.
+--
+-- For now: just accept Rosetta IR and print it (won't look like Lean).
+-----------------------------------------------------
+piece RosettaIR
+  -- Accept adtDef from Rosetta - prints the Rosetta syntax
+  rosettaDecl ::= "adt" <ident> rosettaTypeParams? "{" rosettaConstrs "}" → adtDef ;
+  rosettaTypeParams ::= "(" rosettaParamGroup* ")" → typeParams | "(" ")" → unit ;
+  rosettaParamGroup ::= <ident>+ ":" rosettaType → paramGroup ;
+  rosettaConstrs ::= rosettaConstr ("," rosettaConstr)* → seq ;
+  rosettaConstr ::= <ident> ":" rosettaType → constr ;
+  
+  -- Rewrite rule from Rosetta
+  rosettaDecl ::= "rewrite" <ident> ":" rosettaTerm "~>" rosettaTerm ";" → rewriteRule ;
+  
+  -- Type expressions  
+  rosettaType ::= rosettaTypeApp (rosettaArrow rosettaType)? → typeExpr ;
+  rosettaArrow ::= "→" | "->" ;
+  rosettaTypeApp ::= <ident> rosettaType* → typeApp ;
+  rosettaType ::= "$" <ident> → typeVar ;
+  
+  -- Term expressions
+  rosettaTerm ::= <ident> rosettaTerm* → app
+               | "$" <ident> → metavar
+               | <string> → strLit
+               | <number> → numLit
+               ;
+  
+  -- A file is a sequence of declarations
+  rosettaFile ::= rosettaDecl* → seq ;
+  decl ::= rosettaDecl ;
+
+-----------------------------------------------------
 -- Tests
 -- Syntax validation examples
 -----------------------------------------------------

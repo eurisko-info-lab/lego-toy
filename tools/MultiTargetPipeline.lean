@@ -426,49 +426,30 @@ def runForModule (rt : Runtime) (sourceAst : Term) (sourcePath : String) (lang :
     : IO (Except String ModuleResult) := do
   let moduleName := extractModuleName sourcePath
 
-  -- 1. Load grammar file
-  let (grammarAst, _) ← match ← loadLanguage rt lang.grammarPath with
+  -- 1. Load target grammar
+  let grammar ← match ← loadLanguage rt lang.grammarPath with
     | .error e => return .error s!"Failed to load grammar: {e}"
-    | .ok grammarLang =>
-      let content ← IO.FS.readFile lang.grammarPath
-      match parseWithGrammarE grammarLang content with
-      | .error _ =>
-        match parseLegoFileE rt content with
-        | .error e2 => return .error s!"Failed to parse grammar file: {e2}"
-        | .ok ast => pure (ast, grammarLang.productions.length)
-      | .ok ast => pure (ast, grammarLang.productions.length)
+    | .ok g => pure g
 
-  let prods := extractProductions grammarAst
+  -- 2. Analyze dependencies on the source AST
+  let definedTypes := getDefinedAdtNames sourceAst
+  let definedConstructors := getDefinedConstructors sourceAst
+  let externalDeps := getExternalDeps sourceAst |>.filter (!builtinTypes.contains ·)
+  let externalCtorDeps := getExternalConstructorDeps sourceAst
 
-  -- 2. Load transformation rules
-  let rules ← do
-    let content ← IO.FS.readFile lang.transformPath
-    match parseLegoFileE rt content with
-    | .error _ => pure ([] : List TransformRule)
-    | .ok ast => pure (extractTransformRules ast)
+  -- 3. Pretty-print using grammar interpreter
+  -- The grammar's layout annotations (@nl, @indent, etc.) control formatting
+  let code := match printToString grammar "file" sourceAst with
+    | some s => s
+    | none =>
+      match printToString grammar "module" sourceAst with
+      | some s => s
+      | none =>
+        match printToString grammar "program" sourceAst with
+        | some s => s
+        | none => s!"-- Failed to print AST for {lang}\n-- AST: {sourceAst}"
 
-  -- 3. Apply transformations
-  let entryFn := match lang with
-    | .Lean => "toLean"
-    | .Scala => "toScala"
-    | .Haskell => "toHaskell"
-    | .Rust => "toRust"
-
-  let rosettaIR := legoToRosetta sourceAst
-  let wrappedAst := Term.con entryFn [rosettaIR]
-  let transformed := if rules.isEmpty then rosettaIR else applyTransforms rules wrappedAst true
-  let sorted := sortDeclarations transformed
-
-  -- 4. Analyze dependencies (both types and constructors)
-  let definedTypes := getDefinedAdtNames sorted
-  let definedConstructors := getDefinedConstructors sorted
-  let externalDeps := getExternalDeps sorted |>.filter (!builtinTypes.contains ·)
-  let externalCtorDeps := getExternalConstructorDeps sorted
-
-  -- 5. Pretty-print
-  let code := prettyPrint prods sorted lang
-
-  -- 6. Build result (header will be added later when we know which modules exist)
+  -- 4. Build result (header will be added later when we know which modules exist)
   let outPath := match lang with
     | .Rust => s!"{outDir}/{moduleName.toLower}{lang.ext}"
     | _ => s!"{outDir}/{moduleName}{lang.ext}"

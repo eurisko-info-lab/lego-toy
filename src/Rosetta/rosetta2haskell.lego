@@ -14,12 +14,13 @@ lang RosettaToHaskell :=
 
 -----------------------------------------------------
 -- Import declarations
--- Rosetta: (DImport "import" (modulePath ...) ";")
--- Haskell: (importDecl (modulePath ...))
+-- Rosetta: (DImport "import" (modulePath (ident Grammar) (unit)) ";")
+-- Haskell: (importDecl (modulePath Grammar))
+-- Note: Rosetta modulePath wraps idents, Haskell expects bare idents
 -----------------------------------------------------
 piece ImportTransformHaskell
-  rule importToHaskell: (DImport "import" $path ";")
-    ~~> (importDecl $path) ;
+  rule importToHaskell: (DImport "import" (modulePath (ident $name) $rest) ";")
+    ~~> (importDecl (modulePath $name)) ;
 
 -----------------------------------------------------
 -- ADT to Data Declaration
@@ -79,6 +80,11 @@ piece ConstrTransformHaskell
   rule transformConstrHaskellThreeArgs: (transformConstrHaskell (constr $name ":" (typeExpr (typeApp $a) "->" (typeExpr (typeApp $b) "->" (typeExpr (typeApp $c) "->" (typeExpr (typeApp $ret)) (unit)) (unit)) (unit))))
     ~~> (dataCon $name (tyVar $a) (tyVar $b) (tyVar $c)) ;
 
+  -- Constructor with FOUR arrows: A -> B -> C -> D -> Result
+  -- For LoadedGrammar: List Production -> List Production -> List String -> String -> LoadedGrammar
+  rule transformConstrHaskellFourArgs: (transformConstrHaskell (constr $name ":" (typeExpr (typeApp $a $aArg) "->" (typeExpr (typeApp $b $bArg) "->" (typeExpr (typeApp $c $cArg) "->" (typeExpr (typeApp $d) "->" (typeExpr (typeApp $ret)) (unit)) (unit)) (unit)) (unit))))
+    ~~> (dataCon $name (tyApp $a (tyVar $aArg)) (tyApp $b (tyVar $bArg)) (tyApp $c (tyVar $cArg)) (tyVar $d)) ;
+
   -- Direct pass through (fallback) 
   rule transformConstrHaskellDirect: (constr $name ":" $type)
     ~~> (dataCon $name) ;
@@ -133,6 +139,8 @@ piece PatternTransformHaskell
 
 -----------------------------------------------------
 -- Term transformation (Rosetta terms to Haskell terms)
+-- Haskell uses curried (binary) application: f x y = ((f x) y)
+-- So (app e1 e2) not (app f x y...)
 -----------------------------------------------------
 piece TermTransformHaskell
   -- Metavariable: (metavar "$" x) becomes var x
@@ -140,10 +148,29 @@ piece TermTransformHaskell
     ~~> (var $x) ;
 
   -- Constructor/Application: (compound "(" f args... ")")
+  -- Build left-associative curried application
   rule transformTermHaskellApp: (transformTermHaskell (compound "(" $f $args... ")"))
-    ~~> (app (var $f) @map transformTermHaskell $args...) ;
+    ~~> (foldApp (var $f) $args...) ;
 
   -- Simple identifier
   rule transformTermHaskellIdent: (transformTermHaskell $x)
     ~~> (var $x) ;
+
+-----------------------------------------------------
+-- Fold application helper for curried Haskell apps
+-- foldApp acc arg1 arg2... -> (app (app acc arg1) arg2)...
+-- Note: compound args need paren wrapping for correct grouping
+-----------------------------------------------------
+piece FoldAppHaskell
+  -- Base case: no more args, return accumulator
+  rule foldAppBase: (foldApp $acc)
+    ~~> $acc ;
+
+  -- Compound arg: wrap in parens
+  rule foldAppStepCompound: (foldApp $acc (compound "(" $inner... ")") $rest...)
+    ~~> (foldApp (app $acc (paren (transformTermHaskell (compound "(" $inner... ")")))) $rest...) ;
+
+  -- Simple arg (metavar or ident): no parens needed
+  rule foldAppStepSimple: (foldApp $acc $arg $rest...)
+    ~~> (foldApp (app $acc (transformTermHaskell $arg)) $rest...) ;
 

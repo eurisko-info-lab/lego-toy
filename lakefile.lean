@@ -191,3 +191,8 @@ lean_exe «lego-test-attr-eval» where
 lean_exe «lego-test-cubical-core» where
   root := `test.lean.TestCubicalCore
   moreLinkArgs := #["-lInit"]
+
+-- Known-failing tests (to track progress)
+lean_exe «lego-test-known-failures» where
+  root := `test.lean.TestKnownFailures
+  moreLinkArgs := #["-lInit"]

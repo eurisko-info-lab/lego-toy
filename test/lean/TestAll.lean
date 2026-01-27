@@ -173,9 +173,4 @@ def main (args : List String) : IO UInt32 := do
   else
     IO.println ""
     IO.println s!"  ⚠️  {totalFailed} tests failed"
-    -- Don't fail if only expected failures (Cubical)
-    if totalFailed <= 40 then
-      IO.println "     (Expected: Cubical tests are known to fail)"
-      return 0
-    else
-      return 1
+    return 1

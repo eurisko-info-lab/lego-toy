@@ -55,7 +55,7 @@ token Token
   super  ::= '¹' | '²' | '³' ;
   sub    ::= '₀' | '₁' | '₂' | '₃' | '₄' | '₅' | '₆' | '₇' | '₈' | '₉' ;
   -- Math relation and operator symbols
-  mathrel ::= '≈' | '≅' | '≤' | '≥' | '≡' ;
+  mathrel ::= '≈' | '≅' | '≤' | '≥' | '≡' | '≃' ;
   mathop  ::= '∘' | '⊗' | '⊙' | '∧' | '∨' | '∷' | '⋆' | '¯' | '⊤' | '⊥' ;
   
   -- Alphabetic: anything that can start/continue an identifier

@@ -23,8 +23,6 @@ open System
 /-- List of .lego files that are known to fail parsing -/
 def knownFailingLegoFiles : List String := [
   -- Examples that use advanced grammar features
-  "ArithOptimized.lego",
-  "LambdaArith.lego",
   "ScrumTeam.lego",
   "Core4.lego",
   "RosettaMath.lego",

@@ -401,7 +401,10 @@ def builtinProductions : Productions := [
   -- Cross-file aliases for common Bootstrap productions
   ("template", GrammarExpr.ref "Template.template"),
   ("pattern", GrammarExpr.ref "Pattern.pattern"),
-  ("term", GrammarExpr.ref "Term.term")
+  ("term", GrammarExpr.ref "Term.term"),
+  -- Aliases for verified rules (avoid nameMap shadowing)
+  ("verPat", GrammarExpr.ref "Pattern.pattern"),
+  ("verTmpl", GrammarExpr.ref "Template.template")
 ]
 
 /-- First pass: collect all production names from AST (only piece, not token) -/
@@ -660,13 +663,33 @@ partial def findRefFollows (g : GrammarExpr) : List (String × String) :=
   | .mk (.longest gs) => gs.flatMap findRefFollows
   | .mk (.layout _) => []
 
-/-- Extract keywords that need reservation based on FOLLOW conflicts -/
+/-- Extract keywords from explicit `keyword` productions in token sections.
+    These are productions like: keyword ::= "verified" | "repr" | ... ; -/
+def extractExplicitKeywords (prods : Productions) : List String :=
+  prods.flatMap fun (name, g) =>
+    -- Look for productions named "*.keyword"
+    if name.endsWith ".keyword" || name == "keyword" then
+      extractSymbols g
+    else
+      []
+  |>.filter Util.isKeywordLikeWithDash
+  |>.eraseDups
+
+/-- Extract keywords that need reservation.
+    Combines:
+    1. Explicit keywords from `keyword` productions in token sections
+    2. FOLLOW-conflict keywords (literals following star-ending refs) -/
 def extractKeywords (prods : Productions) : List String :=
+  -- Explicit keywords from token sections
+  let explicit := extractExplicitKeywords prods
+  -- FOLLOW-conflict keywords
   let starEndingProds := computeStarEndingProds prods
   let refFollows := prods.flatMap fun (_, g) => findRefFollows g
   let conflictingLits := refFollows.filterMap fun (refName, lit) =>
     if starEndingProds.contains refName then some lit else none
-  conflictingLits.filter Util.isKeywordLikeWithDash |>.eraseDups
+  let followConflict := conflictingLits.filter Util.isKeywordLikeWithDash
+  -- Merge and deduplicate
+  (explicit ++ followConflict).eraseDups
 
 /-! ## Validation Helpers -/
 

@@ -16,6 +16,15 @@
 lang Lego (Bootstrap) :=
 
 -----------------------------------------------------
+-- Extended Keywords
+-- Keywords added by Lego.lego for new constructs
+-----------------------------------------------------
+
+token LegoKeywords
+  -- Keywords for verified transformations, representation equivalences, and tests blocks
+  keyword ::= "verified" | "repr" | "via" | "preserves" | "coerce_repr" | "tests" | "end" ;
+
+-----------------------------------------------------
 -- Core Primitives
 -- Universe, variables, application, substitution
 -----------------------------------------------------
@@ -120,12 +129,37 @@ piece Tests
   -- Test case for test blocks
   testCase ::= <string> "~>" template → testCase ;
 
--- Extend File piece to add tests block as pieceItem
--- Uses simpleTemplate which is a restricted version that doesn't
--- consume trailing identifiers (avoiding ambiguity with following declarations)
+-- Extend File piece to add verified rules and repr equivalences
+-- NOTE: When extending pieceItem/decl, we must include ALL Bootstrap alternatives
+-- plus our new ones, because defining a production here REPLACES the Bootstrap one.
 piece File
-  pieceItem ::= "tests" testsCase+ "end" → DTestsBlock
-              | "tests" testsCase+ → DTestsBlock ;
+  -- Verified rules: prove that a rewrite preserves semantics
+  -- Uses verPat/verTmpl which are aliases for Pattern.pattern/Template.template
+  -- to avoid name shadowing (pattern resolves to RewriteRules.pattern in Lego.lego)
+  verifiedRuleDecl ::= "verified" "rule" <ident> ":"
+                       verPat "~>" verTmpl
+                       "via" verTmpl ";" → verifiedRule ;
+  
+  -- Representation equivalences: switch between equivalent representations
+  reprEquivDecl ::= "repr" <ident> "≃" <ident>
+                    "via" verTmpl ";" → reprEquiv ;
+  
+  -- Tests block: multiple test cases inside a piece without individual test keywords
+  -- e.g., tests "input" ~> expected "input2" ~> expected2 end
+  testsBlock ::= "tests" testsCase+ "end" → DTestsBlock ;
+  
+  -- EXTEND pieceItem to include new declaration types
+  -- Must include ALL Bootstrap alternatives plus our new ones
+  pieceItem ::= prodDecl | ruleDecl | typeDecl | testDecl | deriveDecl | algebraDecl
+              | effectDecl | opticsDecl | adjunctionDecl | kanDecl | operadDecl | natDecl
+              | macroDecl | lawsDecl
+              | verifiedRuleDecl | reprEquivDecl | testsBlock ;
+  
+  -- EXTEND decl (top-level) to include new declaration types  
+  decl ::= importDecl | langDecl | tokenDecl | pieceDecl | vocabDecl | ruleDecl
+         | typeDecl | testDecl | attrsDecl
+         | verifiedRuleDecl | reprEquivDecl ;
+  
   testsCase ::= <string> "~>" simpleTemplate → testCase ;
   -- Simple template for test expected values - no trailing ident consumption
   -- Supports: variables ($x), function application foo(a,b), brackets [a,b], nested
@@ -632,19 +666,13 @@ piece ProofTactics
 --
 -- Key insight: If you have an equivalence between
 -- representations, you can transport properties.
+-- 
+-- Note: The syntax "verified rule ..." is defined in piece File
+-- to ensure proper Pattern/Template reference resolution.
 -----------------------------------------------------
 
 piece VerifiedTransform
-  -- Verified rules can appear at top-level (decl) or inside pieces (pieceItem)
-  decl ::= "verified" "rule" <ident> ":"
-           term "~>" term
-           "via" term ";" → verifiedRule ;
-           
-  pieceItem ::= "verified" "rule" <ident> ":"
-                term "~>" term
-                "via" term ";" → verifiedRule ;
-
-  term ::= "preserves" term term term  → preserves
+  term ::= "preserves" term term term  → Preserve
          | "transport_prop" term term term → transportProp
          | "optimize" term term        → optimize ;
 
@@ -707,12 +735,12 @@ piece QuotientTypes
 --
 -- Example: List vs Tree representations of sets
 --   If List ≃ Tree, properties of List transfer to Tree
+--
+-- Note: The syntax "repr X ≃ Y via ..." is defined in piece File
+-- to ensure proper Template reference resolution.
 -----------------------------------------------------
 
 piece RepresentationIndep
-  decl ::= "repr" <ident> "≃" <ident>
-           "via" term ";" → reprEquiv ;
-
   term ::= "coerce_repr" term term     → coerceRepr
          | "lift_prop" term term term  → liftProp
          | "repr_path" term term term  → reprPath ;

@@ -11,6 +11,16 @@ def main : IO Unit := do
   IO.println "Lego: A Minimal Language for Building Languages"
   IO.println "═══════════════════════════════════════════════════════════════"
   IO.println ""
+
+  -- Initialize runtime and show keyword info
+  let rt ← Runtime.initQuiet
+  IO.println s!"Keywords ({rt.grammar.keywords.length}): {rt.grammar.keywords.take 20}"
+  IO.println s!"Token productions: {rt.grammar.tokenProductions.length}"
+  -- Check for LegoKeywords.keyword
+  let keywordProds := rt.grammar.tokenProductions.filter fun (n, _) => n.endsWith ".keyword"
+  IO.println s!"Keyword prods: {keywordProds.map (·.1)}"
+  IO.println ""
+
   IO.println "Core types:"
   IO.println "  Iso A B        -- Partial isomorphism A ⇌ B"
   IO.println "  Term           -- Universal AST (var | con | lit)"

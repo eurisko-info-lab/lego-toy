@@ -70,7 +70,7 @@ def loadBootstrapOnly (path : String := defaultBootstrapPath) : IO (Except Strin
       let prods := Loader.extractAllProductions ast
       let tokenProds := Loader.extractTokenProductions ast
       let symbols := Loader.extractAllSymbols prods
-      let keywords := Loader.extractKeywords prods
+      let keywords := Loader.extractKeywords (prods ++ tokenProds)
       let validation := Loader.validateProductions prods
       let grammar : Loader.LoadedGrammar := {
         productions := prods
@@ -108,8 +108,8 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
         let mergedLegoProds := legoProds ++ bootstrapGrammar.productions
         let mergedLegoTokenProds := legoTokenProds ++ bootstrapGrammar.tokenProductions
         let mergedLegoSymbols := Loader.extractAllSymbols mergedLegoProds
-        -- Simple keyword extraction: all keyword-like literals from grammar
-        let mergedLegoKeywords := Loader.extractKeywords mergedLegoProds
+        -- Keyword extraction: from both grammar and token productions
+        let mergedLegoKeywords := Loader.extractKeywords (mergedLegoProds ++ mergedLegoTokenProds)
         let legoGrammar : Loader.LoadedGrammar := {
           productions := mergedLegoProds
           tokenProductions := mergedLegoTokenProds
@@ -130,8 +130,8 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
           let mergedRosettaProds := rosettaProds ++ mergedLegoProds
           let mergedRosettaTokenProds := rosettaTokenProds ++ mergedLegoTokenProds
           let mergedRosettaSymbols := Loader.extractAllSymbols mergedRosettaProds
-          -- Simple keyword extraction: all keyword-like literals from grammar
-          let mergedRosettaKeywords := Loader.extractKeywords mergedRosettaProds
+          -- Keyword extraction: from both grammar and token productions
+          let mergedRosettaKeywords := Loader.extractKeywords (mergedRosettaProds ++ mergedRosettaTokenProds)
           let rosettaGrammar : Loader.LoadedGrammar := {
             productions := mergedRosettaProds
             tokenProductions := mergedRosettaTokenProds
@@ -152,9 +152,8 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
             let mergedLeanProds := leanProds ++ mergedLegoProds
             let mergedLeanTokenProds := leanTokenProds ++ mergedLegoTokenProds
             let mergedLeanSymbols := Loader.extractAllSymbols mergedLeanProds
-            -- Lean.lego defines its own keywords; we just extract from grammar
-            -- Any Lean-specific keywords should be defined in Lean.lego's grammar
-            let mergedLeanKeywords := Loader.extractKeywords mergedLeanProds
+            -- Keyword extraction: from both grammar and token productions
+            let mergedLeanKeywords := Loader.extractKeywords (mergedLeanProds ++ mergedLeanTokenProds)
             let leanGrammar : Loader.LoadedGrammar := {
               productions := mergedLeanProds
               tokenProductions := mergedLeanTokenProds
@@ -354,11 +353,12 @@ where
 
     -- Now parse with the merged grammar (parents + bootstrap)
     let mergedProds := inheritedProds ++ rt.grammar.productions
-    -- Simple keyword extraction: all keyword-like literals from grammar
-    let parsingKeywords := Loader.extractKeywords mergedProds
+    let mergedTokenProds := inheritedTokenProds ++ rt.grammar.tokenProductions
+    -- Keyword extraction: from both grammar and token productions
+    let parsingKeywords := Loader.extractKeywords (mergedProds ++ mergedTokenProds)
     let parsingGrammar : Loader.LoadedGrammar := {
       productions := mergedProds
-      tokenProductions := inheritedTokenProds ++ rt.grammar.tokenProductions
+      tokenProductions := mergedTokenProds
       symbols := Loader.extractAllSymbols mergedProds
       keywords := parsingKeywords
       startProd := "File.legoFile"
@@ -377,8 +377,8 @@ where
     let mergedTokenProds := rt.grammar.tokenProductions ++ inheritedTokenProds ++ childTokenProds
 
     let symbols := Loader.extractAllSymbols mergedProds
-    -- Simple keyword extraction: all keyword-like literals from grammar
-    let keywords := Loader.extractKeywords mergedProds
+    -- Keyword extraction: from both grammar and token productions
+    let keywords := Loader.extractKeywords (mergedProds ++ mergedTokenProds)
     let validation := Loader.validateProductions mergedProds
 
     -- Keep File.legoFile as start so merged grammar can parse .lego files

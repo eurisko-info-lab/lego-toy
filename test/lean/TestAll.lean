@@ -29,6 +29,7 @@ def allSuites : List TestSuite := [
   { name := "Grammar Interpreter", command := "lego-test-grammar", isQuick := true },
   { name := "Composition", command := "lego-test-compose", isQuick := true },
   { name := "Code Generation", command := "lego-test-codegen-compare", isQuick := true },
+  { name := "Cubical Verification", command := "lego-test-validation", isQuick := true },
   { name := "Pipeline Integration", command := "lego-test-pipeline", isQuick := false }
 ]
 

@@ -548,6 +548,130 @@ partial def extractStartLiterals (g : GrammarExpr) : List String :=
   -- Layout annotations
   | .mk (.layout _) => []
 
+/-- Extract ALL leading literals from a sequence prefix, stopping at first non-literal.
+    For "verified" "rule" <ident>, returns ["verified", "rule"].
+    This is needed for productions where multiple keywords appear at the start. -/
+partial def extractLeadingLiteralSequence (g : GrammarExpr) : List String :=
+  match g with
+  | .mk .empty => []
+  | .mk (.lit s) => [s]
+  | .mk (.ref _) => []  -- Stop at references
+  | .mk (.seq g1 g2) =>
+    -- Get literals from g1, if all of g1 is literals, continue to g2
+    let first := extractLeadingLiteralSequence g1
+    if first.isEmpty then []
+    else if isAllLiterals g1 then first ++ extractLeadingLiteralSequence g2
+    else first
+  | .mk (.alt g1 g2) => extractLeadingLiteralSequence g1 ++ extractLeadingLiteralSequence g2
+  | .mk (.star _) => []  -- Stop at star (optional/repeating elements)
+  | .mk (.bind _ g') => extractLeadingLiteralSequence g'
+  | .mk (.node _ g') => extractLeadingLiteralSequence g'
+  | .mk (.cut g') => extractLeadingLiteralSequence g'
+  | .mk (.ordered g1 g2) => extractLeadingLiteralSequence g1 ++ extractLeadingLiteralSequence g2
+  | .mk (.longest gs) => gs.flatMap extractLeadingLiteralSequence
+  | .mk (.layout _) => []
+where
+  /-- Check if a grammar expression consists only of literals -/
+  isAllLiterals : GrammarExpr → Bool
+    | .mk (.lit _) => true
+    | .mk (.seq g1 g2) => isAllLiterals g1 && isAllLiterals g2
+    | .mk (.node _ g') => isAllLiterals g'
+    | .mk (.bind _ g') => isAllLiterals g'
+    | .mk (.cut g') => isAllLiterals g'
+    | .mk (.layout _) => true  -- Layout annotations don't affect literal-ness
+    | _ => false
+
+/-- Extract all leading keywords from all productions.
+    These are keyword-like literals that start any production alternative.
+    This complements extractKeywords which finds FOLLOW conflicts. -/
+def extractLeadingKeywords (prods : Productions) : List String :=
+  prods.flatMap (fun (_, g) => extractStartLiterals g)
+  |>.filter Util.isKeywordLikeWithDash
+  |>.eraseDups
+
+/-- Extract annotation names from grammar expressions.
+    Annotation names appear after "→" in grammar productions (e.g., `"foo" bar → myAnnotation`).
+    These must remain identifiers, not keywords. -/
+partial def extractAnnotationNames : GrammarExpr → List String
+  | .mk .empty => []
+  | .mk (.lit _) => []
+  | .mk (.ref _) => []
+  | .mk (.seq g1 g2) => extractAnnotationNames g1 ++ extractAnnotationNames g2
+  | .mk (.alt g1 g2) => extractAnnotationNames g1 ++ extractAnnotationNames g2
+  | .mk (.star g') => extractAnnotationNames g'
+  | .mk (.bind _ g') => extractAnnotationNames g'
+  -- Node annotations: the name here is the annotation name!
+  | .mk (.node name g') => name :: extractAnnotationNames g'
+  -- PEG extensions
+  | .mk (.cut g') => extractAnnotationNames g'
+  | .mk (.ordered g1 g2) => extractAnnotationNames g1 ++ extractAnnotationNames g2
+  | .mk (.longest gs) => gs.flatMap extractAnnotationNames
+  -- Layout annotations
+  | .mk (.layout _) => []
+
+/-- Extract all annotation names from all productions -/
+def extractAllAnnotationNames (prods : Productions) : List String :=
+  prods.flatMap (fun (_, g) => extractAnnotationNames g)
+  |>.eraseDups
+
+/-- Extract leading keywords from declaration-level productions only.
+    Declaration productions (like `decl`, `File.decl`) use keywords at the start
+    to distinguish different declaration types (adt, type, rule, verified, etc.)
+    EXCLUDES keywords that are also used as annotation names (after →).
+    Only extracts the FIRST literal (keyword) of each production, since subsequent
+    literals in a sequence (like "rule" in "verified" "rule") don't need to be
+    reserved as keywords - the parser handles them via grammar structure. -/
+def extractDeclLeadingKeywords (prods : Productions) : List String :=
+  let declProds := prods.filter fun (name, _) =>
+    name.endsWith "decl" || name.endsWith "Decl" ||
+    name == "File.decl" || name == "File.innerDecl" ||
+    name.startsWith "File." && (name.endsWith "Decl" || name.endsWith "decl")
+  let allAnnotations := extractAllAnnotationNames prods
+  declProds.flatMap (fun (_, g) => extractStartLiterals g)
+  |>.filter Util.isKeywordLikeWithDash
+  |>.filter (fun kw => !allAnnotations.contains kw)  -- Exclude annotation names
+  |>.eraseDups
+
+/-- Check if a string contains a substring (simple implementation) -/
+partial def containsSubstring (s : String) (sub : String) : Bool :=
+  let n := sub.length
+  if n == 0 then true
+  else if n > s.length then false
+  else
+    let rec go (i : Nat) : Bool :=
+      if i + n > s.length then false
+      else if (s.drop i).take n == sub then true
+      else go (i + 1)
+    go 0
+
+/-- Extract keywords from source text using simple pattern matching.
+    This allows pre-scanning a .lego file before parsing to discover
+    keywords defined within it (needed for self-referential grammars).
+    Pattern: looks for quoted strings in production contexts like
+    `::=` or `→` lines that appear to be grammar definitions. -/
+def extractKeywordsFromSource (source : String) : List String :=
+  let lines := source.splitOn "\n"
+  -- Only look at lines that contain grammar-like patterns
+  let grammarLines := lines.filter fun line =>
+    containsSubstring line "::=" || containsSubstring line "→"
+  -- Extract quoted strings that look like keywords
+  grammarLines.flatMap fun line =>
+    let chars := line.toList
+    extractQuotedStrings chars []
+  |>.filter Util.isKeywordLikeWithDash
+  |>.eraseDups
+where
+  /-- Extract all double-quoted strings from a character list -/
+  extractQuotedStrings : List Char → List String → List String
+    | [], acc => acc
+    | '"' :: rest, acc =>
+      let contents := rest.takeWhile (· != '"')
+      let str := String.mk contents
+      let remaining := rest.drop (contents.length + 1)  -- +1 for closing quote
+      extractQuotedStrings remaining (str :: acc)
+    | _ :: rest, acc => extractQuotedStrings rest acc
+  termination_by cs _ => cs.length
+
 /-- Check if a grammar expression ends with a star (greedy) -/
 partial def endsWithStar : GrammarExpr → Bool
   | .mk .empty => false
@@ -744,7 +868,11 @@ def loadGrammarFromAST (ast : Term) (startProd : String) : LoadedGrammar :=
   let prods := extractAllProductions ast
   let tokenProds := extractTokenProductions ast
   let symbols := extractAllSymbols prods
-  let keywords := extractKeywords prods
+  -- Extract follow-conflict keywords AND declaration-level leading keywords
+  -- (but NOT term-level leading keywords which conflict with annotation names)
+  let followKeywords := extractKeywords prods
+  let declKeywords := extractDeclLeadingKeywords prods
+  let keywords := (followKeywords ++ declKeywords).eraseDups
   let validationResult := validateProductions prods
   { productions := prods, tokenProductions := tokenProds, symbols := symbols, keywords := keywords, startProd := startProd, validation := validationResult }
 

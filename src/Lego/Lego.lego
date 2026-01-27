@@ -635,9 +635,14 @@ piece ProofTactics
 -----------------------------------------------------
 
 piece VerifiedTransform
+  -- Verified rules can appear at top-level (decl) or inside pieces (pieceItem)
   decl ::= "verified" "rule" <ident> ":"
            term "~>" term
            "via" term ";" → verifiedRule ;
+           
+  pieceItem ::= "verified" "rule" <ident> ":"
+                term "~>" term
+                "via" term ";" → verifiedRule ;
 
   term ::= "preserves" term term term  → preserves
          | "transport_prop" term term term → transportProp

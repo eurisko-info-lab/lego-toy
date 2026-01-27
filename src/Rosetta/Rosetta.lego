@@ -19,17 +19,17 @@ lang Rosetta (Lego) :=
 -----------------------------------------------------
 
 piece Isomorphisms
-  term ::= "iso" term term             → iso       -- iso fwd bwd
+  term ::= "iso" term term             → Iso       -- iso fwd bwd
          | "forward" term term         → forward   -- forward iso x
          | "backward" term term        → backward  -- backward iso x
          | "comp" term term            → isoComp   -- iso composition
          | "sym" term                  → isoSym ;  -- iso reversal
 
-  rule isoForward: (forward (iso $fwd $bwd) $x) ~~> (App $fwd $x) ;
-  rule isoBackward: (backward (iso $fwd $bwd) $x) ~~> (App $bwd $x) ;
-  rule isoCompFwd: (forward (comp (iso $f1 $b1) (iso $f2 $b2)) $x) ~~>
-    (forward (iso $f2 $b2) (forward (iso $f1 $b1) $x)) ;
-  rule isoSym: (sym (iso $fwd $bwd)) ~~> (iso $bwd $fwd) ;
+  rule isoForward: (forward (Iso $fwd $bwd) $x) ~~> (App $fwd $x) ;
+  rule isoBackward: (backward (Iso $fwd $bwd) $x) ~~> (App $bwd $x) ;
+  rule isoCompFwd: (forward (comp (Iso $f1 $b1) (Iso $f2 $b2)) $x) ~~>
+    (forward (Iso $f2 $b2) (forward (Iso $f1 $b1) $x)) ;
+  rule isoSym: (sym (Iso $fwd $bwd)) ~~> (Iso $bwd $fwd) ;
 
 -----------------------------------------------------
 -- Grammar Representation
@@ -37,14 +37,14 @@ piece Isomorphisms
 -----------------------------------------------------
 
 piece Grammars
-  term ::= "Terminal" <string>         → terminal
-         | "NonTerminal" <ident>       → nonTerminal
-         | "Epsilon"                   → epsilon
-         | "Seq" term term             → seqSym
-         | "Alt" term term             → altSym
-         | "Star" term                 → star
-         | "Production" <ident> term <ident> → production
-         | "Grammar" term*             → grammar ;
+  term ::= "Terminal" <string>         → Terminal
+         | "NonTerminal" <ident>       → NonTerminal
+         | "Epsilon"                   → Epsilon
+         | "Seq" term term             → SeqSym
+         | "Alt" term term             → AltSym
+         | "Star" term                 → Star
+         | "Production" <ident> term <ident> → Production
+         | "Grammar" term*             → Grammar ;
 
 -----------------------------------------------------
 -- Language Definition
@@ -55,12 +55,12 @@ piece Languages
   term ::= "Language" <ident> term term → language ;  -- Language name grammar iso
 
   -- Core Rosetta operation: translate between languages
-  rule translate: (translate (Language $n1 $g1 $iso1) (Language $n2 $g2 $iso2) $src) ~~>
-    (forward $iso2 (backward $iso1 $src)) ;
+  rule translate: (translate (Language $n1 $g1 $tr1) (Language $n2 $g2 $tr2) $src) ~~>
+    (forward $tr2 (backward $tr1 $src)) ;
 
   -- Round-trip property
-  rule roundtrip: (roundtrip (Language $n $g $iso) $src) ~~>
-    (forward $iso (backward $iso $src)) ;
+  rule roundtrip: (roundtrip (Language $n $g $tr) $src) ~~>
+    (forward $tr (backward $tr $src)) ;
 
 -----------------------------------------------------
 -- File Structure

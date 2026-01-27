@@ -108,8 +108,11 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
         let mergedLegoProds := legoProds ++ bootstrapGrammar.productions
         let mergedLegoTokenProds := legoTokenProds ++ bootstrapGrammar.tokenProductions
         let mergedLegoSymbols := Loader.extractAllSymbols mergedLegoProds
-        -- Lego-specific keywords: none needed beyond the heuristic
-        let mergedLegoKeywords := Loader.extractKeywords mergedLegoProds
+        -- Extract follow-conflict keywords AND declaration-level leading keywords
+        -- (but NOT term-level leading keywords which conflict with annotation names)
+        let followKeywords := Loader.extractKeywords mergedLegoProds
+        let declKeywords := Loader.extractDeclLeadingKeywords mergedLegoProds
+        let mergedLegoKeywords := (followKeywords ++ declKeywords).eraseDups
         let legoGrammar : Loader.LoadedGrammar := {
           productions := mergedLegoProds
           tokenProductions := mergedLegoTokenProds
@@ -118,6 +121,9 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
           startProd := "File.legoFile"
         }
         -- Step 4: Parse Rosetta.lego with Lego's grammar
+        -- Note: NO additional keywords needed here! Grammar definition files use
+        -- "quoted" strings for keywords, so identifiers like `iso` after `→`
+        -- must remain Token.ident, not become Token.sym
         let rosettaContent ← IO.FS.readFile rosettaPath
         match Loader.parseWithGrammarE legoGrammar rosettaContent with
         | .error e => return Except.error s!"Failed to parse {rosettaPath} with Lego grammar: {e}"
@@ -130,7 +136,7 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
           let mergedRosettaProds := rosettaProds ++ mergedLegoProds
           let mergedRosettaTokenProds := rosettaTokenProds ++ mergedLegoTokenProds
           let mergedRosettaSymbols := Loader.extractAllSymbols mergedRosettaProds
-          -- Rosetta-specific keywords: none needed beyond the heuristic
+          -- Rosetta-specific keywords: only follow-conflict keywords
           let mergedRosettaKeywords := Loader.extractKeywords mergedRosettaProds
           let rosettaGrammar : Loader.LoadedGrammar := {
             productions := mergedRosettaProds
@@ -140,6 +146,7 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
             startProd := "File.rosettaFile"  -- Rosetta files use rosettaFile start
           }
           -- Step 6: Parse Lean.lego with Lego's grammar
+          -- Note: NO additional keywords needed here - same reason as Rosetta.lego
           let leanContent ← IO.FS.readFile leanPath
           match Loader.parseWithGrammarE legoGrammar leanContent with
           | .error e => return Except.error s!"Failed to parse {leanPath} with Lego grammar: {e}"
@@ -372,11 +379,13 @@ where
 
     -- Now parse with the merged grammar (parents + bootstrap)
     let mergedProds := inheritedProds ++ rt.grammar.productions
+    let followKeywords := Loader.extractKeywords mergedProds
+    let declKeywords := Loader.extractDeclLeadingKeywords mergedProds
     let parsingGrammar : Loader.LoadedGrammar := {
       productions := mergedProds
       tokenProductions := inheritedTokenProds ++ rt.grammar.tokenProductions
       symbols := Loader.extractAllSymbols mergedProds
-      keywords := Loader.extractKeywords mergedProds
+      keywords := (followKeywords ++ declKeywords).eraseDups
       startProd := "File.legoFile"
     }
 
@@ -393,7 +402,9 @@ where
     let mergedTokenProds := rt.grammar.tokenProductions ++ inheritedTokenProds ++ childTokenProds
 
     let symbols := Loader.extractAllSymbols mergedProds
-    let keywords := Loader.extractKeywords mergedProds
+    let followKeywords := Loader.extractKeywords mergedProds
+    let declKeywords := Loader.extractDeclLeadingKeywords mergedProds
+    let keywords := (followKeywords ++ declKeywords).eraseDups
     let validation := Loader.validateProductions mergedProds
 
     -- Keep File.legoFile as start so merged grammar can parse .lego files

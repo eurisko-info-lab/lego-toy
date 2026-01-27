@@ -59,8 +59,8 @@ def testHardcodedParsesBootstrap : IO TestResult := do
   -- Read Bootstrap.lego
   let content ← IO.FS.readFile "./test/lego/Bootstrap.lego"
 
-  -- Parse with hardcoded grammar
-  match Lego.Bootstrap.parseLegoFile content with
+  -- Parse with hardcoded grammar (Bootstrap.lego ONLY)
+  match Lego.Bootstrap.parseBootstrapContent content with
   | none => return assertTrue "hardcoded_bootstrap_parse" false "Parse failed"
   | some ast =>
     return assertTrue "hardcoded_bootstrap_parse" (ast.toString.length > 100) ""

@@ -181,16 +181,29 @@ def testVerifiedRuleValidation : IO Nat := do
     (.var "x") (.var "x") (.con "refl" [.var "x"])
   if ← assertNone "valid_verified_rule_refl" err1 then passed := passed + 1
 
-  -- Test: invalid verified rule - wrong proof type
+  -- Test: invalid verified rule - wrong proof endpoints
   -- verified rule bad : x ~> y via refl(x)  -- refl(x) has type Path _ x x, not x y
   let err2 := verifyVerifiedRule typeRules "bad"
     (.var "x") (.var "y") (.con "refl" [.var "x"])
-  if ← assertSome "invalid_verified_rule_wrong_type" err2 then passed := passed + 1
+  if ← assertSome "invalid_verified_rule_wrong_endpoints" err2 then passed := passed + 1
 
-  -- Test: missing proof type
-  let err3 := verifyVerifiedRule typeRules "missing"
+  -- Test: invalid verified rule - proof has wrong type entirely (not Path)
+  -- verified rule bad2 : x ~> x via zero  -- zero : Nat, not Path
+  let zeroRule : TypeRule := {
+    name := "zeroType"
+    subject := .con "zero" []
+    type := .con "Nat" []
+    conditions := []
+  }
+  let typeRulesWithNat := reflRule :: [zeroRule]
+  let err3 := verifyVerifiedRule typeRulesWithNat "bad2"
+    (.var "x") (.var "x") (.con "zero" [])
+  if ← assertSome "invalid_verified_rule_not_path" err3 then passed := passed + 1
+
+  -- Test: missing proof type (can't infer)
+  let err4 := verifyVerifiedRule typeRules "missing"
     (.var "x") (.var "x") (.lit "not_a_path")
-  if ← assertSome "invalid_verified_rule_no_type" err3 then passed := passed + 1
+  if ← assertSome "invalid_verified_rule_no_type" err4 then passed := passed + 1
 
   pure passed
 
@@ -208,7 +221,14 @@ def testReprEquivValidation : IO Nat := do
     conditions := []
   }
 
-  let typeRules := [idEquivRule]
+  let zeroRule : TypeRule := {
+    name := "zeroType"
+    subject := .con "zero" []
+    type := .con "Nat" []
+    conditions := []
+  }
+
+  let typeRules := [idEquivRule, zeroRule]
 
   -- Test: valid repr with idEquiv
   -- repr Nat ≃ Nat via idEquiv(Nat)
@@ -216,16 +236,22 @@ def testReprEquivValidation : IO Nat := do
     (.con "Nat" []) (.con "Nat" []) (.con "idEquiv" [.con "Nat" []])
   if ← assertNone "valid_repr_idEquiv" err1 then passed := passed + 1
 
-  -- Test: invalid repr - types don't match
+  -- Test: invalid repr - types don't match (wrong Equiv endpoints)
   -- repr Nat ≃ Bool via idEquiv(Nat)  -- idEquiv(Nat) : Equiv Nat Nat, not Nat Bool
   let err2 := verifyReprEquiv typeRules "natBool"
     (.con "Nat" []) (.con "Bool" []) (.con "idEquiv" [.con "Nat" []])
-  if ← assertSome "invalid_repr_wrong_type" err2 then passed := passed + 1
+  if ← assertSome "invalid_repr_wrong_endpoints" err2 then passed := passed + 1
 
-  -- Test: missing equiv type
-  let err3 := verifyReprEquiv typeRules "missing"
+  -- Test: invalid repr - equiv has wrong type entirely (not Equiv)
+  -- repr Nat ≃ Nat via zero  -- zero : Nat, not Equiv
+  let err3 := verifyReprEquiv typeRules "natZero"
+    (.con "Nat" []) (.con "Nat" []) (.con "zero" [])
+  if ← assertSome "invalid_repr_not_equiv" err3 then passed := passed + 1
+
+  -- Test: missing equiv type (can't infer)
+  let err4 := verifyReprEquiv typeRules "missing"
     (.con "Nat" []) (.con "Nat" []) (.lit "not_an_equiv")
-  if ← assertSome "invalid_repr_no_type" err3 then passed := passed + 1
+  if ← assertSome "invalid_repr_no_type" err4 then passed := passed + 1
 
   pure passed
 
@@ -514,11 +540,11 @@ def main : IO UInt32 := do
 
   let verifiedPassed ← testVerifiedRuleValidation
   passed := passed + verifiedPassed
-  total := total + 3
+  total := total + 4
 
   let reprPassed ← testReprEquivValidation
   passed := passed + reprPassed
-  total := total + 3
+  total := total + 4
 
   let extractPassed ← testASTExtraction
   passed := passed + extractPassed

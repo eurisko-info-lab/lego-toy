@@ -317,20 +317,23 @@ def testCubicalProofCombinators : IO Nat := do
     conditions := []
   }
 
-  -- For sym/trans, we use unconditional rules that work with any path
-  -- (Real cubical type theory would need dependent type checking)
+  -- sym : Path A a b → Path A b a
   let symRule : TypeRule := {
     name := "symType"
     subject := .con "sym" [.var "$p"]
     type := .con "Path" [.var "$A", .var "$b", .var "$a"]
-    conditions := []  -- Simplified: no conditions for testing
+    conditions := [.con ":" [.var "$p", .con "Path" [.var "$A", .var "$a", .var "$b"]]]
   }
 
+  -- trans : Path A a b → Path A b c → Path A a c
   let transRule : TypeRule := {
     name := "transType"
     subject := .con "trans" [.var "$p", .var "$q"]
     type := .con "Path" [.var "$A", .var "$a", .var "$c"]
-    conditions := []  -- Simplified: no conditions for testing
+    conditions := [
+      .con ":" [.var "$p", .con "Path" [.var "$A", .var "$a", .var "$b"]],
+      .con ":" [.var "$q", .con "Path" [.var "$A", .var "$b", .var "$c"]]
+    ]
   }
 
   -- ua : Equiv A B → Path Type A B (univalence)
@@ -338,7 +341,7 @@ def testCubicalProofCombinators : IO Nat := do
     name := "uaType"
     subject := .con "ua" [.var "$e"]
     type := .con "Path" [.con "Type" [], .var "$A", .var "$B"]
-    conditions := []  -- Simplified for testing
+    conditions := [.con ":" [.var "$e", .con "Equiv" [.var "$A", .var "$B"]]]
   }
 
   let idEquivRule : TypeRule := {
@@ -350,9 +353,9 @@ def testCubicalProofCombinators : IO Nat := do
 
   let typeRules := [reflRule, symRule, transRule, uaRule, idEquivRule]
 
-  -- Test 1: sym(p) has Path type (structure check)
-  let symP := Term.con "sym" [.var "p"]
-  let ty1 := inferType typeRules symP
+  -- Test 1: sym(refl(x)) has Path type (refl(x) : Path A x x, so sym gives Path A x x)
+  let symRefl := Term.con "sym" [.con "refl" [.var "x"]]
+  let ty1 := inferType typeRules symRefl
   match ty1 with
   | some (.con "Path" _) =>
     IO.println "  ✓ sym_has_path_type"
@@ -360,9 +363,9 @@ def testCubicalProofCombinators : IO Nat := do
   | _ =>
     IO.println "  ✗ sym_has_path_type (expected Path type)"
 
-  -- Test 2: ua(e) has Path type (univalence gives path in Type)
-  let uaE := Term.con "ua" [.var "e"]
-  let ty2 := inferType typeRules uaE
+  -- Test 2: ua(idEquiv(A)) has Path type (univalence: Equiv A A → Path Type A A)
+  let uaIdEquiv := Term.con "ua" [.con "idEquiv" [.var "A"]]
+  let ty2 := inferType typeRules uaIdEquiv
   match ty2 with
   | some (.con "Path" [.con "Type" [], _, _]) =>
     IO.println "  ✓ ua_gives_path_in_type"
@@ -370,9 +373,9 @@ def testCubicalProofCombinators : IO Nat := do
   | _ =>
     IO.println "  ✗ ua_gives_path_in_type (expected Path Type _ _)"
 
-  -- Test 3: trans(p, q) has Path type (transitivity)
-  let transP := Term.con "trans" [.var "p", .var "q"]
-  let ty3 := inferType typeRules transP
+  -- Test 3: trans(refl(x), refl(x)) has Path type (transitivity of reflexivity)
+  let transRefl := Term.con "trans" [.con "refl" [.var "x"], .con "refl" [.var "x"]]
+  let ty3 := inferType typeRules transRefl
   match ty3 with
   | some (.con "Path" _) =>
     IO.println "  ✓ trans_has_path_type"
@@ -393,6 +396,7 @@ def testEquivalenceComposition : IO Nat := do
   IO.println "\n── Equivalence Composition ──"
   let mut passed := 0
 
+  -- idEquiv : (A : Type) → Equiv A A
   let idEquivRule : TypeRule := {
     name := "idEquivType"
     subject := .con "idEquiv" [.var "$A"]
@@ -400,20 +404,23 @@ def testEquivalenceComposition : IO Nat := do
     conditions := []
   }
 
-  -- Simplified invEquiv for testing (no conditions)
+  -- invEquiv : Equiv A B → Equiv B A
   let invEquivRule : TypeRule := {
     name := "invEquivType"
     subject := .con "invEquiv" [.var "$e"]
     type := .con "Equiv" [.var "$B", .var "$A"]
-    conditions := []  -- Simplified: real version would check $e : Equiv A B
+    conditions := [.con ":" [.var "$e", .con "Equiv" [.var "$A", .var "$B"]]]
   }
 
-  -- Simplified compEquiv for testing
+  -- compEquiv : Equiv A B → Equiv B C → Equiv A C
   let compEquivRule : TypeRule := {
     name := "compEquivType"
     subject := .con "compEquiv" [.var "$e1", .var "$e2"]
     type := .con "Equiv" [.var "$A", .var "$C"]
-    conditions := []  -- Simplified
+    conditions := [
+      .con ":" [.var "$e1", .con "Equiv" [.var "$A", .var "$B"]],
+      .con ":" [.var "$e2", .con "Equiv" [.var "$B", .var "$C"]]
+    ]
   }
 
   let typeRules := [idEquivRule, invEquivRule, compEquivRule]
@@ -426,9 +433,9 @@ def testEquivalenceComposition : IO Nat := do
   | _ =>
     IO.println "  ✗ idEquiv_endpoints_match (wrong type structure)"
 
-  -- Test 2: invEquiv(e) has Equiv type
-  let invE := Term.con "invEquiv" [.var "e"]
-  let ty2 := inferType typeRules invE
+  -- Test 2: invEquiv(idEquiv(A)) has Equiv type (inverting identity gives identity)
+  let invIdEquiv := Term.con "invEquiv" [.con "idEquiv" [.var "A"]]
+  let ty2 := inferType typeRules invIdEquiv
   match ty2 with
   | some (.con "Equiv" _) =>
     IO.println "  ✓ invEquiv_has_equiv_type"
@@ -436,9 +443,9 @@ def testEquivalenceComposition : IO Nat := do
   | _ =>
     IO.println "  ✗ invEquiv_has_equiv_type (expected Equiv type)"
 
-  -- Test 3: compEquiv(e1, e2) has Equiv type
-  let compE := Term.con "compEquiv" [.var "e1", .var "e2"]
-  let ty3 := inferType typeRules compE
+  -- Test 3: compEquiv(idEquiv(A), idEquiv(A)) has Equiv type (composing identities)
+  let compIdEquiv := Term.con "compEquiv" [.con "idEquiv" [.var "A"], .con "idEquiv" [.var "A"]]
+  let ty3 := inferType typeRules compIdEquiv
   match ty3 with
   | some (.con "Equiv" _) =>
     IO.println "  ✓ compEquiv_has_equiv_type"

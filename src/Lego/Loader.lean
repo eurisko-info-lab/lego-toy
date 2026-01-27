@@ -548,129 +548,22 @@ partial def extractStartLiterals (g : GrammarExpr) : List String :=
   -- Layout annotations
   | .mk (.layout _) => []
 
-/-- Extract ALL leading literals from a sequence prefix, stopping at first non-literal.
-    For "verified" "rule" <ident>, returns ["verified", "rule"].
-    This is needed for productions where multiple keywords appear at the start. -/
-partial def extractLeadingLiteralSequence (g : GrammarExpr) : List String :=
-  match g with
-  | .mk .empty => []
-  | .mk (.lit s) => [s]
-  | .mk (.ref _) => []  -- Stop at references
-  | .mk (.seq g1 g2) =>
-    -- Get literals from g1, if all of g1 is literals, continue to g2
-    let first := extractLeadingLiteralSequence g1
-    if first.isEmpty then []
-    else if isAllLiterals g1 then first ++ extractLeadingLiteralSequence g2
-    else first
-  | .mk (.alt g1 g2) => extractLeadingLiteralSequence g1 ++ extractLeadingLiteralSequence g2
-  | .mk (.star _) => []  -- Stop at star (optional/repeating elements)
-  | .mk (.bind _ g') => extractLeadingLiteralSequence g'
-  | .mk (.node _ g') => extractLeadingLiteralSequence g'
-  | .mk (.cut g') => extractLeadingLiteralSequence g'
-  | .mk (.ordered g1 g2) => extractLeadingLiteralSequence g1 ++ extractLeadingLiteralSequence g2
-  | .mk (.longest gs) => gs.flatMap extractLeadingLiteralSequence
-  | .mk (.layout _) => []
-where
-  /-- Check if a grammar expression consists only of literals -/
-  isAllLiterals : GrammarExpr → Bool
-    | .mk (.lit _) => true
-    | .mk (.seq g1 g2) => isAllLiterals g1 && isAllLiterals g2
-    | .mk (.node _ g') => isAllLiterals g'
-    | .mk (.bind _ g') => isAllLiterals g'
-    | .mk (.cut g') => isAllLiterals g'
-    | .mk (.layout _) => true  -- Layout annotations don't affect literal-ness
-    | _ => false
+/-! ## Keyword Extraction Based on FOLLOW Conflicts
 
-/-- Extract all leading keywords from all productions.
-    These are keyword-like literals that start any production alternative.
-    This complements extractKeywords which finds FOLLOW conflicts. -/
-def extractLeadingKeywords (prods : Productions) : List String :=
-  prods.flatMap (fun (_, g) => extractStartLiterals g)
-  |>.filter Util.isKeywordLikeWithDash
-  |>.eraseDups
+    Design Principle: Each language owns its tokenizer through inheritance.
+    Keywords are literals that need to be distinguished from identifiers
+    to avoid FOLLOW conflicts.
 
-/-- Extract annotation names from grammar expressions.
-    Annotation names appear after "→" in grammar productions (e.g., `"foo" bar → myAnnotation`).
-    These must remain identifiers, not keywords. -/
-partial def extractAnnotationNames : GrammarExpr → List String
-  | .mk .empty => []
-  | .mk (.lit _) => []
-  | .mk (.ref _) => []
-  | .mk (.seq g1 g2) => extractAnnotationNames g1 ++ extractAnnotationNames g2
-  | .mk (.alt g1 g2) => extractAnnotationNames g1 ++ extractAnnotationNames g2
-  | .mk (.star g') => extractAnnotationNames g'
-  | .mk (.bind _ g') => extractAnnotationNames g'
-  -- Node annotations: the name here is the annotation name!
-  | .mk (.node name g') => name :: extractAnnotationNames g'
-  -- PEG extensions
-  | .mk (.cut g') => extractAnnotationNames g'
-  | .mk (.ordered g1 g2) => extractAnnotationNames g1 ++ extractAnnotationNames g2
-  | .mk (.longest gs) => gs.flatMap extractAnnotationNames
-  -- Layout annotations
-  | .mk (.layout _) => []
+    A keyword needs reservation when:
+    1. It follows a reference R in some production
+    2. R (transitively) can end with a star (greedy)
 
-/-- Extract all annotation names from all productions -/
-def extractAllAnnotationNames (prods : Productions) : List String :=
-  prods.flatMap (fun (_, g) => extractAnnotationNames g)
-  |>.eraseDups
+    This finds FOLLOW conflicts where a greedy star could consume
+    a keyword that's meant to be a delimiter.
 
-/-- Extract leading keywords from declaration-level productions only.
-    Declaration productions (like `decl`, `File.decl`) use keywords at the start
-    to distinguish different declaration types (adt, type, rule, verified, etc.)
-    EXCLUDES keywords that are also used as annotation names (after →).
-    Only extracts the FIRST literal (keyword) of each production, since subsequent
-    literals in a sequence (like "rule" in "verified" "rule") don't need to be
-    reserved as keywords - the parser handles them via grammar structure. -/
-def extractDeclLeadingKeywords (prods : Productions) : List String :=
-  let declProds := prods.filter fun (name, _) =>
-    name.endsWith "decl" || name.endsWith "Decl" ||
-    name == "File.decl" || name == "File.innerDecl" ||
-    name.startsWith "File." && (name.endsWith "Decl" || name.endsWith "decl")
-  let allAnnotations := extractAllAnnotationNames prods
-  declProds.flatMap (fun (_, g) => extractStartLiterals g)
-  |>.filter Util.isKeywordLikeWithDash
-  |>.filter (fun kw => !allAnnotations.contains kw)  -- Exclude annotation names
-  |>.eraseDups
-
-/-- Check if a string contains a substring (simple implementation) -/
-partial def containsSubstring (s : String) (sub : String) : Bool :=
-  let n := sub.length
-  if n == 0 then true
-  else if n > s.length then false
-  else
-    let rec go (i : Nat) : Bool :=
-      if i + n > s.length then false
-      else if (s.drop i).take n == sub then true
-      else go (i + 1)
-    go 0
-
-/-- Extract keywords from source text using simple pattern matching.
-    This allows pre-scanning a .lego file before parsing to discover
-    keywords defined within it (needed for self-referential grammars).
-    Pattern: looks for quoted strings in production contexts like
-    `::=` or `→` lines that appear to be grammar definitions. -/
-def extractKeywordsFromSource (source : String) : List String :=
-  let lines := source.splitOn "\n"
-  -- Only look at lines that contain grammar-like patterns
-  let grammarLines := lines.filter fun line =>
-    containsSubstring line "::=" || containsSubstring line "→"
-  -- Extract quoted strings that look like keywords
-  grammarLines.flatMap fun line =>
-    let chars := line.toList
-    extractQuotedStrings chars []
-  |>.filter Util.isKeywordLikeWithDash
-  |>.eraseDups
-where
-  /-- Extract all double-quoted strings from a character list -/
-  extractQuotedStrings : List Char → List String → List String
-    | [], acc => acc
-    | '"' :: rest, acc =>
-      let contents := rest.takeWhile (· != '"')
-      let str := String.mk contents
-      let remaining := rest.drop (contents.length + 1)  -- +1 for closing quote
-      extractQuotedStrings remaining (str :: acc)
-    | _ :: rest, acc => extractQuotedStrings rest acc
-  termination_by cs _ => cs.length
+    Example: `letin ::= ... letinvalue "in" ...` where letinvalue
+    transitively references appexpr which ends with `appitem*`.
+    Without making "in" a keyword, the star would consume it. -/
 
 /-- Check if a grammar expression ends with a star (greedy) -/
 partial def endsWithStar : GrammarExpr → Bool
@@ -682,14 +575,12 @@ partial def endsWithStar : GrammarExpr → Bool
   | .mk (.star _) => true
   | .mk (.bind _ g') => endsWithStar g'
   | .mk (.node _ g') => endsWithStar g'
-  -- PEG extensions
   | .mk (.cut g') => endsWithStar g'
   | .mk (.ordered g1 g2) => endsWithStar g1 || endsWithStar g2
   | .mk (.longest gs) => gs.any endsWithStar
-  -- Layout annotations
   | .mk (.layout _) => false
 
-/-- Helper: check if a grammar can end via ref to a star-ending production -/
+/-- Check if a grammar can end via ref to a star-ending production -/
 partial def canEndViaRef (starEnds : List String) (g : GrammarExpr) : Bool :=
   match g with
   | .mk .empty => false
@@ -700,58 +591,42 @@ partial def canEndViaRef (starEnds : List String) (g : GrammarExpr) : Bool :=
   | .mk (.star _) => true
   | .mk (.bind _ g') => canEndViaRef starEnds g'
   | .mk (.node _ g') => canEndViaRef starEnds g'
-  -- PEG extensions
   | .mk (.cut g') => canEndViaRef starEnds g'
   | .mk (.ordered g1 g2) => canEndViaRef starEnds g1 || canEndViaRef starEnds g2
   | .mk (.longest gs) => gs.any (canEndViaRef starEnds ·)
-  -- Layout annotations
   | .mk (.layout _) => false
 
-/-- Compute which productions can transitively end with a star.
-    Returns a set of production names that can end with star.
-    Uses iterative fixed-point computation for efficiency. -/
+/-- Compute which productions can transitively end with a star -/
 def computeStarEndingProds (prods : Productions) : List String :=
-  -- Build prodMap for O(1) lookup
   let prodMap := prods.foldl (init := HashMap.emptyWithCapacity prods.length) fun acc (name, g) =>
     acc.insert name g
-  -- Initialize: all productions that DIRECTLY end with star
   let directEnds := prods.filterMap fun (name, g) =>
     if endsWithStar g then some name else none
-  -- Fixed-point: add productions that end with a ref to a star-ending prod
   go 20 prodMap directEnds
 where
   go : Nat → HashMap String GrammarExpr → List String → List String
     | 0, _, starEnds => starEnds
     | fuel+1, prodMap, starEnds =>
-      -- Find new productions that end via ref to star-ending prod
       let newEnds := prodMap.fold (init := starEnds) fun acc name g =>
         if acc.contains name then acc
         else if canEndViaRef starEnds g then name :: acc
         else acc
-      -- Fixed point?
       if newEnds.length == starEnds.length then starEnds
       else go fuel prodMap newEnds
 
-/-- Check if a production (transitively) can end with a star.
-    Uses pre-computed set for O(1) lookup. -/
-def canEndWithStar (starEndingProds : List String) (prodName : String) : Bool :=
-  starEndingProds.contains prodName
-
-/-- Extract the reference at the END of a grammar expression, if any -/
+/-- Extract the reference at the END of a grammar expression -/
 partial def extractEndRef : GrammarExpr → Option String
   | .mk .empty => none
   | .mk (.lit _) => none
   | .mk (.ref name) => some name
-  | .mk (.seq _ g2) => extractEndRef g2  -- look at the end
+  | .mk (.seq _ g2) => extractEndRef g2
   | .mk (.alt g1 g2) =>
-    -- Both branches must end with same ref (or we return none)
     match extractEndRef g1, extractEndRef g2 with
     | some r1, some r2 => if r1 == r2 then some r1 else none
     | _, _ => none
-  | .mk (.star _) => none  -- star doesn't have a fixed end ref
+  | .mk (.star _) => none
   | .mk (.bind _ g') => extractEndRef g'
   | .mk (.node _ g') => extractEndRef g'
-  -- PEG extensions
   | .mk (.cut g') => extractEndRef g'
   | .mk (.ordered g1 g2) =>
     match extractEndRef g1, extractEndRef g2 with
@@ -761,12 +636,9 @@ partial def extractEndRef : GrammarExpr → Option String
     match gs.filterMap extractEndRef |>.eraseDups with
     | [r] => some r
     | _ => none
-  -- Layout annotations
   | .mk (.layout _) => none
 
-/-- Find literals that follow a reference in a grammar.
-    Returns pairs of (refName, literalThatFollows).
-    Looks for patterns where a ref is at the END of g1 in (seq g1 g2). -/
+/-- Find literals that follow a reference in a grammar -/
 partial def findRefFollows (g : GrammarExpr) : List (String × String) :=
   match g with
   | .mk .empty => []
@@ -774,7 +646,6 @@ partial def findRefFollows (g : GrammarExpr) : List (String × String) :=
   | .mk (.ref _) => []
   | .mk (.seq g1 g2) =>
     let fromRest := findRefFollows g1 ++ findRefFollows g2
-    -- If g1 ENDS with a ref, g2's start literals follow it
     match extractEndRef g1 with
     | some name =>
       let follows := extractStartLiterals g2
@@ -784,55 +655,18 @@ partial def findRefFollows (g : GrammarExpr) : List (String × String) :=
   | .mk (.star g') => findRefFollows g'
   | .mk (.bind _ g') => findRefFollows g'
   | .mk (.node _ g') => findRefFollows g'
-  -- PEG extensions
   | .mk (.cut g') => findRefFollows g'
   | .mk (.ordered g1 g2) => findRefFollows g1 ++ findRefFollows g2
   | .mk (.longest gs) => gs.flatMap findRefFollows
-  -- Layout annotations
   | .mk (.layout _) => []
 
-/-- Extract keywords that need to be reserved.
-
-    A keyword needs reservation when:
-    1. It follows a reference R in some production
-    2. R (transitively) can end with a star
-
-    This finds FOLLOW conflicts where a greedy star could consume
-    a keyword that's meant to be a delimiter.
-
-    Example: `letin ::= ... letinvalue "in" ...` where letinvalue
-    transitively references appexpr which ends with `appitem*`. -/
+/-- Extract keywords that need reservation based on FOLLOW conflicts -/
 def extractKeywords (prods : Productions) : List String :=
-  -- Pre-compute which productions can end with star (fixed-point)
   let starEndingProds := computeStarEndingProds prods
-  -- Step 1: Find all (ref, followingLiteral) pairs
   let refFollows := prods.flatMap fun (_, g) => findRefFollows g
-  -- Step 2: Filter to pairs where the ref can transitively end with star
   let conflictingLits := refFollows.filterMap fun (refName, lit) =>
-    if canEndWithStar starEndingProds refName then some lit else none
-  -- Step 3: Filter to keyword-like strings
-  -- Note: Language-specific keywords should be added by the caller
+    if starEndingProds.contains refName then some lit else none
   conflictingLits.filter Util.isKeywordLikeWithDash |>.eraseDups
-where
-  /-- Check if a grammar contains a specific literal -/
-  containsLiteral (g : GrammarExpr) (lit : String) : Bool :=
-    -- Use fold to avoid termination issues
-    let allLits := extractAllLiterals g
-    allLits.contains lit
-  extractAllLiterals (g : GrammarExpr) : List String :=
-    match g with
-    | .mk .empty => []
-    | .mk (.lit s) => [s]
-    | .mk (.ref _) => []
-    | .mk (.seq g1 g2) => extractAllLiterals g1 ++ extractAllLiterals g2
-    | .mk (.alt g1 g2) => extractAllLiterals g1 ++ extractAllLiterals g2
-    | .mk (.star g') => extractAllLiterals g'
-    | .mk (.bind _ g') => extractAllLiterals g'
-    | .mk (.node _ g') => extractAllLiterals g'
-    | .mk (.cut g') => extractAllLiterals g'
-    | .mk (.ordered g1 g2) => extractAllLiterals g1 ++ extractAllLiterals g2
-    | .mk (.longest gs) => gs.flatMap extractAllLiterals
-    | .mk (.layout _) => []
 
 /-! ## Validation Helpers -/
 
@@ -868,11 +702,8 @@ def loadGrammarFromAST (ast : Term) (startProd : String) : LoadedGrammar :=
   let prods := extractAllProductions ast
   let tokenProds := extractTokenProductions ast
   let symbols := extractAllSymbols prods
-  -- Extract follow-conflict keywords AND declaration-level leading keywords
-  -- (but NOT term-level leading keywords which conflict with annotation names)
-  let followKeywords := extractKeywords prods
-  let declKeywords := extractDeclLeadingKeywords prods
-  let keywords := (followKeywords ++ declKeywords).eraseDups
+  -- Simple keyword extraction: all keyword-like literals from the grammar
+  let keywords := extractKeywords prods
   let validationResult := validateProductions prods
   { productions := prods, tokenProductions := tokenProds, symbols := symbols, keywords := keywords, startProd := startProd, validation := validationResult }
 

@@ -537,7 +537,7 @@ def legoFileToLean (path : String) (mode : OutputMode := .full) : IO String := d
   let langName := extractGrammarName path
   -- Use Bootstrap parser only for Bootstrap.lego, Runtime parser for everything else
   let ast ← if path.endsWith "Bootstrap.lego" then
-    match Bootstrap.parseLegoFile content with
+    match Bootstrap.parseBootstrapContent content with
     | some ast => pure ast
     | none => throw (IO.userError s!"Failed to parse Bootstrap.lego")
   else do

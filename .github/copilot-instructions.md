@@ -6,6 +6,10 @@
 
 2. **Use ./tmp NOT /tmp**: Always use the local `./tmp` directory for temporary files, never system `/tmp`.
 
+3. **Each Language Owns Its Tokenizer**: Each language defines its own tokenizer through inheritance. Bootstrap.lego defines the minimum lexer to parse Lego.lego. Never modify Bootstrap.lego or the hardcoded tokenizer to please another .lego file. If a language needs different tokenization, it should define its own token rules in its own .lego file.
+
+4. **Keywords Are FOLLOW-Conflict Literals**: Keywords are determined by FOLLOW conflict analysis: a literal needs to be a keyword when it follows a reference that can transitively end with a star (greedy). This prevents the star from consuming the keyword delimiter. Example: `"in"` in `letinvalue "in" expr` where `letinvalue` ends with `appitem*`. Not ALL grammar literals become keywords.
+
 ## Project Overview
 
 Lego is a self-hosting meta-language for defining domain-specific languages (DSLs) using grammar-driven rewriting. It compiles to multiple target languages (Lean, Scala, Haskell, Rust).

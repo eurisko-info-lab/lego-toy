@@ -86,7 +86,7 @@ def tokenizeBootstrap (content : String) : List Token :=
 
     The bootstrap chain is:
       Hardcoded Grammar → Bootstrap.lego → Full Grammar → All other .lego files -/
-private def parseBootstrapContent (content : String) : Option Term :=
+def parseBootstrapContent (content : String) : Option Term :=
   metaInterp.parse (tokenizeRaw content)
 
 /-- Parse Bootstrap.lego from a file path. ONLY accepts Bootstrap.lego!
@@ -98,13 +98,5 @@ def parseBootstrapFile (path : String) : IO (Option Term) := do
     IO.Process.exit 1
   let content ← IO.FS.readFile path
   return parseBootstrapContent content
-
-/-- Parse bootstrap-format lego content (used by Runtime.loadBootstrap).
-    Note: This exists for backward compatibility - prefer parseBootstrapFile for IO. -/
-def parseLegoFile (content : String) : Option Term :=
-  parseBootstrapContent content
-
-/-- The tokenize function - only exposed for Runtime.loadBootstrap compatibility -/
-def tokenize := tokenizeRaw
 
 end Lego.Bootstrap

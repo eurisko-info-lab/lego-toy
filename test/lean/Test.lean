@@ -858,7 +858,7 @@ def runGrammarExprTests : IO (List TestResult) := do
 
   let testProd := "Atom.ident"
   let testInput := "foo"
-  let tokens := Bootstrap.tokenize testInput
+  let tokens := Bootstrap.tokenizeBootstrap testInput
 
   let test1 := match hardcodedProds.find? (·.1 == testProd) with
   | some (_, g) =>
@@ -889,7 +889,7 @@ def runGrammarExprTests : IO (List TestResult) := do
       let fullProds := builtinProductions ++ parsedProds
       let termTest := match fullProds.find? (·.1 == "Term.term") with
       | some (_, g) =>
-        let termTokens := Bootstrap.tokenize "(app x y)"
+        let termTokens := Bootstrap.tokenizeBootstrap "(app x y)"
         let st : ParseState := { tokens := termTokens, binds := [] }
         let (result, _) := parseGrammar defaultFuel fullProds g st
         match result with

@@ -517,11 +517,6 @@ def isMapPattern (t : Term) : Option (Term × String) :=
     match findRestVar rest with
     | some items => some (.var wrapper, items)
     | none => none
-  -- Handle old forms for backward compat
-  | .con "mapExpr" [.var wrapper, .con "patternArg" [.con "patVar" [.var items]]] =>
-    some (.var wrapper, items)
-  | .con "mapExpr" [.var wrapper, .con "restVar" [.var items]] =>
-    some (.var wrapper, items)
   | .con "mapExpr" (wrapper :: rest) =>
     match findRestVar rest with
     | some items => some (wrapper, items)

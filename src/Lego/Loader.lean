@@ -482,10 +482,10 @@ where
     | _ => []
 
 /-- Main token production names - these are the top-level tokenizing productions.
-    Token.operator uses #longest internally for maximal munch.
-    Character class productions (digit, alpha, etc.) are NOT included - they're
-    only used as building blocks for these main productions.
-    Note: We support both old-style (op3, op2, sym) and new-style (operator). -/
+  Token.operator uses #longest internally for maximal munch.
+  Character class productions (digit, alpha, etc.) are NOT included - they're
+  only used as building blocks for these main productions.
+  Note: We rely on Token.operator (new-style, #longest-based) for operators. -/
 def mainTokenProdNames : List String :=
   [ "Token.special"       -- <name> syntax
   , "Token.hashident"     -- Hash-prefixed keywords (#longest)
@@ -497,9 +497,6 @@ def mainTokenProdNames : List String :=
   , "Token.comment"       -- Line comments (skipped)
   , "Token.blockComment"  -- Block comments /- ... -/ (skipped)
   , "Token.operator"      -- All operators (new-style, uses #longest)
-  , "Token.op3"           -- 3-char operators (old-style, for backwards compat)
-  , "Token.op2"           -- 2-char operators (old-style)
-  , "Token.sym"           -- Single symbol (old-style fallback)
   ]
 
 /-- Get main token production names for tokenization.
@@ -855,7 +852,7 @@ def parseFileWithGrammarE (grammar : LoadedGrammar) (path : String) : IO (Except
 
 /-- Parse input using a loaded grammar, building into any AST type -/
 def parseWithGrammarAs (α : Type) [AST α] (grammar : LoadedGrammar) (input : String) : Option α :=
-  let tokens := Bootstrap.tokenize input
+  let tokens := Bootstrap.tokenizeBootstrap input
   let st : ParseStateT α := { tokens := tokens, binds := [] }
   match grammar.productions.find? (·.1 == grammar.startProd) with
   | some (_, g) =>
@@ -887,13 +884,13 @@ def printToString (grammar : LoadedGrammar) (prodName : String) (t : Term) : Opt
 /-- Load Bootstrap.lego and extract productions (without builtins).
     This allows comparing with the hard-coded Bootstrap.
 
-    NOTE: This function intentionally uses Bootstrap.parseLegoFile because
+    NOTE: This function intentionally uses Bootstrap.parseBootstrapContent because
     it's specifically for loading and testing Bootstrap.lego itself.
     For parsing ANY OTHER .lego file, use Runtime.parseLegoFile instead. -/
 def loadBootstrapProductions (path : String := "./test/lego/Bootstrap.lego") : IO (Option Productions) := do
   try
     let content ← IO.FS.readFile path
-    match Bootstrap.parseLegoFile content with
+    match Bootstrap.parseBootstrapContent content with
     | some ast => pure (some (extractProductionsOnly ast))
     | none => pure none
   catch _ =>

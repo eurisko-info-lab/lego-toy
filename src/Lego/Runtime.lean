@@ -59,7 +59,7 @@ def loadBootstrapOnly (path : String := defaultBootstrapPath) : IO (Except Strin
     let content ← IO.FS.readFile path
     if !path.endsWith "Bootstrap.lego" then
       return Except.error s!"loadBootstrapOnly only accepts Bootstrap.lego, got: {path}"
-    match Bootstrap.parseLegoFile content with
+    match Bootstrap.parseBootstrapContent content with
     | none => return Except.error s!"Failed to parse {path} with hardcoded grammar"
     | some ast =>
       let prods := Loader.extractAllProductions ast
@@ -453,7 +453,7 @@ where
           | .con c args => .con c (args.map (normalizeWith n rules))
           | _ => t
 
-/-- Normalize with tracing for rewrite rules (legacy API, uses generic applyRulesWithTrace) -/
+/-- Normalize with tracing for rewrite rules (uses generic applyRulesWithTrace) -/
 def normalizeWithTrace (config : NormalizeConfig) (rules : List Rule) (t : Term) : NormalizeResult :=
   applyRulesWithTrace config rules t
 

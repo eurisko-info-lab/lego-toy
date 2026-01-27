@@ -965,8 +965,74 @@ partial def termStructuralEq (t1 t2 : Term) : Bool :=
     (args1.zip args2 |>.all fun (a, b) => termStructuralEq a b)
   | _, _ => false
 
+/-- Check if a term is a natural number literal (natLit "123") or just a plain lit -/
+def isNatLit (t : Term) : Bool :=
+  match t with
+  | .con "natLit" [.lit _] => true
+  | .lit s => s.all Char.isDigit  -- bare digit literals
+  | _ => false
+
+/-- Check if a term is an integer literal (includes negLit) -/
+def isIntLit (t : Term) : Bool :=
+  match t with
+  | .con "negLit" [.lit _] => true
+  | _ => isNatLit t
+
+/-- Check if a term is a rational literal -/
+def isRatLit (t : Term) : Bool :=
+  match t with
+  | .con "ratLit" [.lit _, .lit _] => true
+  | _ => false
+
+/-- Check if a term is a real/decimal literal -/
+def isRealLit (t : Term) : Bool :=
+  match t with
+  | .con "decLit" [.lit _] => true
+  | _ => false
+
+/-- Check if a term is an identifier (not a metavar) -/
+def isIdent (t : Term) : Bool :=
+  match t with
+  | .con "ident" [.var _] => true
+  | .con "ident" [.lit _] => true
+  | _ => false
+
+/-- Check if a term is a dimension term -/
+def isDim (t : Term) : Bool :=
+  match t with
+  | .con "dim0" [] => true
+  | .con "dim1" [] => true
+  | .con "dimMax" _ => true
+  | .con "dimMin" _ => true
+  | .con "dimNeg" _ => true
+  | .var _ => true  -- dimension variables
+  | _ => false
+
+/-- Check if a term is a metavar ($x) -/
+def isMetaVar (t : Term) : Bool :=
+  match t with
+  | .var s => s.startsWith "$" || s.get 0 == '$'
+  | _ => false
+
+/-- Check if a term is a string literal -/
+def isString (t : Term) : Bool :=
+  match t with
+  | .lit _ => true
+  | _ => false
+
+/-- Check if a term is a number -/
+def isNumber (t : Term) : Bool :=
+  isNatLit t || isIntLit t || isRatLit t || isRealLit t
+
+/-- Check if a term is a literal (string or number) -/
+def isLiteral (t : Term) : Bool :=
+  match t with
+  | .lit _ => true
+  | _ => false
+
 /-- Check a single condition: $x : $T means the term bound to $x should have type $T.
-    We recursively call type inference to verify. -/
+    Also handles side conditions like (isNatLit $n).
+    We recursively call type inference to verify typing conditions. -/
 def checkCondition (typeRules : List TypeRule) (bindings : List (String × Term))
     (cond : Term) : Bool :=
   match cond with
@@ -986,7 +1052,60 @@ def checkCondition (typeRules : List TypeRule) (bindings : List (String × Term)
         -- If no type rule matches, check if term is a type itself (Univ-typed)
         -- For now, be permissive: if we can't infer type, assume ok
         true
-  | _ => true  -- Non-typing conditions pass by default
+  | .con "constraint" [.var varName, expectedType] =>
+    -- Alternative form for constraint
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) =>
+      let expectedTypeSubst := applyTemplate bindings expectedType
+      match typeRules.findSome? (·.apply boundTerm) with
+      | some actualType => termStructuralEq actualType expectedTypeSubst
+      | none => true
+  -- Side conditions: (predicate $var)
+  | .con "sidePattern" [inner] =>
+    -- Unwrap sidePattern wrapper and check the inner condition
+    checkCondition typeRules bindings inner
+  | .con "isNatLit" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isNatLit boundTerm
+  | .con "isIntLit" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isIntLit boundTerm
+  | .con "isRatLit" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isRatLit boundTerm
+  | .con "isRealLit" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isRealLit boundTerm
+  | .con "isDim" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isDim boundTerm
+  | .con "isMetaVar" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isMetaVar boundTerm
+  | .con "isIdent" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isIdent boundTerm
+  | .con "isString" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isString boundTerm
+  | .con "isNumber" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isNumber boundTerm
+  | .con "isLiteral" [.var varName] =>
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false
+    | some (_, boundTerm) => isLiteral boundTerm
+  | _ => true  -- Unknown conditions pass by default
 
 /-- Check all conditions of a type rule given the bindings.
     Returns true if all conditions are satisfied. -/

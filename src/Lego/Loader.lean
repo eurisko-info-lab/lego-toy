@@ -1193,6 +1193,7 @@ where
 /-- Extract a TypeRule from a DType AST node
     Format: type name: subject : type when cond1, cond2, ... ;
     AST: (DType "type" (ident name) ":" subject ":" type whenClause? ";")
+    Where whenClause is: (whenClause "when" constraint1 "," constraint2 ...)
 -/
 def extractTypeRule (typeDecl : Term) : Option TypeRule :=
   match typeDecl with
@@ -1208,7 +1209,7 @@ def extractTypeRule (typeDecl : Term) : Option TypeRule :=
         type := templateAstToTerm typ
         conditions := []
       }
-    | [.con "ident" [.var name], subject, typ, .con "when" conds] =>
+    | [.con "ident" [.var name], subject, typ, .con "whenClause" conds] =>
       -- Filter out "when" and "," from conditions
       let cleanConds := conds.filter fun t =>
         t != .lit "when" && t != .lit ","

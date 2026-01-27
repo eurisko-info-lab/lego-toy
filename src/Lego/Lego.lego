@@ -1,19 +1,24 @@
 -----------------------------------------------------
 -- Lego.lego: Core Language Semantics
 --
--- Extends Bootstrap with semantic constructs.
--- Bootstrap provides: lang, piece, token, rule, type, test syntax
+-- Extends CubicalBase which provides cubical TT primitives for proofs.
+-- CubicalBase extends Bootstrap and provides:
+--   - Interval, Cofibrations, PathTypes, PathCombinators
+--   - Equivalences (idEquiv, invEquiv, compEquiv, ua)
+--   - Transport and J eliminator
+--
 -- Lego adds: CorePrimitives, Binders, Products, ADT, Errors, Builtins
---            and Cubical Type Theory primitives
+--            and extended cubical features (HITs, H-levels, etc.)
 --
 -- Layers:
---   Built-in (Lean) → Bootstrap.lego → Lego.lego → *.lego
+--   Built-in (Lean) → Bootstrap.lego → CubicalBase.lego → Lego.lego → *.lego
 --
 -- Bootstrap = syntax (how to write .lego files)
+-- CubicalBase = cubical proof primitives (refl, sym, trans, ua, etc.)
 -- Lego = semantics (what the language can express)
 -----------------------------------------------------
 
-lang Lego (Bootstrap) :=
+lang Lego (CubicalBase) :=
 
 -----------------------------------------------------
 -- Extended Keywords
@@ -35,6 +40,7 @@ piece CorePrimitives
          | "App" term term             → app
          | "Subst" <ident> term term   → subst ;
 
+  -- Substitution distributes over application
   rule appSubst: (App (Subst $x $s $f) $a) ~~> (Subst $x $s (App $f $a)) ;
   
   type univForm: Univ : Univ ;
@@ -48,6 +54,7 @@ piece CorePrimitives
 piece Binders
   term ::= "Lam" <ident> "." term      → lam ;
 
+  -- β-reduction: fundamental computation rule
   rule beta: (App (Lam $x . $body) $arg) ~~> (Subst $x $arg $body) ;
 
   type lamForm: (Lam $x . $body) : (Arrow $A $B)
@@ -63,8 +70,10 @@ piece Products
          | "Fst" term                  → fst
          | "Snd" term                  → snd ;
 
+  -- Product β-rules
   rule fstPair: (Fst (Pair $a $b)) ~~> $a ;
   rule sndPair: (Snd (Pair $a $b)) ~~> $b ;
+  -- Product η-rule  
   rule pairEta: (Pair (Fst $p) (Snd $p)) ~~> $p ;
 
   type pairType: (Pair $a $b) : (Prod $A $B)
@@ -195,6 +204,7 @@ piece Errors
   term ::= "Error" <string>            → error
          | "Stuck" term                → stuck ;
 
+  -- Errors propagate through application and projection
   rule appError: (App (Error $msg) $a) ~~> (Error $msg) ;
   rule fstError: (Fst (Error $msg)) ~~> (Error $msg) ;
 
@@ -207,6 +217,7 @@ piece Annotations
   term ::= "Ann" term term             → ann
          | "Loc" <int> <int> term      → loc ;
 
+  -- Annotations are erased at runtime
   rule annErase: (Ann $t $T) ~~> $t ;
 
 -----------------------------------------------------
@@ -223,6 +234,7 @@ piece Builtins
          | "zero"                      → zero
          | "succ" term                 → succ ;
 
+  -- Boolean elimination
   rule ifTrue: (if true $t $f) ~~> $t ;
   rule ifFalse: (if false $t $f) ~~> $f ;
 
@@ -234,44 +246,10 @@ piece Builtins
   type succType: (succ $n) : Nat when $n : Nat ;
 
 -----------------------------------------------------
--- CUBICAL TYPE THEORY
+-- CUBICAL TYPE THEORY EXTENSIONS
+-- Base cubical primitives inherited from CubicalBase.lego
+-- Here we extend with additional features
 -----------------------------------------------------
-
------------------------------------------------------
--- Interval
--- The interval type I with endpoints 0 and 1
------------------------------------------------------
-
-piece Interval
-  term ::= "I"                         → interval
-         | "dim0"                      → dim0
-         | "dim1"                      → dim1
-         | "dimVar" <number>           → dimVar ;
-
-  type intervalForm: I : Univ ;
-  type dim0Type: dim0 : I ;
-  type dim1Type: dim1 : I ;
-
------------------------------------------------------
--- Cofibrations
--- Face formulas for partial elements
------------------------------------------------------
-
-piece Cofibrations
-  term ::= "cof_top"                   → cof_top
-         | "cof_bot"                   → cof_bot
-         | "cof_eq" term term          → cof_eq
-         | "cof_and" term term         → cof_and
-         | "cof_or" term term          → cof_or ;
-
-  -- Simplification rules
-  rule eqRefl: (cof_eq $r $r) ~~> cof_top ;
-  rule eq01: (cof_eq dim0 dim1) ~~> cof_bot ;
-  rule eq10: (cof_eq dim1 dim0) ~~> cof_bot ;
-  rule andTop: (cof_and cof_top $φ) ~~> $φ ;
-  rule andBot: (cof_and cof_bot $φ) ~~> cof_bot ;
-  rule orTop: (cof_or cof_top $φ) ~~> cof_top ;
-  rule orBot: (cof_or cof_bot $φ) ~~> $φ ;
 
 -----------------------------------------------------
 -- Levels
@@ -293,48 +271,16 @@ piece Levels
   rule maxSucSuc: (lmax (lsuc $l1) (lsuc $l2)) ~~> (lsuc (lmax $l1 $l2)) ;
 
 -----------------------------------------------------
--- Path Types
--- Identity types with computational content
--- Path A a b = the type of paths from a to b in A
+-- Extended Kan Operations
+-- Adds tubes, hcomTube, and heterogeneous composition
 -----------------------------------------------------
 
-piece PathTypes
-  term ::= "Path" term term term       → path
-         | "plam" <ident> "." term     → plam
-         | "papp" term term            → papp
-         | "refl" term                 → refl ;
-
-  -- Path computation rules
-  rule plamApp: (papp (plam $i . $body) $r) ~~> (SubstDim $i $r $body) ;
-  rule reflApp: (papp (refl $a) $r) ~~> $a ;
-
-  type pathForm: (Path $A $a $b) : Univ when $A : Univ, $a : $A, $b : $A ;
-  type plamType: (plam $i . $body) : (Path $A $a $b)
-    when [$i : I] $body : $A, (SubstDim $i dim0 $body) = $a, (SubstDim $i dim1 $body) = $b ;
-  type pappType: (papp $p $r) : $A when $p : (Path $A $a $b), $r : I ;
-  type reflType: (refl $a) : (Path $A $a $a) when $a : $A ;
-
------------------------------------------------------
--- Kan Operations
--- coe: coercion along a line of types
--- hcom: homogeneous composition
--- com: heterogeneous composition
------------------------------------------------------
-
-piece KanOps
-  term ::= "coe" term term term term   → coe
-         | "hcom" term term term term term → hcom
-         | "hcomTube" term term term tubes term → hcomTube
+piece ExtendedKanOps
+  term ::= "hcomTube" term term term tubes term → hcomTube
          | "com" term term term tubes term → com ;
   tubes ::= tube*                      → tubes ;
   tube ::= "(" term "," term ")"       → tube ;
 
-  -- Degenerate direction: coe r r A a = a
-  rule coeRefl: (coe $r $r $A $a) ~~> $a ;
-  rule hcomRefl: (hcom $r $r $A $φ $cap) ~~> $cap ;
-
-  type coeType: (coe $r $s $A $a) : (SubstDim $i $s $A)
-    when $r : I, $s : I, [$i : I] $A : Univ, $a : (SubstDim $i $r $A) ;
   type hcomType: (hcom $r $s $A $φ $cap) : $A
     when $r : I, $s : I, $A : Univ, $φ : Cof, $cap : $A ;
 
@@ -378,6 +324,7 @@ piece Circle
 piece NatHIT
   term ::= "natElim" term term term term → natElim ;
 
+  -- Nat elimination
   rule natElimZero: (natElim $P $z $s zero) ~~> $z ;
   rule natElimSuc: (natElim $P $z $s (succ $n)) ~~> (App (App $s $n) (natElim $P $z $s $n)) ;
 
@@ -399,22 +346,6 @@ piece ExtTypes
   type subType: (Sub $A $φ $u) : Univ when $A : Univ, $φ : Cof, $u : (Partial $φ $A) ;
 
 -----------------------------------------------------
--- Transport and J
--- Derived from path types
------------------------------------------------------
-
-piece Transport
-  term ::= "transp" term term term     → transp
-         | "J" term term term term term term → j ;
-
-  -- transp A φ a = transport along A when φ is false
-  rule transpRefl: (transp $A cof_top $a) ~~> $a ;
-
-  -- J : (A : Univ) → (a : A) → (P : (b : A) → Path A a b → Univ) →
-  --     P a (refl a) → (b : A) → (p : Path A a b) → P b p
-  rule jRefl: (J $A $a $P $d $a (refl $a)) ~~> $d ;
-
------------------------------------------------------
 -- CUBICAL PROOF THEORY
 -----------------------------------------------------
 
@@ -427,8 +358,7 @@ piece Propositions
   term ::= "Prop"                      → prop
          | "propTrunc" term            → propTrunc
          | "squash" term               → squash
-         | "propElim" term term term term → propElim
-         | "isProp" term               → isProp ;
+         | "propElim" term term term term → propElim ;
 
   -- Propositional truncation: ||A|| is the proposition that A is inhabited
   -- squash a : ||A|| when a : A
@@ -437,7 +367,6 @@ piece Propositions
   type propForm: Prop : Univ ;
   type propTruncForm: (propTrunc $A) : Prop when $A : Univ ;
   type squashType: (squash $a) : (propTrunc $A) when $a : $A ;
-  type isPropForm: (isProp $A) : Univ when $A : Univ ;
 
 -----------------------------------------------------
 -- Dependent Paths (PathP)
@@ -460,65 +389,28 @@ piece DependentPaths
   rule pathPToPath: (fromPathP (plam $i . $body)) ~~> (plam $i . $body) ;
 
 -----------------------------------------------------
--- Path Combinators
--- Composition, symmetry, transitivity
+-- Extended Path Combinators
+-- Adds dependent congruence and function extensionality
 -----------------------------------------------------
 
-piece PathCombinators
-  term ::= "sym" term                  → sym
-         | "trans" term term           → trans
-         | "cong" term term            → cong
-         | "congP" term term           → congP
-         | "funExt" term               → funExt
+piece ExtendedPathCombinators
+  term ::= "congP" term term           → congP
          | "funExtP" term              → funExtP ;
 
-  -- sym : Path A a b → Path A b a
-  -- trans : Path A a b → Path A b c → Path A a c
-  -- cong : (f : A → B) → Path A a a' → Path B (f a) (f a')
-
-  -- Symmetry via dimension reversal
-  rule symDef: (sym (plam $i . $body)) ~~> (plam $i . (SubstDim $i (dimNeg $i) $body)) ;
-
-  -- Function extensionality
-  rule funExtApply: (papp (funExt (plam $x . $p)) $i) ~~> (plam $x . (papp $p $i)) ;
-
-  type symType: (sym $p) : (Path $A $b $a) when $p : (Path $A $a $b) ;
-  type transType: (trans $p $q) : (Path $A $a $c) when $p : (Path $A $a $b), $q : (Path $A $b $c) ;
-  type congType: (cong $f $p) : (Path $B (App $f $a) (App $f $b))
-    when $f : (Arrow $A $B), $p : (Path $A $a $b) ;
-  type funExtType: (funExt $h) : (Path (Arrow $A $B) $f $g)
-    when $h : (Arrow $A (Path $B (App $f $x) (App $g $x))) ;
+  -- congP : dependent congruence over PathP
+  -- funExtP : dependent function extensionality
 
 -----------------------------------------------------
--- Equivalences
--- Quasi-invertible maps and univalence
+-- Extended Equivalences
+-- Adds proof extraction and uaβ computation
 -----------------------------------------------------
 
-piece Equivalences
-  term ::= "Equiv" term term           → equiv
-         | "idEquiv" term              → idEquiv
-         | "compEquiv" term term       → compEquiv
-         | "invEquiv" term             → invEquiv
-         | "equivFun" term             → equivFun
-         | "equivProof" term           → equivProof
-         | "ua" term                   → ua
+piece ExtendedEquivalences
+  term ::= "equivProof" term           → equivProof
          | "uaβ" term term             → uaβ ;
 
-  -- Equiv A B = Σ (f : A → B), isEquiv f
-  -- ua : Equiv A B → Path Univ A B  (univalence)
   -- uaβ : transport (ua e) a = equivFun e a
-
-  rule idEquivFun: (equivFun (idEquiv $A)) ~~> (Lam x . x) ;
-  rule uaRefl: (ua (idEquiv $A)) ~~> (refl $A) ;
   rule uaβCompute: (coe dim0 dim1 (plam $i . (papp (ua $e) $i)) $a) ~~> (App (equivFun $e) $a) ;
-
-  type equivForm: (Equiv $A $B) : Univ when $A : Univ, $B : Univ ;
-  type idEquivType: (idEquiv $A) : (Equiv $A $A) when $A : Univ ;
-  type compEquivType: (compEquiv $e1 $e2) : (Equiv $A $C)
-    when $e1 : (Equiv $A $B), $e2 : (Equiv $B $C) ;
-  type invEquivType: (invEquiv $e) : (Equiv $B $A) when $e : (Equiv $A $B) ;
-  type equivFunType: (equivFun $e) : (Arrow $A $B) when $e : (Equiv $A $B) ;
-  type uaType: (ua $e) : (Path Univ $A $B) when $e : (Equiv $A $B) ;
 
 -----------------------------------------------------
 -- Contractibility and Fibers
@@ -526,8 +418,7 @@ piece Equivalences
 -----------------------------------------------------
 
 piece Contractibility
-  term ::= "isContr" term              → isContr
-         | "center" term               → center
+  term ::= "center" term               → center
          | "paths" term                → paths
          | "fiber" term term           → fiber
          | "isEquiv" term              → isEquiv

@@ -9,9 +9,11 @@
 
 import Lego
 import Lego.Validation
+import Lego.Runtime
 
 open Lego
 open Lego.Validation
+open Lego.Runtime
 
 /-! ## Test Helpers -/
 
@@ -212,26 +214,179 @@ def testVerifiedRuleValidation : IO Nat := do
 
   -- Test 1: valid verified rule with refl proof
   -- verified rule id : x ~> x via refl(x)
-  let err1 := verifyVerifiedRule typeRules "id"
+  -- Since lhs = rhs = x, refl proof is valid (definitional equality)
+  let err1 := verifyVerifiedRule typeRules [] "id"
     (.var "x") (.var "x") (.con "refl" [.var "x"])
   if ← assertNone "valid_verified_rule_refl" err1 then passed := passed + 1
 
-  -- Test 2: invalid verified rule - wrong proof endpoints
-  -- verified rule bad : x ~> y via refl(x)  -- refl(x) has type Path _ x x, not x y
-  let err2 := verifyVerifiedRule typeRules "bad"
+  -- Test 2: invalid verified rule - refl used but lhs != rhs
+  -- verified rule bad : x ~> y via refl(x)  -- x and y are different, so refl can't work
+  let err2 := verifyVerifiedRule typeRules [] "bad"
     (.var "x") (.var "y") (.con "refl" [.var "x"])
   if ← assertSome "invalid_verified_rule_wrong_endpoints" err2 then passed := passed + 1
 
   -- Test 3: invalid verified rule - proof has wrong type entirely (not Path)
   -- verified rule bad2 : x ~> x via zero  -- zero : Nat, not Path
-  let err3 := verifyVerifiedRule typeRules "bad2"
+  let err3 := verifyVerifiedRule typeRules [] "bad2"
     (.var "x") (.var "x") (.con "zero" [])
   if ← assertSome "invalid_verified_rule_not_path" err3 then passed := passed + 1
 
   -- Test 4: missing proof type (can't infer)
-  let err4 := verifyVerifiedRule typeRules "missing"
+  let err4 := verifyVerifiedRule typeRules [] "missing"
     (.var "x") (.var "x") (.lit "not_a_path")
   if ← assertSome "invalid_verified_rule_no_type" err4 then passed := passed + 1
+
+  pure passed
+
+/-! ## Refl Definitional Equality Tests -/
+
+def testReflDefinitionalEquality : IO Nat := do
+  IO.println "\n── Refl Definitional Equality ──"
+  let mut passed := 0
+
+  -- Normalization rules for testing
+  -- Pattern variables must start with $ for matching
+  -- add(zero, $x) ~> $x
+  let addZeroL : (Term × Term) := (
+    .con "add" [.con "zero" [], .var "$x"],
+    .var "$x"
+  )
+  -- succ(pred($n)) ~> $n
+  let succPred : (Term × Term) := (
+    .con "succ" [.con "pred" [.var "$n"]],
+    .var "$n"
+  )
+  let rules := [addZeroL, succPred]
+
+  -- Test 1: refl proof works when LHS = RHS syntactically
+  -- verified rule id : x ~> x via refl(x)
+  let err1 := verifyVerifiedRule [] rules "syntactic_eq"
+    (.var "x") (.var "x") (.con "refl" [.var "x"])
+  if ← assertNone "refl_syntactic_equality" err1 then passed := passed + 1
+
+  -- Test 2: refl proof works when LHS and RHS normalize to the same term
+  -- add(zero, x) ~> x  normalizes both sides to x
+  -- verified rule addZeroL : add(zero, x) ~> x via refl(x)
+  let err2 := verifyVerifiedRule [] rules "addZeroL_verified"
+    (.con "add" [.con "zero" [], .var "x"])
+    (.var "x")
+    (.con "refl" [.var "x"])
+  if ← assertNone "refl_definitional_equality_addZeroL" err2 then passed := passed + 1
+
+  -- Test 3: refl proof fails when LHS and RHS don't normalize to the same term
+  -- add(zero, x) and y don't normalize to the same thing (y is free)
+  let err3 := verifyVerifiedRule [] rules "bad_normalization"
+    (.con "add" [.con "zero" [], .var "x"])
+    (.var "y")
+    (.con "refl" [.var "x"])
+  if ← assertSome "refl_not_definitionally_equal" err3 then passed := passed + 1
+
+  -- Test 4: nested normalization works
+  -- succ(pred($n)) ~> $n, so succ(pred(x)) and x should be equal
+  let err4 := verifyVerifiedRule [] rules "succPred_verified"
+    (.con "succ" [.con "pred" [.var "x"]])
+    (.var "x")
+    (.con "refl" [.var "x"])
+  if ← assertNone "refl_nested_normalization" err4 then passed := passed + 1
+
+  -- Test 5: Check the error type is reflProofNotDefEq
+  match err3 with
+  | some (.reflProofNotDefEq _ _ _ _ _) =>
+    IO.println "  ✓ correct_error_type_reflProofNotDefEq"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ correct_error_type_reflProofNotDefEq (expected reflProofNotDefEq error)"
+
+  pure passed
+
+/-! ## Proof Endpoint Type Checking Tests -/
+
+def testProofEndpointTypeChecking : IO Nat := do
+  IO.println "\n── Proof Endpoint Type Checking ──"
+  let mut passed := 0
+
+  -- For these tests, we create type rules that directly specify the type of composed proofs
+  -- This tests the endpoint checking logic without requiring full dependent type inference
+
+  -- Type rule: sym_path_ab : Path A b a  (sym of path from a to b)
+  let symPathAbRule : TypeRule := {
+    name := "symPathAbType"
+    subject := .con "sym" [.con "path_ab" []]
+    type := .con "Path" [.var "A", .var "b", .var "a"]
+    conditions := []
+  }
+
+  -- Type rule: trans_path_ab_bc : Path A a c  (trans of a->b and b->c)
+  let transPathAbBcRule : TypeRule := {
+    name := "transPathAbBcType"
+    subject := .con "trans" [.con "path_ab" [], .con "path_bc" []]
+    type := .con "Path" [.var "A", .var "a", .var "c"]
+    conditions := []
+  }
+
+  -- Normalization rules
+  -- add(zero, $x) ~> $x
+  let addZeroL : (Term × Term) := (
+    .con "add" [.con "zero" [], .var "$x"],
+    .var "$x"
+  )
+  let rules := [addZeroL]
+
+  -- Test 1: sym proof with correct endpoints
+  -- sym(path_ab) : Path A b a
+  -- verified rule symCorrect : b ~> a via sym(path_ab)
+  let symProof := Term.con "sym" [.con "path_ab" []]
+  let err1 := verifyVerifiedRule [symPathAbRule] rules "symCorrect"
+    (.var "b") (.var "a") symProof
+  if ← assertNone "sym_proof_correct_endpoints" err1 then passed := passed + 1
+
+  -- Test 2: sym proof with wrong endpoints should fail
+  -- sym(path_ab) : Path A b a, but we claim it proves a ~> b
+  let err2 := verifyVerifiedRule [symPathAbRule] rules "symWrong"
+    (.var "a") (.var "b") symProof  -- Wrong! sym(path_ab) has type Path A b a, not Path A a b
+  if ← assertSome "sym_proof_wrong_endpoints" err2 then passed := passed + 1
+
+  -- Test 3: trans proof with correct endpoints
+  -- trans(path_ab, path_bc) : Path A a c
+  let transProof := Term.con "trans" [.con "path_ab" [], .con "path_bc" []]
+  let err3 := verifyVerifiedRule [transPathAbBcRule] rules "transCorrect"
+    (.var "a") (.var "c") transProof
+  if ← assertNone "trans_proof_correct_endpoints" err3 then passed := passed + 1
+
+  -- Test 4: trans proof with wrong LHS endpoint should fail
+  let err4 := verifyVerifiedRule [transPathAbBcRule] rules "transWrongLHS"
+    (.var "b") (.var "c") transProof  -- Wrong! trans has Path A a c, not Path A b c
+  if ← assertSome "trans_proof_wrong_lhs" err4 then passed := passed + 1
+
+  -- Test 5: Check endpoint mismatch error type for LHS
+  match err4 with
+  | some (.proofEndpointsMismatch _ "LHS" _ _ _ _) =>
+    IO.println "  ✓ correct_error_type_lhs_mismatch"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ correct_error_type_lhs_mismatch (expected proofEndpointsMismatch LHS)"
+
+  -- Test 6: trans proof with wrong RHS endpoint should fail
+  let err5 := verifyVerifiedRule [transPathAbBcRule] rules "transWrongRHS"
+    (.var "a") (.var "b") transProof  -- Wrong! trans has Path A a c, not Path A a b
+  if ← assertSome "trans_proof_wrong_rhs" err5 then passed := passed + 1
+
+  -- Test 7: Definitional equality check - endpoints that normalize to same value
+  -- proof_xx : Path A x x
+  -- verified rule addZeroLDefEq : add(zero, x) ~> x via proof_xx
+  -- Since add(zero, x) normalizes to x, both endpoints match
+  let proofXxRule : TypeRule := {
+    name := "proofXxType"
+    subject := .con "proof_xx" []
+    type := .con "Path" [.var "A", .var "x", .var "x"]
+    conditions := []
+  }
+  let proofXx := Term.con "proof_xx" []
+  let err6 := verifyVerifiedRule [proofXxRule] rules "addZeroLDefEq"
+    (.con "add" [.con "zero" [], .var "x"])
+    (.var "x")
+    proofXx
+  if ← assertNone "def_eq_endpoints_with_normalization" err6 then passed := passed + 1
 
   pure passed
 
@@ -384,7 +539,7 @@ def testCubicalProofCombinators : IO Nat := do
     IO.println "  ✗ trans_has_path_type (expected Path type)"
 
   -- Test 4: Verified rule with refl still works with more rules loaded
-  let err4 := verifyVerifiedRule typeRules "idWithCubical"
+  let err4 := verifyVerifiedRule typeRules [] "idWithCubical"
     (.var "x") (.var "x") (.con "refl" [.var "x"])
   if ← assertNone "verified_refl_with_cubical_rules" err4 then passed := passed + 1
 
@@ -478,7 +633,7 @@ def testASTExtraction : IO Nat := do
   ]
 
   -- Validate with empty type rules (all proofs should fail to type-check)
-  let errors1 := validateVerifiedRules [] ast1
+  let errors1 := validateVerifiedRules [] [] ast1
   -- Should get 2 errors (one for each rule that can't be type-checked)
   if ← assertEqualBool "extracts_verified_rules" (errors1.length == 2) true then passed := passed + 1
 
@@ -1149,6 +1304,49 @@ def testGlueAndExtension : IO Nat := do
 
   pure passed
 
+/-! ## Runtime CubicalBase Type Rules Tests -/
+
+def testCubicalBaseTypeRulesLoaded : IO Nat := do
+  IO.println "\n── CubicalBase Type Rules Loading ──"
+  let mut passed := 0
+
+  -- Initialize runtime which loads CubicalBase.lego
+  let rt ← initQuiet
+
+  -- Test 1: Runtime has type rules
+  if rt.typeRules.length > 0 then
+    IO.println s!"  ✓ runtime_has_type_rules ({rt.typeRules.length} rules loaded)"
+    passed := passed + 1
+  else
+    IO.println "  ✗ runtime_has_type_rules (no type rules loaded)"
+
+  -- Test 2: reflType should be present (from CubicalBase.lego)
+  let hasReflType := rt.typeRules.any (fun tr => tr.name == "reflType")
+  if hasReflType then
+    IO.println "  ✓ cubical_base_reflType_loaded"
+    passed := passed + 1
+  else
+    IO.println "  ✗ cubical_base_reflType_loaded (reflType not found in type rules)"
+    IO.println s!"    Available type rules: {rt.typeRules.map (·.name)}"
+
+  -- Test 3: symType should be present
+  let hasSymType := rt.typeRules.any (fun tr => tr.name == "symType")
+  if hasSymType then
+    IO.println "  ✓ cubical_base_symType_loaded"
+    passed := passed + 1
+  else
+    IO.println "  ✗ cubical_base_symType_loaded (symType not found in type rules)"
+
+  -- Test 4: transType should be present
+  let hasTransType := rt.typeRules.any (fun tr => tr.name == "transType")
+  if hasTransType then
+    IO.println "  ✓ cubical_base_transType_loaded"
+    passed := passed + 1
+  else
+    IO.println "  ✗ cubical_base_transType_loaded (transType not found in type rules)"
+
+  pure passed
+
 /-! ## J Eliminator Tests -/
 
 def testJEliminator : IO Nat := do
@@ -1253,6 +1451,60 @@ def testObservationalEq : IO Nat := do
 
   pure passed
 
+/-! ## Runtime Validation API Tests -/
+
+def testRuntimeValidationAPI : IO Nat := do
+  IO.println "\n── Runtime Validation API ──"
+  let mut passed := 0
+
+  -- Initialize runtime
+  let rt ← Runtime.initSingleton
+
+  -- Test 1: parseAndValidate returns ParseValidateResult
+  -- Use content from a real lego file
+  let validContent ← IO.FS.readFile "examples/Arith.lego"
+  match Runtime.parseAndValidate rt validContent with
+  | .ok result =>
+    if result.isValid then
+      IO.println "  ✓ parseAndValidate_returns_result"
+      passed := passed + 1
+    else
+      IO.println "  ✗ parseAndValidate_returns_result (unexpected errors)"
+  | .error e =>
+    IO.println s!"  ✗ parseAndValidate_returns_result (parse error: {e})"
+
+  -- Test 2: ParseValidateResult.formatErrors works
+  let result : Runtime.ParseValidateResult := {
+    ast := .lit "test"
+    errors := []
+    path := some "test.lego"
+  }
+  let formatted := result.formatErrors
+  if ← assertEqualBool "formatErrors_no_errors" (formatted == "No verification errors") true then
+    passed := passed + 1
+
+  -- Test 3: parseAndValidateStrict returns error on parse failure
+  let invalidContent := "this is not valid lego syntax $$#@!"
+  match Runtime.parseAndValidateStrict rt invalidContent with
+  | .error _ =>
+    IO.println "  ✓ parseAndValidateStrict_parse_error"
+    passed := passed + 1
+  | .ok _ =>
+    IO.println "  ✗ parseAndValidateStrict_parse_error (should have failed)"
+
+  -- Test 4: Test that verification errors are properly collected
+  -- Create a mock result with errors to test formatting
+  let mockError := VerificationError.reflProofNotDefEq "test" "a" "b" "a" "b"
+  let resultWithErrors : Runtime.ParseValidateResult := {
+    ast := .lit "test"
+    errors := [mockError]
+    path := some "test.lego"
+  }
+  if ← assertEqualBool "result_not_valid_with_errors" resultWithErrors.isValid false then
+    passed := passed + 1
+
+  pure passed
+
 /-! ## Main -/
 
 def main : IO UInt32 := do
@@ -1274,6 +1526,14 @@ def main : IO UInt32 := do
   let verifiedPassed ← testVerifiedRuleValidation
   passed := passed + verifiedPassed
   total := total + 4
+
+  let reflDefEqPassed ← testReflDefinitionalEquality
+  passed := passed + reflDefEqPassed
+  total := total + 5
+
+  let proofEndpointPassed ← testProofEndpointTypeChecking
+  passed := passed + proofEndpointPassed
+  total := total + 7
 
   let reprPassed ← testReprEquivValidation
   passed := passed + reprPassed
@@ -1351,6 +1611,16 @@ def main : IO UInt32 := do
 
   let obsPassed ← testObservationalEq
   passed := passed + obsPassed
+  total := total + 4
+
+  -- Runtime type rules loading test
+  let cubicalBaseRulesPassed ← testCubicalBaseTypeRulesLoaded
+  passed := passed + cubicalBaseRulesPassed
+  total := total + 4
+
+  -- Runtime validation API tests
+  let runtimeValidationPassed ← testRuntimeValidationAPI
+  passed := passed + runtimeValidationPassed
   total := total + 4
 
   IO.println ""

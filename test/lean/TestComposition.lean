@@ -32,15 +32,18 @@ def testBootstrapNoParent : IO TestResult := do
   let hasProds := rt.grammar.productions.length > 0
   return assertTrue "bootstrap_no_parent" hasProds s!"Bootstrap has {rt.grammar.productions.length} productions"
 
-/-- Test: Lego inherits from Bootstrap -/
+/-- Test: Lego inherits from Bootstrap (through CubicalBase) -/
 def testLegoInheritsBootstrap : IO TestResult := do
   let rt ← Lego.Runtime.init
   -- Lego.lego should parse with Bootstrap grammar
   -- The runtime already loaded Lego, so check it has more than Bootstrap
   -- We check by verifying the grammar has certain productions
+  -- Note: Lego now inherits from CubicalBase which inherits from Bootstrap
 
   match ← loadLanguage rt "./src/Lego/Lego.lego" with
-  | .error e => return assertTrue "lego_inherits_bootstrap" false s!"Load failed: {e}"
+  | .error e =>
+    IO.eprintln s!"Load error: {e}"
+    return assertTrue "lego_inherits_bootstrap" false s!"Load failed: {e}"
   | .ok legoGrammar =>
     -- Lego should have productions from Bootstrap plus its own
     let hasProds := legoGrammar.productions.length > 20

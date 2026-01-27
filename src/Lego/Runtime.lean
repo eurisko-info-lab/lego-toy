@@ -31,6 +31,29 @@ open Lego.Validation (VerificationError validateCubical FullValidationResult val
 
 /-! ## Runtime State -/
 
+/-- Result of parsing and validating a .lego file -/
+structure ParseValidateResult where
+  /-- The parsed AST -/
+  ast : Term
+  /-- List of verification errors (empty if validation passed) -/
+  errors : List VerificationError
+  /-- Path to the file (for error reporting) -/
+  path : Option String := none
+  deriving Repr
+
+/-- Check if validation passed (no errors) -/
+def ParseValidateResult.isValid (r : ParseValidateResult) : Bool :=
+  r.errors.isEmpty
+
+/-- Format all errors with file context -/
+def ParseValidateResult.formatErrors (r : ParseValidateResult) : String :=
+  if r.errors.isEmpty then
+    "No verification errors"
+  else
+    let pathPrefix := r.path.map (s!"In {·}:\n") |>.getD ""
+    let errorMsgs := r.errors.map VerificationError.format
+    s!"{pathPrefix}{"\n".intercalate errorMsgs}"
+
 /-- The runtime holds the loaded grammars from the bootstrap chain -/
 structure Runtime where
   /-- The loaded grammar from Lego.lego (extends Bootstrap) for .lego files -/
@@ -48,6 +71,9 @@ structure Runtime where
 
 /-- Default path to Bootstrap.lego -/
 def defaultBootstrapPath : String := "./test/lego/Bootstrap.lego"
+
+/-- Default path to CubicalBase.lego -/
+def defaultCubicalBasePath : String := "./src/Lego/CubicalBase.lego"
 
 /-- Default path to Lego.lego -/
 def defaultLegoPath : String := "./src/Lego/Lego.lego"
@@ -84,9 +110,10 @@ def loadBootstrapOnly (path : String := defaultBootstrapPath) : IO (Except Strin
   catch e =>
     return Except.error s!"Error loading {path}: {e}"
 
-/-- Load the full bootstrap chain: Hardcoded → Bootstrap.lego → Lego.lego → Rosetta.lego → Lean.lego
+/-- Load the full bootstrap chain: Hardcoded → Bootstrap.lego → CubicalBase.lego → Lego.lego → Rosetta.lego → Lean.lego
     Returns a Runtime with grammars for parsing .lego, .rosetta, and .lean files -/
 def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
+                  (cubicalBasePath : String := defaultCubicalBasePath)
                   (legoPath : String := defaultLegoPath)
                   (rosettaPath : String := defaultRosettaPath)
                   (leanPath : String := defaultLeanPath) : IO (Except String Runtime) := do
@@ -94,95 +121,116 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
   match ← loadBootstrapOnly bootstrapPath with
   | .error e => return Except.error s!"Failed to load Bootstrap.lego: {e}"
   | .ok bootstrapGrammar =>
-    -- Step 2: Parse Lego.lego with Bootstrap's grammar
     try
-      let legoContent ← IO.FS.readFile legoPath
-      match Loader.parseWithGrammarE bootstrapGrammar legoContent with
-      | .error e => return Except.error s!"Failed to parse {legoPath} with Bootstrap grammar: {e}"
-      | .ok legoAst =>
-        -- Step 3: Extract Lego.lego's productions and merge with Bootstrap
-        let legoProds := Loader.extractAllProductions legoAst
-        let legoTokenProds := Loader.extractTokenProductions legoAst
-        let legoRules := Loader.extractRules legoAst
-        -- Merge: Lego productions + Bootstrap productions (Lego overrides)
-        let mergedLegoProds := legoProds ++ bootstrapGrammar.productions
-        let mergedLegoTokenProds := legoTokenProds ++ bootstrapGrammar.tokenProductions
-        let mergedLegoSymbols := Loader.extractAllSymbols mergedLegoProds
-        -- Keyword extraction: from both grammar and token productions
-        let mergedLegoKeywords := Loader.extractKeywords (mergedLegoProds ++ mergedLegoTokenProds)
-        let legoGrammar : Loader.LoadedGrammar := {
-          productions := mergedLegoProds
-          tokenProductions := mergedLegoTokenProds
-          symbols := mergedLegoSymbols
-          keywords := mergedLegoKeywords
+      -- Step 2: Parse CubicalBase.lego with Bootstrap's grammar (it inherits from Bootstrap)
+      let cubicalBaseContent ← IO.FS.readFile cubicalBasePath
+      match Loader.parseWithGrammarE bootstrapGrammar cubicalBaseContent with
+      | .error e => return Except.error s!"Failed to parse {cubicalBasePath}: {e}"
+      | .ok cubicalBaseAst =>
+        -- Extract CubicalBase productions and type rules
+        let cubicalBaseProds := Loader.extractAllProductions cubicalBaseAst
+        let cubicalBaseTokenProds := Loader.extractTokenProductions cubicalBaseAst
+        let cubicalBaseTypeRules := Loader.extractTypeRules cubicalBaseAst
+        -- Merge CubicalBase with Bootstrap
+        let mergedCubicalProds := cubicalBaseProds ++ bootstrapGrammar.productions
+        let mergedCubicalTokenProds := cubicalBaseTokenProds ++ bootstrapGrammar.tokenProductions
+        let mergedCubicalKeywords := Loader.extractKeywords (mergedCubicalProds ++ mergedCubicalTokenProds)
+        let cubicalBaseGrammar : Loader.LoadedGrammar := {
+          productions := mergedCubicalProds
+          tokenProductions := mergedCubicalTokenProds
+          symbols := Loader.extractAllSymbols mergedCubicalProds
+          keywords := mergedCubicalKeywords
           startProd := "File.legoFile"
         }
-        -- Step 4: Parse Rosetta.lego with Lego's grammar
-        let rosettaContent ← IO.FS.readFile rosettaPath
-        match Loader.parseWithGrammarE legoGrammar rosettaContent with
-        | .error e => return Except.error s!"Failed to parse {rosettaPath} with Lego grammar: {e}"
-        | .ok rosettaAst =>
-          -- Step 5: Extract Rosetta.lego's productions and merge with Lego
-          let rosettaProds := Loader.extractAllProductions rosettaAst
-          let rosettaTokenProds := Loader.extractTokenProductions rosettaAst
-          let rosettaRules := Loader.extractRules rosettaAst
-          -- Merge: Rosetta productions + Lego productions
-          let mergedRosettaProds := rosettaProds ++ mergedLegoProds
-          let mergedRosettaTokenProds := rosettaTokenProds ++ mergedLegoTokenProds
-          let mergedRosettaSymbols := Loader.extractAllSymbols mergedRosettaProds
+        -- Step 3: Parse Lego.lego with CubicalBase's grammar (it inherits from CubicalBase)
+        let legoContent ← IO.FS.readFile legoPath
+        match Loader.parseWithGrammarE cubicalBaseGrammar legoContent with
+        | .error e => return Except.error s!"Failed to parse {legoPath} with CubicalBase grammar: {e}"
+        | .ok legoAst =>
+          -- Step 4: Extract Lego.lego's productions and merge with CubicalBase
+          let legoProds := Loader.extractAllProductions legoAst
+          let legoTokenProds := Loader.extractTokenProductions legoAst
+          let legoRules := Loader.extractRules legoAst
+          -- Merge: Lego productions + CubicalBase productions (Lego overrides)
+          let mergedLegoProds := legoProds ++ cubicalBaseGrammar.productions
+          let mergedLegoTokenProds := legoTokenProds ++ cubicalBaseGrammar.tokenProductions
+          let mergedLegoSymbols := Loader.extractAllSymbols mergedLegoProds
           -- Keyword extraction: from both grammar and token productions
-          let mergedRosettaKeywords := Loader.extractKeywords (mergedRosettaProds ++ mergedRosettaTokenProds)
-          let rosettaGrammar : Loader.LoadedGrammar := {
-            productions := mergedRosettaProds
-            tokenProductions := mergedRosettaTokenProds
-            symbols := mergedRosettaSymbols
-            keywords := mergedRosettaKeywords
-            startProd := "File.rosettaFile"  -- Rosetta files use rosettaFile start
+          let mergedLegoKeywords := Loader.extractKeywords (mergedLegoProds ++ mergedLegoTokenProds)
+          let legoGrammar : Loader.LoadedGrammar := {
+            productions := mergedLegoProds
+            tokenProductions := mergedLegoTokenProds
+            symbols := mergedLegoSymbols
+            keywords := mergedLegoKeywords
+            startProd := "File.legoFile"
           }
-          -- Step 6: Parse Lean.lego with Lego's grammar
-          let leanContent ← IO.FS.readFile leanPath
-          match Loader.parseWithGrammarE legoGrammar leanContent with
-          | .error e => return Except.error s!"Failed to parse {leanPath} with Lego grammar: {e}"
-          | .ok leanAst =>
-            -- Step 7: Extract Lean.lego's productions and merge with Lego
-            let leanProds := Loader.extractAllProductions leanAst
-            let leanTokenProds := Loader.extractTokenProductions leanAst
-            let leanRules := Loader.extractRules leanAst
-            -- Merge: Lean productions + Lego productions
-            let mergedLeanProds := leanProds ++ mergedLegoProds
-            let mergedLeanTokenProds := leanTokenProds ++ mergedLegoTokenProds
-            let mergedLeanSymbols := Loader.extractAllSymbols mergedLeanProds
+          -- Step 5: Parse Rosetta.lego with Lego's grammar
+          let rosettaContent ← IO.FS.readFile rosettaPath
+          match Loader.parseWithGrammarE legoGrammar rosettaContent with
+          | .error e => return Except.error s!"Failed to parse {rosettaPath} with Lego grammar: {e}"
+          | .ok rosettaAst =>
+            -- Step 6: Extract Rosetta.lego's productions and merge with Lego
+            let rosettaProds := Loader.extractAllProductions rosettaAst
+            let rosettaTokenProds := Loader.extractTokenProductions rosettaAst
+            let rosettaRules := Loader.extractRules rosettaAst
+            -- Merge: Rosetta productions + Lego productions
+            let mergedRosettaProds := rosettaProds ++ mergedLegoProds
+            let mergedRosettaTokenProds := rosettaTokenProds ++ mergedLegoTokenProds
+            let mergedRosettaSymbols := Loader.extractAllSymbols mergedRosettaProds
             -- Keyword extraction: from both grammar and token productions
-            let mergedLeanKeywords := Loader.extractKeywords (mergedLeanProds ++ mergedLeanTokenProds)
-            let leanGrammar : Loader.LoadedGrammar := {
-              productions := mergedLeanProds
-              tokenProductions := mergedLeanTokenProds
-              symbols := mergedLeanSymbols
-              keywords := mergedLeanKeywords
-              startProd := "Module.leanModule"  -- Lean files use leanModule start
+            let mergedRosettaKeywords := Loader.extractKeywords (mergedRosettaProds ++ mergedRosettaTokenProds)
+            let rosettaGrammar : Loader.LoadedGrammar := {
+              productions := mergedRosettaProds
+              tokenProductions := mergedRosettaTokenProds
+              symbols := mergedRosettaSymbols
+              keywords := mergedRosettaKeywords
+              startProd := "File.rosettaFile"  -- Rosetta files use rosettaFile start
             }
-            -- Extract type rules from all loaded grammars
-            let legoTypeRules := Loader.extractTypeRules legoAst
-            let rosettaTypeRules := Loader.extractTypeRules rosettaAst
-            let leanTypeRules := Loader.extractTypeRules leanAst
-            let runtime : Runtime := {
-              grammar := legoGrammar
-              rosettaGrammar := rosettaGrammar
-              leanGrammar := leanGrammar
-              rules := legoRules ++ rosettaRules ++ leanRules
-              typeRules := legoTypeRules ++ rosettaTypeRules ++ leanTypeRules
-            }
-            return Except.ok runtime
+            -- Step 7: Parse Lean.lego with Lego's grammar
+            let leanContent ← IO.FS.readFile leanPath
+            match Loader.parseWithGrammarE legoGrammar leanContent with
+            | .error e => return Except.error s!"Failed to parse {leanPath} with Lego grammar: {e}"
+            | .ok leanAst =>
+              -- Step 8: Extract Lean.lego's productions and merge with Lego
+              let leanProds := Loader.extractAllProductions leanAst
+              let leanTokenProds := Loader.extractTokenProductions leanAst
+              let leanRules := Loader.extractRules leanAst
+              -- Merge: Lean productions + Lego productions
+              let mergedLeanProds := leanProds ++ mergedLegoProds
+              let mergedLeanTokenProds := leanTokenProds ++ mergedLegoTokenProds
+              let mergedLeanSymbols := Loader.extractAllSymbols mergedLeanProds
+              -- Keyword extraction: from both grammar and token productions
+              let mergedLeanKeywords := Loader.extractKeywords (mergedLeanProds ++ mergedLeanTokenProds)
+              let leanGrammar : Loader.LoadedGrammar := {
+                productions := mergedLeanProds
+                tokenProductions := mergedLeanTokenProds
+                symbols := mergedLeanSymbols
+                keywords := mergedLeanKeywords
+                startProd := "Module.leanModule"  -- Lean files use leanModule start
+              }
+              -- Extract type rules from all loaded grammars (including CubicalBase)
+              let legoTypeRules := Loader.extractTypeRules legoAst
+              let rosettaTypeRules := Loader.extractTypeRules rosettaAst
+              let leanTypeRules := Loader.extractTypeRules leanAst
+              let runtime : Runtime := {
+                grammar := legoGrammar
+                rosettaGrammar := rosettaGrammar
+                leanGrammar := leanGrammar
+                rules := legoRules ++ rosettaRules ++ leanRules
+                typeRules := cubicalBaseTypeRules ++ legoTypeRules ++ rosettaTypeRules ++ leanTypeRules
+              }
+              return Except.ok runtime
     catch e =>
       return Except.error s!"Error loading: {e}"
 
 /-- Load bootstrap chain, failing if any grammar file cannot be loaded.
     Lego does not use fallbacks - if any fails, that's a fatal error. -/
 def loadBootstrapOrError (bootstrapPath : String := defaultBootstrapPath)
+                         (cubicalBasePath : String := defaultCubicalBasePath)
                          (legoPath : String := defaultLegoPath)
                          (rosettaPath : String := defaultRosettaPath)
                          (leanPath : String := defaultLeanPath) : IO Runtime := do
-  match ← loadBootstrap bootstrapPath legoPath rosettaPath leanPath with
+  match ← loadBootstrap bootstrapPath cubicalBasePath legoPath rosettaPath leanPath with
   | Except.ok rt => return rt
   | Except.error e =>
     IO.eprintln s!"FATAL: {e}"
@@ -254,7 +302,8 @@ def parseLeanFilePathE (rt : Runtime) (path : String) : IO (Except ParseError Te
 /-- Validate cubical constructs (verified rules, repr equivalences) in an AST.
     Returns list of verification errors. -/
 def validateCubicalAST (rt : Runtime) (ast : Term) : List VerificationError :=
-  validateCubical rt.typeRules ast
+  let normRules := rt.rules.map fun r => (r.pattern, r.template)
+  validateCubical rt.typeRules normRules ast
 
 /-- Parse and validate a .lego file, returning AST and any cubical verification errors -/
 def parseAndValidateLegoFile (rt : Runtime) (content : String)
@@ -482,12 +531,21 @@ def normalizeWithTraceRt (rt : Runtime) (t : Term) (config : NormalizeConfig := 
 
 /-! ## Type Inference with Tracing -/
 
+/-- Apply type rules with condition checking, returning the first match.
+    Unlike the generic Applicable.apply, this checks type rule conditions. -/
+def applyTypeRuleWithConditions (typeRules : List TypeRule) (t : Term) : Option (Term × String) :=
+  typeRules.findSome? fun tr =>
+    match tr.applyWithCheck typeRules t with
+    | some result => some (result, tr.name)
+    | none => none
+
 /-- Infer the type of a term using type rules with tracing.
     For type inference, we only apply rules at the top level (no deep recursion).
     Returns the inferred type and trace of which type rule matched. -/
 def inferTypeWithTrace (_config : NormalizeConfig) (typeRules : List TypeRule) (t : Term) : NormalizeResult :=
   -- Type inference typically only needs one step (find the matching type rule)
-  match applyOnceWithName typeRules false t with
+  -- Use condition-aware application to properly check when clauses
+  match applyTypeRuleWithConditions typeRules t with
   | some (ty, ruleName) => { term := ty, trace := [(ruleName, ty)] }
   | none => { term := .con "error" [.lit "no type rule matched"], trace := [] }
 
@@ -567,23 +625,26 @@ def lego2rosetta (rt : Runtime) (sourcePath : String) (rosettaPath : String := "
     All .rosetta files are parsed with Rosetta.lego's grammar.
     All .lean files are parsed with Lean.lego's grammar. -/
 def init (bootstrapPath : String := defaultBootstrapPath)
+         (cubicalBasePath : String := defaultCubicalBasePath)
          (legoPath : String := defaultLegoPath)
          (rosettaPath : String := defaultRosettaPath)
          (leanPath : String := defaultLeanPath) : IO Runtime := do
   IO.println s!"[Lego] Loading Bootstrap.lego from {bootstrapPath}..."
+  IO.println s!"[Lego] Loading CubicalBase.lego from {cubicalBasePath}..."
   IO.println s!"[Lego] Loading Lego.lego from {legoPath}..."
   IO.println s!"[Lego] Loading Rosetta.lego from {rosettaPath}..."
   IO.println s!"[Lego] Loading Lean.lego from {leanPath}..."
-  let rt ← loadBootstrapOrError bootstrapPath legoPath rosettaPath leanPath
+  let rt ← loadBootstrapOrError bootstrapPath cubicalBasePath legoPath rosettaPath leanPath
   IO.println s!"[Lego] Runtime initialized with {rt.grammar.productions.length} lego, {rt.rosettaGrammar.productions.length} rosetta, {rt.leanGrammar.productions.length} lean productions"
   return rt
 
 /-- Quiet initialization (no logging). -/
 def initQuiet (bootstrapPath : String := defaultBootstrapPath)
-             (legoPath : String := defaultLegoPath)
-             (rosettaPath : String := defaultRosettaPath)
-             (leanPath : String := defaultLeanPath) : IO Runtime := do
-  let rt ← loadBootstrapOrError bootstrapPath legoPath rosettaPath leanPath
+              (cubicalBasePath : String := defaultCubicalBasePath)
+              (legoPath : String := defaultLegoPath)
+              (rosettaPath : String := defaultRosettaPath)
+              (leanPath : String := defaultLeanPath) : IO Runtime := do
+  let rt ← loadBootstrapOrError bootstrapPath cubicalBasePath legoPath rosettaPath leanPath
   return rt
 
 /-! ## Singleton Initialization (optional) -/
@@ -592,6 +653,7 @@ initialize runtimeCache : IO.Ref (Option Runtime) ← IO.mkRef none
 
 /-- Initialize once and reuse the runtime (reduces repeated loading/log spam). -/
 def initSingleton (bootstrapPath : String := defaultBootstrapPath)
+                  (cubicalBasePath : String := defaultCubicalBasePath)
                   (legoPath : String := defaultLegoPath)
                   (rosettaPath : String := defaultRosettaPath)
                   (leanPath : String := defaultLeanPath)
@@ -601,8 +663,8 @@ def initSingleton (bootstrapPath : String := defaultBootstrapPath)
   | some rt => return rt
   | none =>
     let rt ← if quiet
-      then initQuiet bootstrapPath legoPath rosettaPath leanPath
-      else init bootstrapPath legoPath rosettaPath leanPath
+      then initQuiet bootstrapPath cubicalBasePath legoPath rosettaPath leanPath
+      else init bootstrapPath cubicalBasePath legoPath rosettaPath leanPath
     runtimeCache.set (some rt)
     return rt
 
@@ -610,10 +672,11 @@ def initSingleton (bootstrapPath : String := defaultBootstrapPath)
     Use this when you just need to parse a single file. -/
 def initAndParse (path : String)
                  (bootstrapPath : String := defaultBootstrapPath)
+                 (cubicalBasePath : String := defaultCubicalBasePath)
                  (legoPath : String := defaultLegoPath)
                  (rosettaPath : String := defaultRosettaPath)
                  (leanPath : String := defaultLeanPath) : IO (Except String Term) := do
-  let rt ← init bootstrapPath legoPath rosettaPath leanPath
+  let rt ← init bootstrapPath cubicalBasePath legoPath rosettaPath leanPath
   let content ← IO.FS.readFile path
   -- Choose grammar based on file extension
   if path.endsWith ".rosetta" then
@@ -639,5 +702,71 @@ def initAndLoadLanguage (path : String)
   match ← loadLanguage rt path with
   | .error e => return .error e
   | .ok grammar => return .ok (rt, grammar)
+
+/-! ## Parse with Validation (High-Level API) -/
+
+/-- Parse and validate a .lego file, returning structured result with errors.
+    This is the recommended API for loading .lego files when you want to
+    check for proof verification errors. -/
+def parseAndValidate (rt : Runtime) (content : String) (path : Option String := none)
+    : Except String ParseValidateResult :=
+  match parseLegoFileE rt content with
+  | .error e => .error s!"Parse error{path.map (s!" in {·}") |>.getD ""}: {e}"
+  | .ok ast =>
+    let errors := validateCubicalAST rt ast
+    .ok { ast := ast, errors := errors, path := path }
+
+/-- Parse and validate from file path -/
+def parseAndValidatePath (rt : Runtime) (path : String) : IO (Except String ParseValidateResult) := do
+  let content ← IO.FS.readFile path
+  return parseAndValidate rt content (some path)
+
+/-- Parse and validate, returning error if there are any verification errors -/
+def parseAndValidateStrict (rt : Runtime) (content : String) (path : Option String := none)
+    : Except String Term :=
+  match parseAndValidate rt content path with
+  | .error e => .error e
+  | .ok result =>
+    if result.isValid then .ok result.ast
+    else .error result.formatErrors
+
+/-- Parse and validate from file path, strict mode -/
+def parseAndValidatePathStrict (rt : Runtime) (path : String) : IO (Except String Term) := do
+  let content ← IO.FS.readFile path
+  return parseAndValidateStrict rt content (some path)
+
+/-- Convenience: Initialize, parse, and validate in one step.
+    Returns AST and any verification errors. -/
+def initAndParseWithValidation (path : String)
+                               (bootstrapPath : String := defaultBootstrapPath)
+                               (cubicalBasePath : String := defaultCubicalBasePath)
+                               (legoPath : String := defaultLegoPath)
+                               (rosettaPath : String := defaultRosettaPath)
+                               (leanPath : String := defaultLeanPath)
+    : IO (Except String ParseValidateResult) := do
+  let rt ← initQuiet bootstrapPath cubicalBasePath legoPath rosettaPath leanPath
+  parseAndValidatePath rt path
+
+/-- Convenience: Initialize, parse, and validate strictly (fail on any error).
+    Use this when you want to ensure the file is both parseable and valid. -/
+def initAndParseStrict (path : String)
+                       (bootstrapPath : String := defaultBootstrapPath)
+                       (cubicalBasePath : String := defaultCubicalBasePath)
+                       (legoPath : String := defaultLegoPath)
+                       (rosettaPath : String := defaultRosettaPath)
+                       (leanPath : String := defaultLeanPath)
+    : IO (Except String Term) := do
+  let rt ← initQuiet bootstrapPath cubicalBasePath legoPath rosettaPath leanPath
+  parseAndValidatePathStrict rt path
+
+/-- Report verification errors to stderr with nice formatting -/
+def reportVerificationErrors (errors : List VerificationError) (path : Option String := none) : IO Unit := do
+  if errors.isEmpty then return
+  let pathStr := path.map (s!"In {·}:") |>.getD "Verification errors:"
+  IO.eprintln s!"\n{pathStr}"
+  IO.eprintln "═══════════════════════════════════════════════════════════════"
+  for err in errors do
+    IO.eprintln s!"  {VerificationError.format err}"
+  IO.eprintln "═══════════════════════════════════════════════════════════════"
 
 end Lego.Runtime

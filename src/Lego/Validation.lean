@@ -20,6 +20,7 @@
 -/
 
 import Lego.Algebra
+import Lego.Normalize
 import Lego.Util
 import Std.Data.HashMap
 import Std.Data.HashSet
@@ -341,6 +342,10 @@ inductive VerificationError where
   | verifiedRuleInvalidProof (ruleName : String) (expected : String) (got : String) : VerificationError
   | reprEquivInvalidProof (reprName : String) (expected : String) (got : String) : VerificationError
   | typeCheckFailed (termDesc : String) (expected : String) (reason : String) : VerificationError
+  | reflProofNotDefEq (ruleName : String) (lhs : String) (rhs : String)
+      (lhsNorm : String) (rhsNorm : String) : VerificationError
+  | proofEndpointsMismatch (ruleName : String) (which : String)
+      (expected : String) (got : String) (expectedNorm : String) (gotNorm : String) : VerificationError
   deriving Repr, BEq
 
 def VerificationError.format : VerificationError → String
@@ -350,28 +355,59 @@ def VerificationError.format : VerificationError → String
     s!"ERROR: Repr equivalence '{name}' proof has wrong type.\n  Expected: Equiv {exp}\n  Got: {got}"
   | .typeCheckFailed desc exp reason =>
     s!"ERROR: Type check failed for {desc}.\n  Expected: {exp}\n  Reason: {reason}"
+  | .reflProofNotDefEq name lhs rhs lhsNorm rhsNorm =>
+    s!"ERROR: Verified rule '{name}' uses refl but LHS and RHS are not definitionally equal.\n  LHS: {lhs}\n  RHS: {rhs}\n  LHS normalizes to: {lhsNorm}\n  RHS normalizes to: {rhsNorm}"
+  | .proofEndpointsMismatch name which exp got expNorm gotNorm =>
+    s!"ERROR: Verified rule '{name}' proof {which} endpoint mismatch.\n  Expected: {exp}\n  Got: {got}\n  Expected normalizes to: {expNorm}\n  Got normalizes to: {gotNorm}"
+
+/-- Check if a term is a refl proof -/
+def isReflProof : Term → Bool
+  | .con "refl" _ => true
+  | _ => false
 
 /-- Verify a "verified rule" declaration:
     verified rule name : lhs ~> rhs via proof ;
-    The proof must have type: Path lhs rhs -/
-def verifyVerifiedRule (typeRules : List TypeRule) (ruleName : String)
-    (lhs rhs proof : Term) : Option VerificationError :=
-  -- Infer the type of the proof term
-  match inferType typeRules proof with
-  | some (.con "Path" [_, a, b]) =>
-    -- Check that a == lhs and b == rhs
-    if a == lhs && b == rhs then none
-    else some (.verifiedRuleInvalidProof ruleName
-      s!"Path _ {lhs} {rhs}"
-      s!"Path _ {a} {b}")
-  | some other =>
-    some (.verifiedRuleInvalidProof ruleName
-      s!"Path _ {lhs} {rhs}"
-      s!"{other}")
-  | none =>
-    -- Can't infer type - give a soft error
-    some (.typeCheckFailed s!"proof of verified rule '{ruleName}'"
-      s!"Path _ {lhs} {rhs}" "could not infer type of proof term")
+    The proof must have type: Path _ lhs rhs
+
+    For refl proofs, we verify that lhs and rhs are definitionally equal.
+    For other proofs, we type-check the proof and verify endpoints match
+    up to definitional equality (normalization). -/
+def verifyVerifiedRule (typeRules : List TypeRule) (rules : List (Term × Term))
+    (ruleName : String) (lhs rhs proof : Term) : Option VerificationError :=
+  let fuel := 1000
+  -- For refl proofs, check definitional equality directly
+  if isReflProof proof then
+    let lhsNorm := Cubical.normalize fuel rules lhs
+    let rhsNorm := Cubical.normalize fuel rules rhs
+    if lhsNorm == rhsNorm then none
+    else some (.reflProofNotDefEq ruleName s!"{lhs}" s!"{rhs}" s!"{lhsNorm}" s!"{rhsNorm}")
+  else
+    -- For other proofs, infer the type and check it's Path _ a b
+    -- where a ≡ lhs and b ≡ rhs (definitionally equal)
+    match inferType typeRules proof with
+    | some (.con "Path" [_, a, b]) =>
+      -- Normalize all terms for definitional equality check
+      let lhsNorm := Cubical.normalize fuel rules lhs
+      let rhsNorm := Cubical.normalize fuel rules rhs
+      let aNorm := Cubical.normalize fuel rules a
+      let bNorm := Cubical.normalize fuel rules b
+      -- Check LHS endpoint
+      if aNorm != lhsNorm then
+        some (.proofEndpointsMismatch ruleName "LHS"
+          s!"{lhs}" s!"{a}" s!"{lhsNorm}" s!"{aNorm}")
+      -- Check RHS endpoint
+      else if bNorm != rhsNorm then
+        some (.proofEndpointsMismatch ruleName "RHS"
+          s!"{rhs}" s!"{b}" s!"{rhsNorm}" s!"{bNorm}")
+      else none
+    | some other =>
+      some (.verifiedRuleInvalidProof ruleName
+        s!"Path _ {lhs} {rhs}"
+        s!"{other}")
+    | none =>
+      -- Can't infer type - give a soft error
+      some (.typeCheckFailed s!"proof of verified rule '{ruleName}'"
+        s!"Path _ {lhs} {rhs}" "could not infer type of proof term")
 
 /-- Verify a "repr" declaration:
     repr A ≃ B via equiv ;
@@ -396,9 +432,10 @@ def verifyReprEquiv (typeRules : List TypeRule) (reprName : String)
       s!"Equiv {typeA} {typeB}" "could not infer type of equivalence term")
 
 /-- Extract verified rules from AST and check them -/
-def validateVerifiedRules (typeRules : List TypeRule) (ast : Term) : List VerificationError :=
+def validateVerifiedRules (typeRules : List TypeRule) (rules : List (Term × Term))
+    (ast : Term) : List VerificationError :=
   extractVerifiedRulesFromAST ast |>.filterMap fun (name, lhs, rhs, proof) =>
-    verifyVerifiedRule typeRules name lhs rhs proof
+    verifyVerifiedRule typeRules rules name lhs rhs proof
 where
   extractVerifiedRulesFromAST (t : Term) : List (String × Term × Term × Term) :=
     match t with
@@ -424,8 +461,9 @@ where
     | _ => []
 
 /-- Validate cubical constructs: verified rules and repr equivalences -/
-def validateCubical (typeRules : List TypeRule) (ast : Term) : List VerificationError :=
-  validateVerifiedRules typeRules ast ++ validateReprEquivs typeRules ast
+def validateCubical (typeRules : List TypeRule) (rules : List (Term × Term))
+    (ast : Term) : List VerificationError :=
+  validateVerifiedRules typeRules rules ast ++ validateReprEquivs typeRules ast
 
 /-- Main validation entry point -/
 def validate (grammar : HashMap String GrammarExpr) (rules : List Rule) : ValidationResult :=
@@ -455,10 +493,15 @@ def FullValidationResult.passed (r : FullValidationResult) : Bool :=
 def FullValidationResult.formatAll (r : FullValidationResult) : List String :=
   r.grammarResult.formatAll ++ r.cubicalErrors.map VerificationError.format
 
+/-- Convert Rule list to normalization rules (pattern, template pairs) -/
+def rulesToNormRules (rules : List Rule) : List (Term × Term) :=
+  rules.map fun r => (r.pattern, r.template)
+
 /-- Full validation: grammar, rules, and cubical constructs -/
 def validateFull (grammar : HashMap String GrammarExpr) (rules : List Rule)
     (typeRules : List TypeRule) (ast : Term) : FullValidationResult :=
+  let normRules := rulesToNormRules rules
   { grammarResult := validate grammar rules
-    cubicalErrors := validateCubical typeRules ast }
+    cubicalErrors := validateCubical typeRules normRules ast }
 
 end Lego.Validation

@@ -1,0 +1,205 @@
+-- CubicalBase.lego: Core Cubical Type Theory Primitives
+--
+-- This file defines the minimal cubical TT infrastructure needed for
+-- writing verified rules with cubical proofs. It extends Bootstrap
+-- directly and is inherited by Lego.lego.
+--
+-- The key primitives for verified rules are:
+-- - refl : reflexivity proof (Path A a a)
+-- - sym : symmetry (Path A a b → Path A b a)
+-- - trans : transitivity (Path A a b → Path A b c → Path A a c)
+-- - cong : congruence (Path A a b → Path B (f a) (f b))
+-- - ua : univalence (Equiv A B → Path Univ A B)
+-- - idEquiv, invEquiv, compEquiv : equivalence combinators
+
+lang CubicalBase (Bootstrap) :=
+
+-----------------------------------------------------
+-- Interval
+-- The abstract interval I with endpoints 0 and 1
+-----------------------------------------------------
+
+piece Interval
+  term ::= "I"                         → interval
+         | "dim0"                      → dim0
+         | "dim1"                      → dim1
+         | "dimVar" <number>           → dimVar
+         | "dimNeg" term               → dimNeg
+         | "dimMax" term term          → dimMax
+         | "dimMin" term term          → dimMin ;
+
+  -- Dimension operations
+  rule dimNeg0: (dimNeg dim0) ~> dim1 ;
+  rule dimNeg1: (dimNeg dim1) ~> dim0 ;
+  rule dimNegNeg: (dimNeg (dimNeg $r)) ~> $r ;
+  rule dimMax0: (dimMax dim0 $r) ~> $r ;
+  rule dimMax1: (dimMax dim1 $r) ~> dim1 ;
+  rule dimMin0: (dimMin dim0 $r) ~> dim0 ;
+  rule dimMin1: (dimMin dim1 $r) ~> $r ;
+
+  type intervalForm: I : Univ ;
+  type dim0Type: dim0 : I ;
+  type dim1Type: dim1 : I ;
+
+-----------------------------------------------------
+-- Cofibrations
+-- Face formulas for partial elements
+-----------------------------------------------------
+
+piece Cofibrations
+  term ::= "Cof"                       → cofTy
+         | "cof_top"                   → cof_top
+         | "cof_bot"                   → cof_bot
+         | "cof_eq" term term          → cof_eq
+         | "cof_and" term term         → cof_and
+         | "cof_or" term term          → cof_or ;
+
+  -- Simplification rules
+  rule eqRefl: (cof_eq $r $r) ~> cof_top ;
+  rule eq01: (cof_eq dim0 dim1) ~> cof_bot ;
+  rule eq10: (cof_eq dim1 dim0) ~> cof_bot ;
+  rule andTop: (cof_and cof_top $φ) ~> $φ ;
+  rule andBot: (cof_and cof_bot $φ) ~> cof_bot ;
+  rule orTop: (cof_or cof_top $φ) ~> cof_top ;
+  rule orBot: (cof_or cof_bot $φ) ~> $φ ;
+
+  type cofForm: Cof : Univ ;
+
+-----------------------------------------------------
+-- Dimension Substitution
+-- Substitute dimension variables in terms
+-----------------------------------------------------
+
+piece DimSubst
+  term ::= "SubstDim" <ident> term term → substDim ;
+
+  -- SubstDim i r body = body[i := r]
+  rule substDim0: (SubstDim $i dim0 $i) ~> dim0 ;
+  rule substDim1: (SubstDim $i dim1 $i) ~> dim1 ;
+
+-----------------------------------------------------
+-- Path Types
+-- Identity types with computational content
+-----------------------------------------------------
+
+piece PathTypes
+  term ::= "Path" term term term       → path
+         | "plam" <ident> "." term     → plam
+         | "papp" term term            → papp
+         | "refl" term                 → refl ;
+
+  -- Path computation rules
+  rule plamApp: (papp (plam $i . $body) $r) ~> (SubstDim $i $r $body) ;
+  rule reflApp: (papp (refl $a) $r) ~> $a ;
+
+  type pathForm: (Path $A $a $b) : Univ when $A : Univ, $a : $A, $b : $A ;
+  type plamType: (plam $i . $body) : (Path $A $a $b)
+    when [$i : I] $body : $A, (SubstDim $i dim0 $body) = $a, (SubstDim $i dim1 $body) = $b ;
+  type pappType: (papp $p $r) : $A when $p : (Path $A $a $b), $r : I ;
+  type reflType: (refl $a) : (Path $A $a $a) when $a : $A ;
+
+-----------------------------------------------------
+-- Path Combinators
+-- Symmetry, transitivity, congruence
+-----------------------------------------------------
+
+piece PathCombinators
+  term ::= "sym" term                  → sym
+         | "trans" term term           → trans
+         | "cong" term term            → cong
+         | "funExt" term               → funExt ;
+
+  -- sym : Path A a b → Path A b a
+  rule symRefl: (sym (refl $a)) ~> (refl $a) ;
+  rule symDef: (sym (plam $i . $body)) ~> (plam $i . (SubstDim $i (dimNeg $i) $body)) ;
+
+  -- trans : Path A a b → Path A b c → Path A a c
+  rule transReflL: (trans (refl $a) $q) ~> $q ;
+  rule transReflR: (trans $p (refl $b)) ~> $p ;
+
+  -- cong : (f : A → B) → Path A a b → Path B (f a) (f b)
+  rule congRefl: (cong $f (refl $a)) ~> (refl (App $f $a)) ;
+
+  -- funExt : ((x : A) → Path B (f x) (g x)) → Path (A → B) f g
+  rule funExtApply: (papp (funExt (plam $x . $p)) $i) ~> (plam $x . (papp $p $i)) ;
+
+  type symType: (sym $p) : (Path $A $b $a) when $p : (Path $A $a $b) ;
+  type transType: (trans $p $q) : (Path $A $a $c) when $p : (Path $A $a $b), $q : (Path $A $b $c) ;
+  type congType: (cong $f $p) : (Path $B (App $f $a) (App $f $b))
+    when $f : (Arrow $A $B), $p : (Path $A $a $b) ;
+  type funExtType: (funExt $h) : (Path (Arrow $A $B) $f $g)
+    when $h : (Arrow $A (Path $B (App $f $x) (App $g $x))) ;
+
+-----------------------------------------------------
+-- Kan Operations
+-- Coercion and composition
+-----------------------------------------------------
+
+piece KanOps
+  term ::= "coe" term term term term   → coe
+         | "hcom" term term term term term → hcom ;
+
+  -- Degenerate cases
+  rule coeRefl: (coe $r $r $A $a) ~> $a ;
+  rule hcomRefl: (hcom $r $r $A $φ $cap) ~> $cap ;
+
+  type coeType: (coe $r $s $A $a) : (SubstDim $i $s $A)
+    when $r : I, $s : I, [$i : I] $A : Univ, $a : (SubstDim $i $r $A) ;
+
+-----------------------------------------------------
+-- Equivalences
+-- Quasi-invertible maps and univalence
+-----------------------------------------------------
+
+piece Equivalences
+  term ::= "Equiv" term term           → equiv
+         | "idEquiv" term              → idEquiv
+         | "compEquiv" term term       → compEquiv
+         | "invEquiv" term             → invEquiv
+         | "equivFun" term             → equivFun
+         | "ua" term                   → ua ;
+
+  -- Identity equivalence
+  rule idEquivFun: (equivFun (idEquiv $A)) ~> (Lam x . x) ;
+  rule uaRefl: (ua (idEquiv $A)) ~> (refl $A) ;
+
+  -- Inverse equivalence
+  rule invEquivId: (invEquiv (idEquiv $A)) ~> (idEquiv $A) ;
+  rule invEquivInv: (invEquiv (invEquiv $e)) ~> $e ;
+
+  -- Composition of equivalences
+  rule compEquivIdL: (compEquiv (idEquiv $A) $e) ~> $e ;
+  rule compEquivIdR: (compEquiv $e (idEquiv $B)) ~> $e ;
+
+  type equivForm: (Equiv $A $B) : Univ when $A : Univ, $B : Univ ;
+  type idEquivType: (idEquiv $A) : (Equiv $A $A) when $A : Univ ;
+  type compEquivType: (compEquiv $e1 $e2) : (Equiv $A $C)
+    when $e1 : (Equiv $A $B), $e2 : (Equiv $B $C) ;
+  type invEquivType: (invEquiv $e) : (Equiv $B $A) when $e : (Equiv $A $B) ;
+  type equivFunType: (equivFun $e) : (Arrow $A $B) when $e : (Equiv $A $B) ;
+  type uaType: (ua $e) : (Path Univ $A $B) when $e : (Equiv $A $B) ;
+
+-----------------------------------------------------
+-- Transport
+-- Moving values along paths
+-----------------------------------------------------
+
+piece Transport
+  term ::= "transp" term term term     → transp
+         | "J" term term term term term term → j ;
+
+  rule transpRefl: (transp $A cof_top $a) ~> $a ;
+  rule jRefl: (J $A $a $P $d $a (refl $a)) ~> $d ;
+
+-----------------------------------------------------
+-- H-Levels (basic)
+-----------------------------------------------------
+
+piece HLevelBase
+  term ::= "isProp" term               → isProp
+         | "isSet" term                → isSet
+         | "isContr" term              → isContr ;
+
+  type isPropForm: (isProp $A) : Univ when $A : Univ ;
+  type isSetForm: (isSet $A) : Univ when $A : Univ ;
+  type isContrForm: (isContr $A) : Univ when $A : Univ ;

@@ -10,8 +10,11 @@
 -- - Prove optimizations preserve semantics
 -- - Switch between equivalent representations
 -- - Transport properties across isomorphisms
+--
+-- Inherits from VerifiedLego which provides verified versions
+-- of all core rules with cubical proofs.
 
-lang CubicalProofs (Lego) :=
+lang CubicalProofs (VerifiedLego) :=
 
 -----------------------------------------------------
 -- PATH TYPES

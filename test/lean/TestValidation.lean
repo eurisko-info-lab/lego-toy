@@ -720,6 +720,539 @@ def testCombinedValidation : IO Nat := do
 
   pure passed
 
+/-! ## Interval Type Tests -/
+
+def testIntervalType : IO Nat := do
+  IO.println "\n── Interval Type ──"
+  let mut passed := 0
+
+  -- Interval type rules
+  let intervalRule : TypeRule := {
+    name := "intervalForm"
+    subject := .con "I" []
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let i0Rule : TypeRule := {
+    name := "i0Type"
+    subject := .con "i0" []
+    type := .con "I" []
+    conditions := []
+  }
+
+  let i1Rule : TypeRule := {
+    name := "i1Type"
+    subject := .con "i1" []
+    type := .con "I" []
+    conditions := []
+  }
+
+  let imaxRule : TypeRule := {
+    name := "imaxType"
+    subject := .con "imax" [.var "$i", .var "$j"]
+    type := .con "I" []
+    conditions := [.con ":" [.var "$i", .con "I" []], .con ":" [.var "$j", .con "I" []]]
+  }
+
+  let inegRule : TypeRule := {
+    name := "inegType"
+    subject := .con "ineg" [.var "$i"]
+    type := .con "I" []
+    conditions := [.con ":" [.var "$i", .con "I" []]]
+  }
+
+  let typeRules := [intervalRule, i0Rule, i1Rule, imaxRule, inegRule]
+
+  -- Test 1: I is a type
+  let ty1 := inferType typeRules (.con "I" [])
+  if ← assertEqual "interval_is_univ" (ty1.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 2: i0 : I
+  let ty2 := inferType typeRules (.con "i0" [])
+  if ← assertEqual "i0_is_interval" (ty2.getD (.lit "?")) (.con "I" []) then passed := passed + 1
+
+  -- Test 3: imax(i0, i1) : I
+  let ty3 := inferType typeRules (.con "imax" [.con "i0" [], .con "i1" []])
+  if ← assertEqual "imax_is_interval" (ty3.getD (.lit "?")) (.con "I" []) then passed := passed + 1
+
+  -- Test 4: ineg(i0) : I
+  let ty4 := inferType typeRules (.con "ineg" [.con "i0" []])
+  if ← assertEqual "ineg_is_interval" (ty4.getD (.lit "?")) (.con "I" []) then passed := passed + 1
+
+  pure passed
+
+/-! ## Cofibration Tests -/
+
+def testCofibrations : IO Nat := do
+  IO.println "\n── Cofibrations ──"
+  let mut passed := 0
+
+  let cofTopRule : TypeRule := {
+    name := "cofTopType"
+    subject := .con "cof_top" []
+    type := .con "Cof" []
+    conditions := []
+  }
+
+  let cofBotRule : TypeRule := {
+    name := "cofBotType"
+    subject := .con "cof_bot" []
+    type := .con "Cof" []
+    conditions := []
+  }
+
+  let cofEqRule : TypeRule := {
+    name := "cofEqType"
+    subject := .con "cof_eq" [.var "$i", .var "$j"]
+    type := .con "Cof" []
+    conditions := [.con ":" [.var "$i", .con "I" []], .con ":" [.var "$j", .con "I" []]]
+  }
+
+  let cofAndRule : TypeRule := {
+    name := "cofAndType"
+    subject := .con "cof_and" [.var "$φ", .var "$ψ"]
+    type := .con "Cof" []
+    conditions := [.con ":" [.var "$φ", .con "Cof" []], .con ":" [.var "$ψ", .con "Cof" []]]
+  }
+
+  let i0Rule : TypeRule := {
+    name := "i0Type"
+    subject := .con "i0" []
+    type := .con "I" []
+    conditions := []
+  }
+
+  let typeRules := [cofTopRule, cofBotRule, cofEqRule, cofAndRule, i0Rule]
+
+  -- Test 1: cof_top : Cof
+  let ty1 := inferType typeRules (.con "cof_top" [])
+  if ← assertEqual "cof_top_is_cof" (ty1.getD (.lit "?")) (.con "Cof" []) then passed := passed + 1
+
+  -- Test 2: cof_bot : Cof
+  let ty2 := inferType typeRules (.con "cof_bot" [])
+  if ← assertEqual "cof_bot_is_cof" (ty2.getD (.lit "?")) (.con "Cof" []) then passed := passed + 1
+
+  -- Test 3: cof_eq(i0, i0) : Cof
+  let ty3 := inferType typeRules (.con "cof_eq" [.con "i0" [], .con "i0" []])
+  if ← assertEqual "cof_eq_is_cof" (ty3.getD (.lit "?")) (.con "Cof" []) then passed := passed + 1
+
+  -- Test 4: cof_and(cof_top, cof_bot) : Cof
+  let ty4 := inferType typeRules (.con "cof_and" [.con "cof_top" [], .con "cof_bot" []])
+  if ← assertEqual "cof_and_is_cof" (ty4.getD (.lit "?")) (.con "Cof" []) then passed := passed + 1
+
+  pure passed
+
+/-! ## Kan Operations Tests -/
+
+def testKanOperations : IO Nat := do
+  IO.println "\n── Kan Operations ──"
+  let mut passed := 0
+
+  -- Simplified type rules for Kan ops
+  let coeRule : TypeRule := {
+    name := "coeType"
+    subject := .con "coe" [.var "$r", .var "$s", .var "$A", .var "$a"]
+    type := .var "$B"  -- Result type depends on A at s
+    conditions := []
+  }
+
+  let hcomRule : TypeRule := {
+    name := "hcomType"
+    subject := .con "hcom" [.var "$r", .var "$s", .var "$A", .var "$φ", .var "$a"]
+    type := .var "$A"
+    conditions := []
+  }
+
+  let transpRule : TypeRule := {
+    name := "transpType"
+    subject := .con "transp" [.var "$A", .var "$φ", .var "$a"]
+    type := .var "$B"  -- Result type is A at i1
+    conditions := []
+  }
+
+  let typeRules := [coeRule, hcomRule, transpRule]
+
+  -- Test 1: coe has a type
+  let ty1 := inferType typeRules (.con "coe" [.var "r", .var "s", .var "A", .var "a"])
+  if ← assertSome "coe_has_type" ty1 then passed := passed + 1
+
+  -- Test 2: hcom returns same type
+  let ty2 := inferType typeRules (.con "hcom" [.var "r", .var "s", .var "A", .var "φ", .var "a"])
+  match ty2 with
+  | some (.var "A") =>
+    IO.println "  ✓ hcom_preserves_type"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ hcom_preserves_type"
+
+  -- Test 3: transp has a type
+  let ty3 := inferType typeRules (.con "transp" [.var "A", .var "φ", .var "a"])
+  if ← assertSome "transp_has_type" ty3 then passed := passed + 1
+
+  pure passed
+
+/-! ## Higher Inductive Types Tests -/
+
+def testHigherInductives : IO Nat := do
+  IO.println "\n── Higher Inductive Types ──"
+  let mut passed := 0
+
+  let s1Rule : TypeRule := {
+    name := "s1Form"
+    subject := .con "S1" []
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let baseRule : TypeRule := {
+    name := "baseType"
+    subject := .con "base" []
+    type := .con "S1" []
+    conditions := []
+  }
+
+  let loopRule : TypeRule := {
+    name := "loopType"
+    subject := .con "loop" []
+    type := .con "Path" [.con "S1" [], .con "base" [], .con "base" []]
+    conditions := []
+  }
+
+  let suspRule : TypeRule := {
+    name := "suspForm"
+    subject := .con "Susp" [.var "$A"]
+    type := .con "Univ" []
+    conditions := [.con ":" [.var "$A", .con "Univ" []]]
+  }
+
+  let northRule : TypeRule := {
+    name := "northType"
+    subject := .con "north" []
+    type := .con "Susp" [.var "$A"]
+    conditions := []
+  }
+
+  let typeRules := [s1Rule, baseRule, loopRule, suspRule, northRule]
+
+  -- Test 1: S1 is a type
+  let ty1 := inferType typeRules (.con "S1" [])
+  if ← assertEqual "s1_is_univ" (ty1.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 2: base : S1
+  let ty2 := inferType typeRules (.con "base" [])
+  if ← assertEqual "base_is_s1" (ty2.getD (.lit "?")) (.con "S1" []) then passed := passed + 1
+
+  -- Test 3: loop : Path S1 base base
+  let ty3 := inferType typeRules (.con "loop" [])
+  match ty3 with
+  | some (.con "Path" [.con "S1" [], .con "base" [], .con "base" []]) =>
+    IO.println "  ✓ loop_is_path_base_base"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ loop_is_path_base_base"
+
+  -- Test 4: Susp(S1) is a type
+  let ty4 := inferType typeRules (.con "Susp" [.con "S1" []])
+  if ← assertEqual "susp_is_univ" (ty4.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  pure passed
+
+/-! ## H-Levels Tests -/
+
+def testHLevels : IO Nat := do
+  IO.println "\n── H-Levels ──"
+  let mut passed := 0
+
+  let isContrRule : TypeRule := {
+    name := "isContrForm"
+    subject := .con "isContr" [.var "$A"]
+    type := .con "Univ" []
+    conditions := [.con ":" [.var "$A", .con "Univ" []]]
+  }
+
+  let isPropRule : TypeRule := {
+    name := "isPropForm"
+    subject := .con "isProp" [.var "$A"]
+    type := .con "Univ" []
+    conditions := [.con ":" [.var "$A", .con "Univ" []]]
+  }
+
+  let isSetRule : TypeRule := {
+    name := "isSetForm"
+    subject := .con "isSet" [.var "$A"]
+    type := .con "Univ" []
+    conditions := [.con ":" [.var "$A", .con "Univ" []]]
+  }
+
+  let propTruncRule : TypeRule := {
+    name := "propTruncForm"
+    subject := .con "propTrunc" [.var "$A"]
+    type := .con "Univ" []
+    conditions := [.con ":" [.var "$A", .con "Univ" []]]
+  }
+
+  let natRule : TypeRule := {
+    name := "natForm"
+    subject := .con "Nat" []
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let typeRules := [isContrRule, isPropRule, isSetRule, propTruncRule, natRule]
+
+  -- Test 1: isContr(Nat) : Univ
+  let ty1 := inferType typeRules (.con "isContr" [.con "Nat" []])
+  if ← assertEqual "isContr_is_univ" (ty1.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 2: isProp(Nat) : Univ
+  let ty2 := inferType typeRules (.con "isProp" [.con "Nat" []])
+  if ← assertEqual "isProp_is_univ" (ty2.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 3: isSet(Nat) : Univ
+  let ty3 := inferType typeRules (.con "isSet" [.con "Nat" []])
+  if ← assertEqual "isSet_is_univ" (ty3.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 4: propTrunc(Nat) : Univ
+  let ty4 := inferType typeRules (.con "propTrunc" [.con "Nat" []])
+  if ← assertEqual "propTrunc_is_univ" (ty4.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  pure passed
+
+/-! ## Sigma and Pi Types Tests -/
+
+def testDependentTypes : IO Nat := do
+  IO.println "\n── Dependent Types ──"
+  let mut passed := 0
+
+  let sigmaRule : TypeRule := {
+    name := "sigmaForm"
+    subject := .con "Sigma" [.var "$A", .var "$B"]
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let pairRule : TypeRule := {
+    name := "pairType"
+    subject := .con "pair" [.var "$a", .var "$b"]
+    type := .con "Sigma" [.var "$A", .var "$B"]
+    conditions := []
+  }
+
+  let fstRule : TypeRule := {
+    name := "fstType"
+    subject := .con "fst" [.var "$p"]
+    type := .var "$A"
+    conditions := [.con ":" [.var "$p", .con "Sigma" [.var "$A", .var "$B"]]]
+  }
+
+  let piRule : TypeRule := {
+    name := "piForm"
+    subject := .con "Pi" [.var "$A", .var "$B"]
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let lamRule : TypeRule := {
+    name := "lamType"
+    subject := .con "lam" [.var "$x", .var "$body"]
+    type := .con "Pi" [.var "$A", .var "$B"]
+    conditions := []
+  }
+
+  let typeRules := [sigmaRule, pairRule, fstRule, piRule, lamRule]
+
+  -- Test 1: Sigma A B : Univ
+  let ty1 := inferType typeRules (.con "Sigma" [.var "A", .var "B"])
+  if ← assertEqual "sigma_is_univ" (ty1.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 2: pair(a, b) : Sigma A B
+  let ty2 := inferType typeRules (.con "pair" [.var "a", .var "b"])
+  match ty2 with
+  | some (.con "Sigma" _) =>
+    IO.println "  ✓ pair_is_sigma"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ pair_is_sigma"
+
+  -- Test 3: Pi A B : Univ
+  let ty3 := inferType typeRules (.con "Pi" [.var "A", .var "B"])
+  if ← assertEqual "pi_is_univ" (ty3.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 4: lam(x, body) : Pi A B
+  let ty4 := inferType typeRules (.con "lam" [.var "x", .var "body"])
+  match ty4 with
+  | some (.con "Pi" _) =>
+    IO.println "  ✓ lam_is_pi"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ lam_is_pi"
+
+  pure passed
+
+/-! ## Glue and Extension Types Tests -/
+
+def testGlueAndExtension : IO Nat := do
+  IO.println "\n── Glue and Extension Types ──"
+  let mut passed := 0
+
+  let glueRule : TypeRule := {
+    name := "glueForm"
+    subject := .con "Glue" [.var "$φ", .var "$T", .var "$A"]
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let partialRule : TypeRule := {
+    name := "partialForm"
+    subject := .con "Partial" [.var "$φ", .var "$A"]
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let subRule : TypeRule := {
+    name := "subForm"
+    subject := .con "Sub" [.var "$A", .var "$φ", .var "$u"]
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let inSRule : TypeRule := {
+    name := "inSType"
+    subject := .con "inS" [.var "$a"]
+    type := .con "Sub" [.var "$A", .var "$φ", .var "$u"]
+    conditions := []
+  }
+
+  let typeRules := [glueRule, partialRule, subRule, inSRule]
+
+  -- Test 1: Glue φ T A : Univ
+  let ty1 := inferType typeRules (.con "Glue" [.var "φ", .var "T", .var "A"])
+  if ← assertEqual "glue_is_univ" (ty1.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 2: Partial φ A : Univ
+  let ty2 := inferType typeRules (.con "Partial" [.var "φ", .var "A"])
+  if ← assertEqual "partial_is_univ" (ty2.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 3: Sub A φ u : Univ
+  let ty3 := inferType typeRules (.con "Sub" [.var "A", .var "φ", .var "u"])
+  if ← assertEqual "sub_is_univ" (ty3.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 4: inS(a) : Sub A φ u
+  let ty4 := inferType typeRules (.con "inS" [.var "a"])
+  match ty4 with
+  | some (.con "Sub" _) =>
+    IO.println "  ✓ inS_is_sub"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ inS_is_sub"
+
+  pure passed
+
+/-! ## J Eliminator Tests -/
+
+def testJEliminator : IO Nat := do
+  IO.println "\n── J Eliminator ──"
+  let mut passed := 0
+
+  let reflRule : TypeRule := {
+    name := "reflType"
+    subject := .con "refl" [.var "$a"]
+    type := .con "Path" [.var "$A", .var "$a", .var "$a"]
+    conditions := []
+  }
+
+  let jRule : TypeRule := {
+    name := "jType"
+    subject := .con "J" [.var "$A", .var "$a", .var "$P", .var "$d", .var "$x", .var "$p"]
+    type := .con "App" [.con "App" [.var "$P", .var "$x"], .var "$p"]
+    conditions := []
+  }
+
+  let typeRules := [reflRule, jRule]
+
+  -- Test 1: J has the right structure
+  let jTerm := Term.con "J" [.var "A", .var "a", .var "P", .var "d", .var "x", .var "p"]
+  let ty1 := inferType typeRules jTerm
+  if ← assertSome "j_has_type" ty1 then passed := passed + 1
+
+  -- Test 2: J A a P d a (refl a) should type-check
+  let jRefl := Term.con "J" [.var "A", .var "a", .var "P", .var "d", .var "a", .con "refl" [.var "a"]]
+  let ty2 := inferType typeRules jRefl
+  if ← assertSome "j_refl_has_type" ty2 then passed := passed + 1
+
+  pure passed
+
+/-! ## Observational Equality Tests -/
+
+def testObservationalEq : IO Nat := do
+  IO.println "\n── Observational Equality ──"
+  let mut passed := 0
+
+  let obsEqRule : TypeRule := {
+    name := "obsEqForm"
+    subject := .con "obsEq" [.var "$A", .var "$a", .var "$b"]
+    type := .con "Univ" []
+    conditions := []
+  }
+
+  let obsReflRule : TypeRule := {
+    name := "obsReflType"
+    subject := .con "obsRefl" [.var "$a"]
+    type := .con "obsEq" [.var "$A", .var "$a", .var "$a"]
+    conditions := []
+  }
+
+  let obsSymRule : TypeRule := {
+    name := "obsSymType"
+    subject := .con "obsSym" [.var "$p"]
+    type := .con "obsEq" [.var "$A", .var "$b", .var "$a"]
+    conditions := [.con ":" [.var "$p", .con "obsEq" [.var "$A", .var "$a", .var "$b"]]]
+  }
+
+  let obsToPathRule : TypeRule := {
+    name := "obsToPathType"
+    subject := .con "obsToPath" [.var "$p"]
+    type := .con "Path" [.var "$A", .var "$a", .var "$b"]
+    conditions := [.con ":" [.var "$p", .con "obsEq" [.var "$A", .var "$a", .var "$b"]]]
+  }
+
+  let typeRules := [obsEqRule, obsReflRule, obsSymRule, obsToPathRule]
+
+  -- Test 1: obsEq A a b : Univ
+  let ty1 := inferType typeRules (.con "obsEq" [.var "A", .var "a", .var "b"])
+  if ← assertEqual "obsEq_is_univ" (ty1.getD (.lit "?")) (.con "Univ" []) then passed := passed + 1
+
+  -- Test 2: obsRefl(a) : obsEq A a a
+  let ty2 := inferType typeRules (.con "obsRefl" [.var "a"])
+  match ty2 with
+  | some (.con "obsEq" [_, a1, a2]) =>
+    if ← assertEqualBool "obsRefl_endpoints_match" (a1 == a2) true then passed := passed + 1
+  | _ =>
+    IO.println "  ✗ obsRefl_endpoints_match"
+
+  -- Test 3: obsSym with obsRefl
+  let obsSym := Term.con "obsSym" [.con "obsRefl" [.var "a"]]
+  let ty3 := inferType typeRules obsSym
+  match ty3 with
+  | some (.con "obsEq" _) =>
+    IO.println "  ✓ obsSym_is_obsEq"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ obsSym_is_obsEq"
+
+  -- Test 4: obsToPath converts to Path
+  let obsToPath := Term.con "obsToPath" [.con "obsRefl" [.var "a"]]
+  let ty4 := inferType typeRules obsToPath
+  match ty4 with
+  | some (.con "Path" _) =>
+    IO.println "  ✓ obsToPath_gives_path"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ obsToPath_gives_path"
+
+  pure passed
+
 /-! ## Main -/
 
 def main : IO UInt32 := do
@@ -782,6 +1315,43 @@ def main : IO UInt32 := do
   let combinedPassed ← testCombinedValidation
   passed := passed + combinedPassed
   total := total + 6
+
+  -- New cubical type tests
+  let intervalPassed ← testIntervalType
+  passed := passed + intervalPassed
+  total := total + 4
+
+  let cofibPassed ← testCofibrations
+  passed := passed + cofibPassed
+  total := total + 4
+
+  let kanPassed ← testKanOperations
+  passed := passed + kanPassed
+  total := total + 3
+
+  let hitPassed ← testHigherInductives
+  passed := passed + hitPassed
+  total := total + 4
+
+  let hlevelPassed ← testHLevels
+  passed := passed + hlevelPassed
+  total := total + 4
+
+  let depTypesPassed ← testDependentTypes
+  passed := passed + depTypesPassed
+  total := total + 4
+
+  let gluePassed ← testGlueAndExtension
+  passed := passed + gluePassed
+  total := total + 4
+
+  let jPassed ← testJEliminator
+  passed := passed + jPassed
+  total := total + 2
+
+  let obsPassed ← testObservationalEq
+  passed := passed + obsPassed
+  total := total + 4
 
   IO.println ""
   IO.println "═══════════════════════════════════════════════════════════════"

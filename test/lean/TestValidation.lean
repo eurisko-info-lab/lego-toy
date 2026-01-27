@@ -315,6 +315,185 @@ def testFullValidation : IO Nat := do
 
   pure passed
 
+/-! ## Grammar Validation Error Tests -/
+
+def testGrammarValidationErrors : IO Nat := do
+  IO.println "\n── Grammar Validation Errors ──"
+  let mut passed := 0
+
+  -- Test: undefinedProduction
+  -- Reference a production that doesn't exist
+  let grammarWithUndefined := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.term" (GrammarExpr.ref "Undefined.production")
+  let result1 := checkUndefinedRefs grammarWithUndefined
+  if ← assertNonEmpty "undefinedProduction_detected" result1.errors then passed := passed + 1
+
+  -- Test: defined productions pass
+  let grammarDefined := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.term" (GrammarExpr.ref "Expr.atom")
+    |>.insert "Expr.atom" (GrammarExpr.lit "x")
+  let result2 := checkUndefinedRefs grammarDefined
+  if ← assertEmpty "definedProduction_passes" result2.errors then passed := passed + 1
+
+  -- Test: builtin productions pass (ident, string, etc.)
+  let grammarBuiltin := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.name" (GrammarExpr.ref "ident")
+  let result3 := checkUndefinedRefs grammarBuiltin
+  if ← assertEmpty "builtinProduction_passes" result3.errors then passed := passed + 1
+
+  pure passed
+
+/-! ## Rule Validation Error Tests -/
+
+def testRuleValidationErrors : IO Nat := do
+  IO.println "\n── Rule Validation Errors ──"
+  let mut passed := 0
+
+  -- Test: unboundVariable - template uses variable not in pattern
+  let ruleUnbound : Rule := {
+    name := "badRule"
+    pattern := .con "f" [.var "$x"]
+    template := .con "g" [.var "$x", .var "$y"]  -- $y not bound!
+    guard := none
+  }
+  let result1 := checkUnboundVars [ruleUnbound]
+  if ← assertNonEmpty "unboundVariable_detected" result1.errors then passed := passed + 1
+
+  -- Test: well-formed rule passes
+  let ruleOk : Rule := {
+    name := "goodRule"
+    pattern := .con "f" [.var "$x", .var "$y"]
+    template := .con "g" [.var "$y", .var "$x"]
+    guard := none
+  }
+  let result2 := checkUnboundVars [ruleOk]
+  if ← assertEmpty "boundVariables_pass" result2.errors then passed := passed + 1
+
+  -- Test: conflictingRules - same pattern, different result
+  let rule1 : Rule := {
+    name := "rule1"
+    pattern := .con "f" [.var "$x"]
+    template := .con "a" []
+    guard := none
+  }
+  let rule2 : Rule := {
+    name := "rule2"
+    pattern := .con "f" [.var "$y"]  -- Same structure as rule1
+    template := .con "b" []          -- Different result!
+    guard := none
+  }
+  let result3 := checkConflictingRules [rule1, rule2]
+  if ← assertNonEmpty "conflictingRules_detected" result3.warnings then passed := passed + 1
+
+  -- Test: non-conflicting rules pass
+  let rule3 : Rule := {
+    name := "rule3"
+    pattern := .con "g" [.var "$x"]  -- Different pattern
+    template := .con "c" []
+    guard := none
+  }
+  let result4 := checkConflictingRules [rule1, rule3]
+  if ← assertEmpty "nonConflictingRules_pass" result4.warnings then passed := passed + 1
+
+  pure passed
+
+/-! ## Left Recursion Warning Tests -/
+
+def testLeftRecursionWarnings : IO Nat := do
+  IO.println "\n── Left Recursion Warnings ──"
+  let mut passed := 0
+
+  -- Test: directLeftRecursion - production starts with itself
+  -- expr ::= expr "+" term
+  let grammarLeftRec := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.expr" (GrammarExpr.mk (.seq (GrammarExpr.ref "Expr.expr") (GrammarExpr.lit "+")))
+  let result1 := checkLeftRecursion grammarLeftRec
+  if ← assertNonEmpty "directLeftRecursion_detected" result1.warnings then passed := passed + 1
+
+  -- Test: non-left-recursive passes
+  -- expr ::= "(" expr ")"
+  let grammarOk := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.expr" (GrammarExpr.mk (.seq (GrammarExpr.lit "(") (GrammarExpr.ref "Expr.expr")))
+  let result2 := checkLeftRecursion grammarOk
+  if ← assertEmpty "nonLeftRecursive_passes" result2.warnings then passed := passed + 1
+
+  pure passed
+
+/-! ## Grammar Optimization Warning Tests -/
+
+def testGrammarOptimizationWarnings : IO Nat := do
+  IO.println "\n── Grammar Optimization Warnings ──"
+  let mut passed := 0
+
+  -- Test: missingCut - keyword without cut
+  let grammarNoCut := Std.HashMap.emptyWithCapacity
+    |>.insert "Stmt.ifStmt" (GrammarExpr.mk (.seq (GrammarExpr.lit "if") (GrammarExpr.ref "Expr.expr")))
+  let result1 := checkMissingCuts grammarNoCut
+  if ← assertNonEmpty "missingCut_detected" result1.warnings then passed := passed + 1
+
+  -- Test: unreachableAlt - prefix makes later alt unreachable
+  -- expr ::= "x" | "x" "y"   -- second alt unreachable after first matches "x"
+  let grammarUnreachable := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.expr" (GrammarExpr.mk (.alt
+      (GrammarExpr.lit "x")
+      (GrammarExpr.mk (.seq (GrammarExpr.lit "x") (GrammarExpr.lit "y")))))
+  let result2 := checkUnreachableAlts grammarUnreachable
+  if ← assertNonEmpty "unreachableAlt_detected" result2.warnings then passed := passed + 1
+
+  -- Test: redundantAlt - duplicate alternatives
+  -- expr ::= "x" | "x"
+  let grammarRedundant := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.expr" (GrammarExpr.mk (.alt (GrammarExpr.lit "x") (GrammarExpr.lit "x")))
+  let result3 := checkUnreachableAlts grammarRedundant
+  if ← assertNonEmpty "redundantAlt_detected" result3.warnings then passed := passed + 1
+
+  -- Test: well-structured grammar passes
+  let grammarGood := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.expr" (GrammarExpr.mk (.alt (GrammarExpr.lit "x") (GrammarExpr.lit "y")))
+  let result4 := checkUnreachableAlts grammarGood
+  if ← assertEmpty "wellStructured_passes" result4.warnings then passed := passed + 1
+
+  pure passed
+
+/-! ## Combined Validation Tests -/
+
+def testCombinedValidation : IO Nat := do
+  IO.println "\n── Combined Validation ──"
+  let mut passed := 0
+
+  -- Test: validateGrammar catches multiple issues
+  let badGrammar := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.expr" (GrammarExpr.mk (.seq (GrammarExpr.ref "Expr.expr") (GrammarExpr.ref "Unknown.ref")))
+  let result1 := validateGrammar badGrammar
+  -- Should have undefined ref error AND left recursion warning
+  if ← assertNonEmpty "validateGrammar_errors" result1.errors then passed := passed + 1
+  if ← assertNonEmpty "validateGrammar_warnings" result1.warnings then passed := passed + 1
+
+  -- Test: validateRules catches multiple issues
+  let badRules : List Rule := [
+    { name := "bad1", pattern := .con "f" [.var "$x"], template := .con "g" [.var "$z"], guard := none },
+    { name := "bad2", pattern := .con "f" [.var "$a"], template := .con "h" [], guard := none }
+  ]
+  let result2 := validateRules badRules
+  -- Should have unbound var AND conflicting rules
+  if ← assertNonEmpty "validateRules_errors" result2.errors then passed := passed + 1
+  if ← assertNonEmpty "validateRules_warnings" result2.warnings then passed := passed + 1
+
+  -- Test: validate combines grammar and rule validation
+  let result3 := validate badGrammar badRules
+  if ← assertEqualBool "validate_combined_fails" result3.passed false then passed := passed + 1
+
+  -- Test: clean validation passes
+  let goodGrammar := Std.HashMap.emptyWithCapacity
+    |>.insert "Expr.expr" (GrammarExpr.lit "x")
+  let goodRules : List Rule := [
+    { name := "good", pattern := .con "f" [.var "$x"], template := .var "$x", guard := none }
+  ]
+  let result4 := validate goodGrammar goodRules
+  if ← assertEqualBool "validate_clean_passes" result4.passed true then passed := passed + 1
+
+  pure passed
+
 /-! ## Main -/
 
 def main : IO UInt32 := do
@@ -348,6 +527,27 @@ def main : IO UInt32 := do
   let fullPassed ← testFullValidation
   passed := passed + fullPassed
   total := total + 2
+
+  -- New grammar/rule validation tests
+  let grammarErrorsPassed ← testGrammarValidationErrors
+  passed := passed + grammarErrorsPassed
+  total := total + 3
+
+  let ruleErrorsPassed ← testRuleValidationErrors
+  passed := passed + ruleErrorsPassed
+  total := total + 4
+
+  let leftRecPassed ← testLeftRecursionWarnings
+  passed := passed + leftRecPassed
+  total := total + 2
+
+  let optimizePassed ← testGrammarOptimizationWarnings
+  passed := passed + optimizePassed
+  total := total + 4
+
+  let combinedPassed ← testCombinedValidation
+  passed := passed + combinedPassed
+  total := total + 6
 
   IO.println ""
   IO.println "═══════════════════════════════════════════════════════════════"

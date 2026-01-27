@@ -184,25 +184,109 @@ def evalCof (φ : Term) : Bool :=
   | .con "cof_eq" [r, s] => r == s
   | .con "cof_and" [φ₁, φ₂] => evalCof φ₁ && evalCof φ₂
   | .con "cof_or" [φ₁, φ₂] => evalCof φ₁ || evalCof φ₂
+  | .con "cof_neg" [φ'] => !evalCof φ'
   | _ => false
 
-/-- Simplify cofibration algebraically -/
-def simplifyCof (φ : Term) : Term :=
+/-- Simplify dimension expression -/
+partial def simplifyDim (d : Term) : Term :=
+  match d with
+  -- Double negation
+  | .con "dimNeg" [.con "dimNeg" [r]] => simplifyDim r
+  -- Negation of constants
+  | .con "dimNeg" [.con "dim0" []] => .con "dim1" []
+  | .con "dimNeg" [.con "dim1" []] => .con "dim0" []
+  -- Max simplifications
+  | .con "dimMax" [.con "dim0" [], r] => simplifyDim r
+  | .con "dimMax" [r, .con "dim0" []] => simplifyDim r
+  | .con "dimMax" [.con "dim1" [], _] => .con "dim1" []
+  | .con "dimMax" [_, .con "dim1" []] => .con "dim1" []
+  | .con "dimMax" [r, s] =>
+    let r' := simplifyDim r
+    let s' := simplifyDim s
+    if r' == s' then r'
+    else if r' == .con "dim0" [] then s'
+    else if s' == .con "dim0" [] then r'
+    else if r' == .con "dim1" [] || s' == .con "dim1" [] then .con "dim1" []
+    -- Max with negation: max(i, 1-i) = 1
+    else match r', s' with
+      | r'', .con "dimNeg" [r'''] => if r'' == r''' then .con "dim1" [] else .con "dimMax" [r', s']
+      | .con "dimNeg" [r'''], r'' => if r'' == r''' then .con "dim1" [] else .con "dimMax" [r', s']
+      | _, _ => .con "dimMax" [r', s']
+  -- Min simplifications
+  | .con "dimMin" [.con "dim0" [], _] => .con "dim0" []
+  | .con "dimMin" [_, .con "dim0" []] => .con "dim0" []
+  | .con "dimMin" [.con "dim1" [], r] => simplifyDim r
+  | .con "dimMin" [r, .con "dim1" []] => simplifyDim r
+  | .con "dimMin" [r, s] =>
+    let r' := simplifyDim r
+    let s' := simplifyDim s
+    if r' == s' then r'
+    else if r' == .con "dim1" [] then s'
+    else if s' == .con "dim1" [] then r'
+    else if r' == .con "dim0" [] || s' == .con "dim0" [] then .con "dim0" []
+    -- Min with negation: min(i, 1-i) = 0
+    else match r', s' with
+      | r'', .con "dimNeg" [r'''] => if r'' == r''' then .con "dim0" [] else .con "dimMin" [r', s']
+      | .con "dimNeg" [r'''], r'' => if r'' == r''' then .con "dim0" [] else .con "dimMin" [r', s']
+      | _, _ => .con "dimMin" [r', s']
+  -- De Morgan for dimension negation through max/min
+  | .con "dimNeg" [.con "dimMax" [r, s]] =>
+    simplifyDim (.con "dimMin" [.con "dimNeg" [r], .con "dimNeg" [s]])
+  | .con "dimNeg" [.con "dimMin" [r, s]] =>
+    simplifyDim (.con "dimMax" [.con "dimNeg" [r], .con "dimNeg" [s]])
+  | _ => d
+
+/-- Simplify cofibration algebraically with full De Morgan and idempotence -/
+partial def simplifyCof (φ : Term) : Term :=
   match φ with
   | .con "cof_eq" [r, s] =>
-    if r == s then .con "cof_top" []
-    else match r, s with
+    let r' := simplifyDim r
+    let s' := simplifyDim s
+    if r' == s' then .con "cof_top" []
+    else match r', s' with
       | .con "dim0" [], .con "dim1" [] => .con "cof_bot" []
       | .con "dim1" [], .con "dim0" [] => .con "cof_bot" []
-      | _, _ => φ
+      | _, _ => .con "cof_eq" [r', s']
+  -- And with top/bot
   | .con "cof_and" [.con "cof_top" [], ψ] => simplifyCof ψ
   | .con "cof_and" [ψ, .con "cof_top" []] => simplifyCof ψ
   | .con "cof_and" [.con "cof_bot" [], _] => .con "cof_bot" []
   | .con "cof_and" [_, .con "cof_bot" []] => .con "cof_bot" []
+  -- Or with top/bot
   | .con "cof_or" [.con "cof_top" [], _] => .con "cof_top" []
   | .con "cof_or" [_, .con "cof_top" []] => .con "cof_top" []
   | .con "cof_or" [.con "cof_bot" [], ψ] => simplifyCof ψ
   | .con "cof_or" [ψ, .con "cof_bot" []] => simplifyCof ψ
+  -- Idempotence
+  | .con "cof_and" [φ₁, φ₂] =>
+    let φ₁' := simplifyCof φ₁
+    let φ₂' := simplifyCof φ₂
+    if φ₁' == φ₂' then φ₁'
+    -- Complement: φ ∧ ¬φ = ⊥
+    else match φ₂' with
+      | .con "cof_neg" [φ₂''] => if φ₁' == φ₂'' then .con "cof_bot" [] else .con "cof_and" [φ₁', φ₂']
+      | _ => match φ₁' with
+        | .con "cof_neg" [φ₁''] => if φ₁'' == φ₂' then .con "cof_bot" [] else .con "cof_and" [φ₁', φ₂']
+        | _ => .con "cof_and" [φ₁', φ₂']
+  | .con "cof_or" [φ₁, φ₂] =>
+    let φ₁' := simplifyCof φ₁
+    let φ₂' := simplifyCof φ₂
+    if φ₁' == φ₂' then φ₁'
+    -- Complement: φ ∨ ¬φ = ⊤
+    else match φ₂' with
+      | .con "cof_neg" [φ₂''] => if φ₁' == φ₂'' then .con "cof_top" [] else .con "cof_or" [φ₁', φ₂']
+      | _ => match φ₁' with
+        | .con "cof_neg" [φ₁''] => if φ₁'' == φ₂' then .con "cof_top" [] else .con "cof_or" [φ₁', φ₂']
+        | _ => .con "cof_or" [φ₁', φ₂']
+  -- Double negation
+  | .con "cof_neg" [.con "cof_neg" [ψ]] => simplifyCof ψ
+  | .con "cof_neg" [.con "cof_top" []] => .con "cof_bot" []
+  | .con "cof_neg" [.con "cof_bot" []] => .con "cof_top" []
+  -- De Morgan laws
+  | .con "cof_neg" [.con "cof_and" [φ₁, φ₂]] =>
+    simplifyCof (.con "cof_or" [.con "cof_neg" [φ₁], .con "cof_neg" [φ₂]])
+  | .con "cof_neg" [.con "cof_or" [φ₁, φ₂]] =>
+    simplifyCof (.con "cof_and" [.con "cof_neg" [φ₁], .con "cof_neg" [φ₂]])
   | _ => φ
 
 /-! ## Level Operations -/

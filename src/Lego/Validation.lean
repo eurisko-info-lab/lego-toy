@@ -78,6 +78,9 @@ inductive ValidationWarning where
   | ruleCycle (cycle : List String) : ValidationWarning
   | unreachableAlt (prod : String) (idx : Nat) : ValidationWarning
   | redundantAlt (prod : String) (idx1 : Nat) (idx2 : Nat) : ValidationWarning
+  -- Type checking recovery warnings
+  | typeCheckSkipped (term : String) (reason : String) : ValidationWarning
+  | inferredAsAny (term : String) : ValidationWarning
   deriving Repr, BEq
 
 /-- Result of validation -/
@@ -142,6 +145,10 @@ def ValidationWarning.format : ValidationWarning → String
       s!"WARNING: Alternative {idx} in '{prod}' is unreachable"
   | .redundantAlt prod i j =>
       s!"WARNING: Alternatives {i} and {j} in '{prod}' are redundant"
+  | .typeCheckSkipped term reason =>
+      s!"WARNING: Type checking skipped for '{term}': {reason}"
+  | .inferredAsAny term =>
+      s!"WARNING: Could not infer type for '{term}', treating as Any"
 
 /-! ## Grammar Expression Helpers -/
 
@@ -761,5 +768,109 @@ partial def validateCubicalTerm (typeRules : List TypeRule) (rules : List (Term 
 def validateAllCubicalTerms (typeRules : List TypeRule) (rules : List (Term × Term))
     (ast : Term) : List ValidationError :=
   validateCubicalTerm typeRules rules ast
+
+/-! ## Error Recovery Validation Mode -/
+
+/-- Configuration for error recovery -/
+structure RecoveryConfig where
+  /-- Maximum errors before stopping -/
+  maxErrors : Nat := 100
+  /-- Continue validating children after parent error -/
+  continueOnChildError : Bool := true
+  /-- Collect warnings even when errors present -/
+  collectWarnings : Bool := true
+  /-- Report type inference failures as warnings instead of errors -/
+  softTypeErrors : Bool := true
+  deriving Repr, Inhabited
+
+/-- Result with both errors and warnings, supporting recovery -/
+structure RecoveryResult where
+  errors : List ValidationError
+  warnings : List ValidationWarning
+  /-- Positions that were skipped due to errors -/
+  skipped : List String
+  /-- Total terms validated -/
+  termsValidated : Nat
+  deriving Repr, Inhabited
+
+instance : Append RecoveryResult where
+  append r1 r2 := {
+    errors := r1.errors ++ r2.errors
+    warnings := r1.warnings ++ r2.warnings
+    skipped := r1.skipped ++ r2.skipped
+    termsValidated := r1.termsValidated + r2.termsValidated
+  }
+
+def RecoveryResult.empty : RecoveryResult := ⟨[], [], [], 0⟩
+
+def RecoveryResult.fromError (e : ValidationError) : RecoveryResult :=
+  { errors := [e], warnings := [], skipped := [], termsValidated := 1 }
+
+def RecoveryResult.fromWarning (w : ValidationWarning) : RecoveryResult :=
+  { errors := [], warnings := [w], skipped := [], termsValidated := 1 }
+
+def RecoveryResult.ok : RecoveryResult :=
+  { errors := [], warnings := [], skipped := [], termsValidated := 1 }
+
+def RecoveryResult.passed (r : RecoveryResult) : Bool := r.errors.isEmpty
+
+/-- Validate with error recovery - continues validation after errors -/
+partial def validateWithRecovery (config : RecoveryConfig) (typeRules : List TypeRule)
+    (rules : List (Term × Term)) (t : Term) : RecoveryResult :=
+  -- Check if we've hit the error limit
+  let rec go (errorCount : Nat) (t : Term) : RecoveryResult :=
+    if errorCount >= config.maxErrors then
+      { RecoveryResult.empty with skipped := [toString t] }
+    else
+      let selfResult := validateSingleTerm typeRules rules t
+      let newCount := errorCount + selfResult.errors.length
+
+      -- If we have errors and not continuing on child error, skip children
+      if !config.continueOnChildError && !selfResult.errors.isEmpty then
+        selfResult
+      else
+        -- Validate children
+        let childResults := match t with
+          | .con _ args =>
+            let (_, acc) := args.foldl (init := (newCount, RecoveryResult.empty)) fun (cnt, acc) arg =>
+              let r := go cnt arg
+              (cnt + r.errors.length, acc ++ r)
+            acc
+          | _ => RecoveryResult.empty
+        selfResult ++ childResults
+  go 0 t
+where
+  validateSingleTerm (typeRules : List TypeRule) (rules : List (Term × Term)) (t : Term) : RecoveryResult :=
+    match t with
+    | .con "papp" [p, r] =>
+      if !isValidDimension r then
+        RecoveryResult.fromError (.dimensionMismatch "dimension" (toString r) "path application")
+      else RecoveryResult.ok
+    | .con "coe" [r, s, _, _] =>
+      let errs := (if !isValidDimension r then [ValidationError.dimensionMismatch "dimension" (toString r) "coe start"] else [])
+               ++ (if !isValidDimension s then [ValidationError.dimensionMismatch "dimension" (toString s) "coe end"] else [])
+      if errs.isEmpty then RecoveryResult.ok else { RecoveryResult.empty with errors := errs, termsValidated := 1 }
+    | .con "hcom" [r, s, _, φ, _] =>
+      let errs := (if !isValidDimension r then [ValidationError.dimensionMismatch "dimension" (toString r) "hcom start"] else [])
+               ++ (if !isValidDimension s then [ValidationError.dimensionMismatch "dimension" (toString s) "hcom end"] else [])
+               ++ (if !isValidCofibration φ then [ValidationError.invalidCofibration (toString φ) "invalid in hcom"] else [])
+      if errs.isEmpty then RecoveryResult.ok else { RecoveryResult.empty with errors := errs, termsValidated := 1 }
+    | .con "Glue" _ =>
+      match validateGlue typeRules t with
+      | some err => RecoveryResult.fromError err
+      | none => RecoveryResult.ok
+    | .con "sys" (cof :: branches) =>
+      match validateSystem rules cof branches with
+      | some err => RecoveryResult.fromError err
+      | none => RecoveryResult.ok
+    | _ => RecoveryResult.ok
+
+/-- Format recovery result with summary -/
+def RecoveryResult.format (r : RecoveryResult) : String :=
+  let errStr := r.errors.map ValidationError.format |> "\n".intercalate
+  let warnStr := r.warnings.map ValidationWarning.format |> "\n".intercalate
+  let summary := s!"Validated {r.termsValidated} terms: {r.errors.length} errors, {r.warnings.length} warnings"
+  let skipStr := if r.skipped.isEmpty then "" else s!"\nSkipped {r.skipped.length} terms due to error limit"
+  s!"{summary}{skipStr}\n{errStr}\n{warnStr}"
 
 end Lego.Validation

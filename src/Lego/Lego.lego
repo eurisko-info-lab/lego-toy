@@ -535,6 +535,91 @@ piece Truncation
   type truncInType: (truncIn $a) : (Trunc $n $A) when $a : $A ;
 
 -----------------------------------------------------
+-- Propositional Truncation (||A||)
+-- The (-1)-truncation, makes any type a proposition
+-----------------------------------------------------
+
+piece PropTrunc
+  term ::= "PropTrunc" term            → propTrunc
+         | "propTruncIn" term          → propTruncIn
+         | "propTruncElim" term term term term → propTruncElim
+         | "squash" term term term     → squash ;
+
+  -- ||A|| is a proposition: any two elements are equal
+  -- squash a b r : ||A|| is the path from a to b at dimension r
+  rule squash0: (squash $a $b dim0) ~~> $a ;
+  rule squash1: (squash $a $b dim1) ~~> $b ;
+
+  -- Eliminator only works into propositions
+  rule propTruncElimIn: (propTruncElim $P $isPropP $f (propTruncIn $a)) ~~> (App $f $a) ;
+
+  type propTruncForm: (PropTrunc $A) : Univ when $A : Univ ;
+  type propTruncInType: (propTruncIn $a) : (PropTrunc $A) when $a : $A ;
+  type squashType: (squash $a $b $r) : (PropTrunc $A) when $a : (PropTrunc $A), $b : (PropTrunc $A), $r : I ;
+  type propTruncElimType: (propTruncElim $P $isPropP $f $x) : (App $P $x)
+    when $P : (Arrow (PropTrunc $A) Univ), $isPropP : (isProp (App $P $y)), $f : (Pi $a : $A . (App $P (propTruncIn $a))), $x : (PropTrunc $A) ;
+
+-----------------------------------------------------
+-- Set Truncation (||A||_0)
+-- The 0-truncation, makes any type a set
+-----------------------------------------------------
+
+piece SetTrunc
+  term ::= "SetTrunc" term             → setTrunc
+         | "setTruncIn" term           → setTruncIn
+         | "setTruncElim" term term term term → setTruncElim
+         | "setSquash" term term term term term → setSquash ;
+
+  -- ||A||_0 is a set: any two paths between elements are equal
+  -- setSquash p q i j : ||A||_0 fills the square between paths p and q
+  rule setSquash00: (setSquash $p $q dim0 dim0) ~~> (papp $p dim0) ;
+  rule setSquash01: (setSquash $p $q dim0 dim1) ~~> (papp $p dim1) ;
+  rule setSquash10: (setSquash $p $q dim1 dim0) ~~> (papp $q dim0) ;
+  rule setSquash11: (setSquash $p $q dim1 dim1) ~~> (papp $q dim1) ;
+
+  -- Eliminator only works into sets
+  rule setTruncElimIn: (setTruncElim $P $isSetP $f (setTruncIn $a)) ~~> (App $f $a) ;
+
+  type setTruncForm: (SetTrunc $A) : Univ when $A : Univ ;
+  type setTruncInType: (setTruncIn $a) : (SetTrunc $A) when $a : $A ;
+  type setTruncElimType: (setTruncElim $P $isSetP $f $x) : (App $P $x)
+    when $P : (Arrow (SetTrunc $A) Univ), $isSetP : (isSet (App $P $y)), $f : (Pi $a : $A . (App $P (setTruncIn $a))), $x : (SetTrunc $A) ;
+
+-----------------------------------------------------
+-- Set Quotient (A / R)
+-- Quotient by relation R, result is always a set
+-----------------------------------------------------
+
+piece SetQuotient
+  term ::= "SetQuotient" term term     → setQuotient
+         | "setQuot" term              → setQuot
+         | "setQuotEq" term term term term → setQuotEq
+         | "setQuotSquash" term term term term term → setQuotSquash
+         | "SetQuotElim" term term term term term → setQuotElim ;
+
+  -- A / R is the quotient of A by relation R
+  -- setQuot a : A/R for a : A
+  -- setQuotEq a b r i : Path (A/R) (setQuot a) (setQuot b) for r : R a b
+  rule setQuotEq0: (setQuotEq $a $b $r dim0) ~~> (setQuot $a) ;
+  rule setQuotEq1: (setQuotEq $a $b $r dim1) ~~> (setQuot $b) ;
+
+  -- A/R is a set: any two paths are equal (via setQuotSquash)
+  rule setQuotSquash00: (setQuotSquash $x $y $p $q dim0 dim0) ~~> $x ;
+  rule setQuotSquash01: (setQuotSquash $x $y $p $q dim0 dim1) ~~> $y ;
+
+  -- Eliminator respects the relation
+  rule setQuotElimQuot: (SetQuotElim $B $f $resp $squashB (setQuot $a)) ~~> (App $f $a) ;
+
+  type setQuotientForm: (SetQuotient $A $R) : Univ when $A : Univ, $R : (Arrow $A (Arrow $A Prop)) ;
+  type setQuotType: (setQuot $a) : (SetQuotient $A $R) when $a : $A ;
+  type setQuotEqType: (setQuotEq $a $b $r $i) : (SetQuotient $A $R) when $a : $A, $b : $A, $r : (App (App $R $a) $b), $i : I ;
+  type setQuotElimType: (SetQuotElim $B $f $resp $squashB $q) : (App $B $q)
+    when $B : (Arrow (SetQuotient $A $R) Univ), $f : (Pi $a : $A . (App $B (setQuot $a))),
+         $resp : (Pi $a : $A . (Pi $b : $A . (Pi $r : (App (App $R $a) $b) . (Path (App $B (setQuot $a)) (App $f $a) (coe dim0 dim1 (plam $i . (App $B (setQuotEq $a $b $r $i))) (App $f $b)))))),
+         $squashB : (Pi $q : (SetQuotient $A $R) . (isSet (App $B $q))),
+         $q : (SetQuotient $A $R) ;
+
+-----------------------------------------------------
 -- Extension Types
 -- Partial elements and their extensions
 -----------------------------------------------------
@@ -819,12 +904,40 @@ piece CubicalSubtypes
   term ::= "Glue" term term term       → glue2
          | "unglue" term term          → unglue2
          | "prim_glue" term term term term → primGlue
-         | "prim_unglue" term term term term → primUnglue ;
+         | "prim_unglue" term term term term → primUnglue
+         | "Ext" term term term        → ext
+         | "extIn" term term           → extIn
+         | "extOut" term               → extOut
+         | "extEq" term term term term → extEq
+         | "Refinement" term term      → refinement
+         | "refineIn" term term        → refineIn
+         | "refineOut" term            → refineOut
+         | "SubtypeEq" term term term  → subtypeEq ;
 
   -- Glue [φ ↦ (T, f)] A = type that looks like T on φ and A elsewhere
   -- Essential for proving univalence
 
+  -- Extension types: Ext A φ u = { a : A | a = u when φ }
+  -- An element of (Ext A φ u) is an element of A that equals u on face φ
+  rule extOutIn: (extOut (extIn $a $p)) ~~> $a ;
+
+  -- extEq gives the path from extOut to the partial element
+  rule extEqTop: (extEq $a cof_top $u $i) ~~> $u ;
+
+  -- Refinement types: Refinement A P = { a : A | P a }
+  -- Dependent pair where second component is a proposition
+  rule refineOutIn: (refineOut (refineIn $a $p)) ~~> $a ;
+
+  -- SubtypeEq: two refined values with same underlying value are equal
+  rule subtypeEqRefl: (SubtypeEq $A $P (refineIn $a $p)) ~~> (refl (refineIn $a $p)) ;
+
   type glue2Form: (Glue $A $φ $T) : Univ when $A : Univ, $φ : Cof, $T : Univ ;
+  type extForm: (Ext $A $φ $u) : Univ when $A : Univ, $φ : Cof, $u : (Partial $φ $A) ;
+  type extInType: (extIn $a $p) : (Ext $A $φ $u) when $a : $A, $p : (Path $A $a (sysProj $u $φ)) ;
+  type extOutType: (extOut $e) : $A when $e : (Ext $A $φ $u) ;
+  type refinementForm: (Refinement $A $P) : Univ when $A : Univ, $P : (Arrow $A Prop) ;
+  type refineInType: (refineIn $a $p) : (Refinement $A $P) when $a : $A, $p : (App $P $a) ;
+  type refineOutType: (refineOut $r) : $A when $r : (Refinement $A $P) ;
 
 -----------------------------------------------------
 -- Proof Tactics
@@ -1145,3 +1258,15 @@ test "hcomSys_refl": (hcomSys r r A sys cap) ~~> cap ;
 test "comSys_refl": (comSys r r A sys cap) ~~> cap ;
 test "sysExtend_top": (sysExtend a cof_top u) ~~> u ;
 test "sysExtend_bot": (sysExtend a cof_bot u) ~~> a ;
+
+-- PropTrunc tests
+test "squash_dim0": (squash a b dim0) ~~> a ;
+test "squash_dim1": (squash a b dim1) ~~> b ;
+
+-- SetQuotient tests
+test "setQuotEq_dim0": (setQuotEq a b r dim0) ~~> (setQuot a) ;
+test "setQuotEq_dim1": (setQuotEq a b r dim1) ~~> (setQuot b) ;
+
+-- Extension types tests
+test "extOut_extIn": (extOut (extIn a p)) ~~> a ;
+test "refineOut_refineIn": (refineOut (refineIn a p)) ~~> a ;

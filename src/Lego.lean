@@ -27,6 +27,7 @@ import Lego.Interp
 import Lego.Bootstrap
 import Lego.Loader
 import Lego.Validation
+import Lego.RedValidation
 import Lego.Runtime
 import Lego.LanguageRegistry
 

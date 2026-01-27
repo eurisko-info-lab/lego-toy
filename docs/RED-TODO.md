@@ -12,7 +12,7 @@
 | **Reduction** | ✅ Done | β-reduction, projections, let |
 | **Path Ops** | ✅ Done | plam, papp, dim0/dim1/dimVar |
 | **Kan Ops** | ✅ Done | coe through Pi/Sigma, reflexivity |
-| **Validation** | 🔲 TODO | Scope/type checking |
+| **Validation** | ✅ Done | Scope/dim binding/system agreement in RedValidation.lean |
 
 ## Architecture
 

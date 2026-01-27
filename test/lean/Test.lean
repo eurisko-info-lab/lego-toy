@@ -221,11 +221,6 @@ def natTests : List TestResult :=
                Term.con "lam" [Term.var "x",
                  Term.con "app" [Term.var "f",
                    Term.con "app" [Term.var "f", Term.var "x"]]]]
-  let succ := Term.con "lam" [Term.var "n",
-                Term.con "lam" [Term.var "f",
-                  Term.con "lam" [Term.var "x",
-                    Term.con "app" [Term.var "f",
-                      Term.con "app" [Term.con "app" [Term.var "n", Term.var "f"], Term.var "x"]]]]]
   let add := Term.con "lam" [Term.var "m",
                Term.con "lam" [Term.var "n",
                  Term.con "lam" [Term.var "f",
@@ -999,7 +994,7 @@ def attrEvalTests : List TestResult :=
   let cod1 := getCodomain piTy
   let dom2 := getDomain arrowTy
   let errStr := formatErrors [err1, err2]
-  let (e, w, i) := countBySeverity [err1, err2, err3]
+  let (e, _, _) := countBySeverity [err1, err2, err3]
 
   [
     assertTrue "sourceloc_toString" (locStr == "test.lego:10:5"),

@@ -785,13 +785,6 @@ def printGrammar (fuel : Nat) (prods : Productions) (g : GrammarExpr) (t : Term)
         | .mk (.seq g1' g2') => allLayout g1' && allLayout g2'
         | _ => false
       allLayout g2
-    let g1Desc := match g1 with
-      | .mk (.layout l) => s!"layout({l})"
-      | .mk (.star _) => "star(...)"
-      | .mk (.lit s) => s!"lit({s})"
-      | .mk (.ref r) => s!"ref({r})"
-      | .mk (.seq _ _) => "seq(...)"
-      | _ => "other"
     let g2Desc := match g2 with
       | .mk (.layout l) => s!"layout({l})"
       | .mk (.star _) => "star(...)"

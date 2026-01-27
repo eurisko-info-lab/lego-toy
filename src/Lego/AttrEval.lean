@@ -56,6 +56,19 @@ structure TypeError where
 
 namespace TypeError
 
+def formatBase (e : TypeError) : String :=
+  let sevStr := match e.severity with
+    | .error => "error"
+    | .warning => "warning"
+    | .info => "info"
+  let loc := e.loc.toString
+  s!"{loc}: {sevStr}: {e.message}"
+
+def formatExpectedActual (expected actual : Option Term) : String :=
+  match expected, actual with
+  | some exp, some act => s!"\n  expected: {repr exp}\n  actual: {repr act}"
+  | _, _ => ""
+
 def error (msg : String) (loc : SourceLoc := SourceLoc.unknown) : TypeError :=
   ⟨msg, loc, .error, none, none, []⟩
 
@@ -66,15 +79,8 @@ def undefined (name : String) (loc : SourceLoc := SourceLoc.unknown) : TypeError
   ⟨s!"undefined: {name}", loc, .error, none, none, []⟩
 
 def toString (e : TypeError) : String :=
-  let sevStr := match e.severity with
-    | .error => "error"
-    | .warning => "warning"
-    | .info => "info"
-  let loc := e.loc.toString
-  let base := s!"{loc}: {sevStr}: {e.message}"
-  match e.expected, e.actual with
-  | some exp, some act => s!"{base}\n  expected: {repr exp}\n  actual: {repr act}"
-  | _, _ => base
+  let base := formatBase e
+  base ++ formatExpectedActual e.expected e.actual
 
 instance : ToString TypeError := ⟨toString⟩
 

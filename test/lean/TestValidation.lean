@@ -165,7 +165,8 @@ def testVerifiedRuleValidation : IO Nat := do
   IO.println "\n── Verified Rule Validation ──"
   let mut passed := 0
 
-  -- Set up type rules for paths
+  -- Set up type rules for paths (cubical type theory)
+  -- refl : (a : A) → Path A a a
   let reflRule : TypeRule := {
     name := "reflType"
     subject := .con "refl" [.var "$a"]
@@ -173,34 +174,61 @@ def testVerifiedRuleValidation : IO Nat := do
     conditions := []
   }
 
-  let typeRules := [reflRule]
+  -- sym : Path A a b → Path A b a
+  let symRule : TypeRule := {
+    name := "symType"
+    subject := .con "sym" [.var "$p"]
+    type := .con "Path" [.var "$A", .var "$b", .var "$a"]
+    conditions := [.con ":" [.var "$p", .con "Path" [.var "$A", .var "$a", .var "$b"]]]
+  }
 
-  -- Test: valid verified rule with refl proof
-  -- verified rule id : x ~> x via refl(x)
-  let err1 := verifyVerifiedRule typeRules "id"
-    (.var "x") (.var "x") (.con "refl" [.var "x"])
-  if ← assertNone "valid_verified_rule_refl" err1 then passed := passed + 1
+  -- trans : Path A a b → Path A b c → Path A a c
+  let transRule : TypeRule := {
+    name := "transType"
+    subject := .con "trans" [.var "$p", .var "$q"]
+    type := .con "Path" [.var "$A", .var "$a", .var "$c"]
+    conditions := [
+      .con ":" [.var "$p", .con "Path" [.var "$A", .var "$a", .var "$b"]],
+      .con ":" [.var "$q", .con "Path" [.var "$A", .var "$b", .var "$c"]]
+    ]
+  }
 
-  -- Test: invalid verified rule - wrong proof endpoints
-  -- verified rule bad : x ~> y via refl(x)  -- refl(x) has type Path _ x x, not x y
-  let err2 := verifyVerifiedRule typeRules "bad"
-    (.var "x") (.var "y") (.con "refl" [.var "x"])
-  if ← assertSome "invalid_verified_rule_wrong_endpoints" err2 then passed := passed + 1
+  -- cong : (f : A → B) → Path A a a' → Path B (f a) (f a')
+  let congRule : TypeRule := {
+    name := "congType"
+    subject := .con "cong" [.var "$f", .var "$p"]
+    type := .con "Path" [.var "$B", .con "app" [.var "$f", .var "$a"], .con "app" [.var "$f", .var "$a'"]]
+    conditions := [.con ":" [.var "$p", .con "Path" [.var "$A", .var "$a", .var "$a'"]]]
+  }
 
-  -- Test: invalid verified rule - proof has wrong type entirely (not Path)
-  -- verified rule bad2 : x ~> x via zero  -- zero : Nat, not Path
   let zeroRule : TypeRule := {
     name := "zeroType"
     subject := .con "zero" []
     type := .con "Nat" []
     conditions := []
   }
-  let typeRulesWithNat := reflRule :: [zeroRule]
-  let err3 := verifyVerifiedRule typeRulesWithNat "bad2"
+
+  let typeRules := [reflRule, symRule, transRule, congRule, zeroRule]
+
+  -- Test 1: valid verified rule with refl proof
+  -- verified rule id : x ~> x via refl(x)
+  let err1 := verifyVerifiedRule typeRules "id"
+    (.var "x") (.var "x") (.con "refl" [.var "x"])
+  if ← assertNone "valid_verified_rule_refl" err1 then passed := passed + 1
+
+  -- Test 2: invalid verified rule - wrong proof endpoints
+  -- verified rule bad : x ~> y via refl(x)  -- refl(x) has type Path _ x x, not x y
+  let err2 := verifyVerifiedRule typeRules "bad"
+    (.var "x") (.var "y") (.con "refl" [.var "x"])
+  if ← assertSome "invalid_verified_rule_wrong_endpoints" err2 then passed := passed + 1
+
+  -- Test 3: invalid verified rule - proof has wrong type entirely (not Path)
+  -- verified rule bad2 : x ~> x via zero  -- zero : Nat, not Path
+  let err3 := verifyVerifiedRule typeRules "bad2"
     (.var "x") (.var "x") (.con "zero" [])
   if ← assertSome "invalid_verified_rule_not_path" err3 then passed := passed + 1
 
-  -- Test: missing proof type (can't infer)
+  -- Test 4: missing proof type (can't infer)
   let err4 := verifyVerifiedRule typeRules "missing"
     (.var "x") (.var "x") (.lit "not_a_path")
   if ← assertSome "invalid_verified_rule_no_type" err4 then passed := passed + 1
@@ -213,12 +241,32 @@ def testReprEquivValidation : IO Nat := do
   IO.println "\n── Repr Equivalence Validation ──"
   let mut passed := 0
 
-  -- Set up type rules for equivalences
+  -- Set up type rules for equivalences (HoTT/cubical)
+  -- idEquiv : (A : Type) → Equiv A A
   let idEquivRule : TypeRule := {
     name := "idEquivType"
     subject := .con "idEquiv" [.var "$A"]
     type := .con "Equiv" [.var "$A", .var "$A"]
     conditions := []
+  }
+
+  -- compEquiv : Equiv A B → Equiv B C → Equiv A C
+  let compEquivRule : TypeRule := {
+    name := "compEquivType"
+    subject := .con "compEquiv" [.var "$e1", .var "$e2"]
+    type := .con "Equiv" [.var "$A", .var "$C"]
+    conditions := [
+      .con ":" [.var "$e1", .con "Equiv" [.var "$A", .var "$B"]],
+      .con ":" [.var "$e2", .con "Equiv" [.var "$B", .var "$C"]]
+    ]
+  }
+
+  -- invEquiv : Equiv A B → Equiv B A
+  let invEquivRule : TypeRule := {
+    name := "invEquivType"
+    subject := .con "invEquiv" [.var "$e"]
+    type := .con "Equiv" [.var "$B", .var "$A"]
+    conditions := [.con ":" [.var "$e", .con "Equiv" [.var "$A", .var "$B"]]]
   }
 
   let zeroRule : TypeRule := {
@@ -228,30 +276,175 @@ def testReprEquivValidation : IO Nat := do
     conditions := []
   }
 
-  let typeRules := [idEquivRule, zeroRule]
+  let typeRules := [idEquivRule, compEquivRule, invEquivRule, zeroRule]
 
-  -- Test: valid repr with idEquiv
+  -- Test 1: valid repr with idEquiv
   -- repr Nat ≃ Nat via idEquiv(Nat)
   let err1 := verifyReprEquiv typeRules "natId"
     (.con "Nat" []) (.con "Nat" []) (.con "idEquiv" [.con "Nat" []])
   if ← assertNone "valid_repr_idEquiv" err1 then passed := passed + 1
 
-  -- Test: invalid repr - types don't match (wrong Equiv endpoints)
+  -- Test 2: invalid repr - types don't match (wrong Equiv endpoints)
   -- repr Nat ≃ Bool via idEquiv(Nat)  -- idEquiv(Nat) : Equiv Nat Nat, not Nat Bool
   let err2 := verifyReprEquiv typeRules "natBool"
     (.con "Nat" []) (.con "Bool" []) (.con "idEquiv" [.con "Nat" []])
   if ← assertSome "invalid_repr_wrong_endpoints" err2 then passed := passed + 1
 
-  -- Test: invalid repr - equiv has wrong type entirely (not Equiv)
+  -- Test 3: invalid repr - equiv has wrong type entirely (not Equiv)
   -- repr Nat ≃ Nat via zero  -- zero : Nat, not Equiv
   let err3 := verifyReprEquiv typeRules "natZero"
     (.con "Nat" []) (.con "Nat" []) (.con "zero" [])
   if ← assertSome "invalid_repr_not_equiv" err3 then passed := passed + 1
 
-  -- Test: missing equiv type (can't infer)
+  -- Test 4: missing equiv type (can't infer)
   let err4 := verifyReprEquiv typeRules "missing"
     (.con "Nat" []) (.con "Nat" []) (.lit "not_an_equiv")
   if ← assertSome "invalid_repr_no_type" err4 then passed := passed + 1
+
+  pure passed
+
+/-! ## Cubical Proof Combinators Tests -/
+
+def testCubicalProofCombinators : IO Nat := do
+  IO.println "\n── Cubical Proof Combinators ──"
+  let mut passed := 0
+
+  -- Set up comprehensive cubical type rules
+  let reflRule : TypeRule := {
+    name := "reflType"
+    subject := .con "refl" [.var "$a"]
+    type := .con "Path" [.var "$A", .var "$a", .var "$a"]
+    conditions := []
+  }
+
+  -- For sym/trans, we use unconditional rules that work with any path
+  -- (Real cubical type theory would need dependent type checking)
+  let symRule : TypeRule := {
+    name := "symType"
+    subject := .con "sym" [.var "$p"]
+    type := .con "Path" [.var "$A", .var "$b", .var "$a"]
+    conditions := []  -- Simplified: no conditions for testing
+  }
+
+  let transRule : TypeRule := {
+    name := "transType"
+    subject := .con "trans" [.var "$p", .var "$q"]
+    type := .con "Path" [.var "$A", .var "$a", .var "$c"]
+    conditions := []  -- Simplified: no conditions for testing
+  }
+
+  -- ua : Equiv A B → Path Type A B (univalence)
+  let uaRule : TypeRule := {
+    name := "uaType"
+    subject := .con "ua" [.var "$e"]
+    type := .con "Path" [.con "Type" [], .var "$A", .var "$B"]
+    conditions := []  -- Simplified for testing
+  }
+
+  let idEquivRule : TypeRule := {
+    name := "idEquivType"
+    subject := .con "idEquiv" [.var "$A"]
+    type := .con "Equiv" [.var "$A", .var "$A"]
+    conditions := []
+  }
+
+  let typeRules := [reflRule, symRule, transRule, uaRule, idEquivRule]
+
+  -- Test 1: sym(p) has Path type (structure check)
+  let symP := Term.con "sym" [.var "p"]
+  let ty1 := inferType typeRules symP
+  match ty1 with
+  | some (.con "Path" _) =>
+    IO.println "  ✓ sym_has_path_type"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ sym_has_path_type (expected Path type)"
+
+  -- Test 2: ua(e) has Path type (univalence gives path in Type)
+  let uaE := Term.con "ua" [.var "e"]
+  let ty2 := inferType typeRules uaE
+  match ty2 with
+  | some (.con "Path" [.con "Type" [], _, _]) =>
+    IO.println "  ✓ ua_gives_path_in_type"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ ua_gives_path_in_type (expected Path Type _ _)"
+
+  -- Test 3: trans(p, q) has Path type (transitivity)
+  let transP := Term.con "trans" [.var "p", .var "q"]
+  let ty3 := inferType typeRules transP
+  match ty3 with
+  | some (.con "Path" _) =>
+    IO.println "  ✓ trans_has_path_type"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ trans_has_path_type (expected Path type)"
+
+  -- Test 4: Verified rule with refl still works with more rules loaded
+  let err4 := verifyVerifiedRule typeRules "idWithCubical"
+    (.var "x") (.var "x") (.con "refl" [.var "x"])
+  if ← assertNone "verified_refl_with_cubical_rules" err4 then passed := passed + 1
+
+  pure passed
+
+/-! ## Equivalence Composition Tests -/
+
+def testEquivalenceComposition : IO Nat := do
+  IO.println "\n── Equivalence Composition ──"
+  let mut passed := 0
+
+  let idEquivRule : TypeRule := {
+    name := "idEquivType"
+    subject := .con "idEquiv" [.var "$A"]
+    type := .con "Equiv" [.var "$A", .var "$A"]
+    conditions := []
+  }
+
+  -- Simplified invEquiv for testing (no conditions)
+  let invEquivRule : TypeRule := {
+    name := "invEquivType"
+    subject := .con "invEquiv" [.var "$e"]
+    type := .con "Equiv" [.var "$B", .var "$A"]
+    conditions := []  -- Simplified: real version would check $e : Equiv A B
+  }
+
+  -- Simplified compEquiv for testing
+  let compEquivRule : TypeRule := {
+    name := "compEquivType"
+    subject := .con "compEquiv" [.var "$e1", .var "$e2"]
+    type := .con "Equiv" [.var "$A", .var "$C"]
+    conditions := []  -- Simplified
+  }
+
+  let typeRules := [idEquivRule, invEquivRule, compEquivRule]
+
+  -- Test 1: idEquiv(A) has type Equiv A A
+  let ty1 := inferType typeRules (.con "idEquiv" [.var "A"])
+  match ty1 with
+  | some (.con "Equiv" [a, b]) =>
+    if ← assertEqualBool "idEquiv_endpoints_match" (a == b) true then passed := passed + 1
+  | _ =>
+    IO.println "  ✗ idEquiv_endpoints_match (wrong type structure)"
+
+  -- Test 2: invEquiv(e) has Equiv type
+  let invE := Term.con "invEquiv" [.var "e"]
+  let ty2 := inferType typeRules invE
+  match ty2 with
+  | some (.con "Equiv" _) =>
+    IO.println "  ✓ invEquiv_has_equiv_type"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ invEquiv_has_equiv_type (expected Equiv type)"
+
+  -- Test 3: compEquiv(e1, e2) has Equiv type
+  let compE := Term.con "compEquiv" [.var "e1", .var "e2"]
+  let ty3 := inferType typeRules compE
+  match ty3 with
+  | some (.con "Equiv" _) =>
+    IO.println "  ✓ compEquiv_has_equiv_type"
+    passed := passed + 1
+  | _ =>
+    IO.println "  ✗ compEquiv_has_equiv_type (expected Equiv type)"
 
   pure passed
 
@@ -545,6 +738,14 @@ def main : IO UInt32 := do
   let reprPassed ← testReprEquivValidation
   passed := passed + reprPassed
   total := total + 4
+
+  let cubicalPassed ← testCubicalProofCombinators
+  passed := passed + cubicalPassed
+  total := total + 4
+
+  let equivCompPassed ← testEquivalenceComposition
+  passed := passed + equivCompPassed
+  total := total + 3
 
   let extractPassed ← testASTExtraction
   passed := passed + extractPassed

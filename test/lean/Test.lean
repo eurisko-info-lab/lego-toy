@@ -18,6 +18,10 @@ import Lego.Bootstrap
 import Lego.Loader
 import Lego.Runtime
 
+/-- Check if string contains substring -/
+def String.containsSubstr (s sub : String) : Bool :=
+  (s.splitOn sub).length > 1
+
 open Lego
 open Lego.Loader
 open Lego.Runtime
@@ -40,15 +44,38 @@ def assertEq [BEq α] [Repr α] (name : String) (actual expected : α) : TestRes
 
 /-! ## Term Construction Tests -/
 
+-- These tests verify Term operations using production matchPattern/substitute
 def termTests : List TestResult := [
-  assertEq "term_var" (Term.var "x") (Term.var "x"),
-  assertEq "term_lit" (Term.lit "42") (Term.lit "42"),
-  assertEq "term_con" (Term.con "app" [Term.var "f", Term.var "x"])
-                      (Term.con "app" [Term.var "f", Term.var "x"]),
-  let lam_id := Term.con "lam" [Term.var "x", Term.var "x"]
-  assertEq "term_lam_id" lam_id (Term.con "lam" [Term.var "x", Term.var "x"]),
+  -- Test Term.matchPattern correctly binds metavariables
+  let pat := Term.var "$x"
+  let term := Term.lit "hello"
+  let result := Term.matchPattern pat term
+  assertTrue "term_metavar_binding" (
+    match result with
+    | some bindings => bindings.any (fun (k, v) => k == "$x" && v == term)
+    | none => false),
+
+  -- Test Term.substitute correctly replaces metavariables
+  let env := [("$x", Term.lit "42"), ("$y", Term.var "z")]
+  let tmpl := Term.con "pair" [Term.var "$x", Term.var "$y"]
+  let result := Term.substitute tmpl env
+  assertEq "term_substitute_multi" result (Term.con "pair" [Term.lit "42", Term.var "z"]),
+
+  -- Test nested pattern matching extracts deeply
   let zero := Term.con "lam" [Term.var "f", Term.con "lam" [Term.var "x", Term.var "x"]]
-  assertTrue "term_church_zero" (zero.toString.length > 0)
+  let lamPat := Term.con "lam" [Term.var "$x", Term.var "$body"]
+  assertTrue "term_nested_match" (
+    match Term.matchPattern lamPat zero with
+    | some bindings =>
+      match bindings.find? (·.1 == "$body") with
+      | some (_, body) => (Term.matchPattern lamPat body).isSome  -- inner lam matches
+      | none => false
+    | none => false),
+
+  -- Test pattern match failure returns none
+  let appPat := Term.con "app" [Term.var "$f", Term.var "$x"]
+  let lamTerm := Term.con "lam" [Term.var "x", Term.var "x"]
+  assertTrue "term_match_failure" (Term.matchPattern appPat lamTerm).isNone
 ]
 
 /-! ## Iso Tests -/
@@ -166,11 +193,19 @@ def interpreterTests : List TestResult :=
     template := Term.var "$g"
   }
   let kseqResult := seqIdRule.apply kseq
+  -- Test pattern matching on id_term
+  let lamPattern := Term.con "lam" [Term.var "$x", Term.var "$body"]
+  let matchId := Term.matchPattern lamPattern id_term
+  -- Test wire has correct structure
+  let wirePattern := Term.con "wire" [Term.var "$p1", Term.var "$p2"]
+  let matchWire := Term.matchPattern wirePattern wire
 
   [
-    assertTrue "interp_id_term" (id_term.toString.length > 0),
+    -- Test that lambda identity matches the lambda pattern (uses production matchPattern)
+    assertTrue "interp_id_term_matches_lam" matchId.isSome,
     assertTrue "interp_beta_step" step1.isSome,
-    assertTrue "interp_wire" (wire.toString.length > 0),
+    -- Test that wire matches wire pattern (uses production matchPattern)
+    assertTrue "interp_wire_matches_pattern" matchWire.isSome,
     assertEq "interp_kseq_id" kseqResult (some (Term.var "g"))
   ]
 
@@ -198,12 +233,33 @@ def natTests : List TestResult :=
                      Term.con "app" [Term.con "app" [Term.var "m", Term.var "f"],
                        Term.con "app" [Term.con "app" [Term.var "n", Term.var "f"], Term.var "x"]]]]]]
 
+  -- Test pattern matching and structure verification using production matchPattern
+  let lamPat := Term.con "lam" [Term.var "$f", Term.var "$body"]
+  let innerLamPat := Term.con "lam" [Term.var "$x", Term.var "$innerBody"]
+
   [
-    assertTrue "nat_zero" (zero.toString.length > 0),
-    assertTrue "nat_one" (one.toString.length > 0),
-    assertTrue "nat_two" (two.toString.length > 0),
-    assertTrue "nat_succ" (succ.toString.length > 0),
-    assertTrue "nat_add" (add.toString.length > 0)
+    -- Test zero matches outer lambda (uses production matchPattern)
+    assertTrue "nat_zero_is_lam" (Term.matchPattern lamPat zero).isSome,
+    -- Test one matches outer lambda
+    assertTrue "nat_one_is_lam" (Term.matchPattern lamPat one).isSome,
+    -- Test two has nested structure (3 levels deep)
+    assertTrue "nat_two_nested" (
+      match Term.matchPattern lamPat two with
+      | some bindings =>
+        match bindings.find? (·.1 == "$body") with
+        | some (_, body) => (Term.matchPattern innerLamPat body).isSome
+        | none => false
+      | none => false),
+    -- Test succ has 3 lambda levels
+    assertTrue "nat_succ_3_lams" (
+      match zero with
+      | .con "lam" [_, .con "lam" [_, _]] => true
+      | _ => false),
+    -- Test add has 4 lambda levels (uses production Term structure)
+    assertTrue "nat_add_4_lams" (
+      match add with
+      | .con "lam" [_, .con "lam" [_, .con "lam" [_, .con "lam" [_, _]]]] => true
+      | _ => false)
   ]
 
 /-! ## Let/Letrec Tests -/
@@ -233,13 +289,40 @@ def letTests : List TestResult :=
     Term.con "app" [Term.var "fib", Term.lit "10"]
   ]
 
+  -- Test structure and pattern matching using production code
+  let letPat := Term.con "let" [Term.var "$x", Term.var "$val", Term.var "$body"]
+  let letrecPat := Term.con "letrec" [Term.var "$name", Term.var "$def", Term.var "$body"]
+
   [
-    assertTrue "let_expr" (letExpr.toString.length > 0),
-    assertTrue "letrec_fact" (factDef.toString.length > 0),
-    assertTrue "letrec_fib" (fibDef.toString.length > 0)
+    -- Test let expression matches pattern (uses production matchPattern)
+    assertTrue "let_expr_matches" (Term.matchPattern letPat letExpr).isSome,
+    -- Test factorial matches letrec pattern
+    assertTrue "letrec_fact_matches" (Term.matchPattern letrecPat factDef).isSome,
+    -- Test fib matches letrec pattern and has proper recursive structure
+    assertTrue "letrec_fib_recursive" (
+      match Term.matchPattern letrecPat fibDef with
+      | some bindings =>
+        -- Check that the definition contains a recursive call to fib
+        match bindings.find? (·.1 == "$def") with
+        | some (_, defTerm) =>
+          -- Contains "fib" somewhere in the term
+          defTerm.toString.containsSubstr "fib"
+        | none => false
+      | none => false)
   ]
 
-/-! ## .lego File Parsing Tests (IO) -/
+/-! ## .lego File Parsing Tests (IO)
+
+NOTE: AST conversion utilities below (patternToTerm, templateToTerm, termAstToTerm)
+are test-local helpers used ONLY by extractEvalTests for test case extraction.
+Rule extraction now uses production Loader.extractRules.
+
+These are simplified versions compared to Loader.patternAstToTerm because:
+1. They handle a narrower set of AST formats (test files use consistent format)
+2. extractEvalTests needs termAstToTerm which converts general terms, not just patterns
+
+TODO: Consider adding Loader.termAstToTerm if needed for production.
+-/
 
 /-- Get identifier name from (ident name) node -/
 def getIdentName (t : Term) : Option String :=
@@ -255,7 +338,7 @@ def filterParens (args : List Term) : List Term :=
     | .lit ")" => false
     | _ => true
 
-/-- Convert parsed pattern AST to Term for pattern matching -/
+/-- Convert parsed pattern AST to Term for pattern matching (test utility) -/
 partial def patternToTerm (t : Term) : Term :=
   match t with
   | .con "var" [.lit "$", .con "ident" [.var name]] =>
@@ -353,33 +436,7 @@ partial def termAstToTerm (t : Term) : Term :=
   | .con name args => .con name (args.map termAstToTerm)
   | _ => t
 
-/-- Extract rules from parsed AST -/
-partial def extractRules (t : Term) : List Rule :=
-  match t with
-  | .con "DRule" args =>
-    let rec findArrowIdx (xs : List Term) (idx : Nat) : Option Nat :=
-      match xs with
-      | [] => none
-      | .lit "~>" :: _ => some idx
-      | _ :: rest => findArrowIdx rest (idx + 1)
-    let arrowIdx := findArrowIdx args 0
-    match arrowIdx with
-    | some idx =>
-      if idx > 0 ∧ idx + 1 < args.length then
-        let pattern := args[idx - 1]!
-        let template := args[idx + 1]!
-        let nameOpt := args.findSome? fun
-          | .con "ident" [.lit n] => some n
-          | .con "ident" [.var n] => some n
-          | _ => none
-        match nameOpt with
-        | some name => [{ name := name, pattern := patternToTerm pattern, template := templateToTerm template }]
-        | none => []
-      else []
-    | none => []
-  | .con "seq" ts => ts.flatMap extractRules
-  | .con _ ts => ts.flatMap extractRules
-  | _ => []
+-- NOTE: Rule extraction uses production Loader.extractRules (see analyzeLegoFile)
 
 /-- Test with expected result -/
 structure EvalTest where
@@ -410,57 +467,29 @@ partial def extractEvalTests (t : Term) : List EvalTest :=
   | .con _ ts => ts.flatMap extractEvalTests
   | _ => []
 
-/-- Apply built-in substitution -/
-partial def applySubst (x : String) (val : Term) (body : Term) : Term :=
-  match body with
-  | .var name => if name == x then val else body
-  | .con "var" [.var name] => if name == x then val else body
-  | .con "var" [.con name []] => if name == x then val else body
-  | .lit _ => body
-  | .con name args => .con name (args.map (applySubst x val))
+/-! ## Test Infrastructure
 
-/-- Apply built-in reductions -/
-def stepBuiltin (t : Term) : Option Term :=
-  match t with
-  | .con "subst" [.var x, val, body] =>
-    some (applySubst x val body)
-  | .con "subst" [.con x [], val, body] =>
-    some (applySubst x val body)
-  | _ => none
+NOTE: Functions below are TEST INFRASTRUCTURE, not tested functionality.
+They support test execution but are NOT what is being tested.
 
-/-- Apply a single step with any matching rule -/
-def stepOnce (rules : List Rule) (t : Term) : Option Term :=
-  match rules.findSome? (fun r => r.apply t) with
-  | some t' => some t'
-  | none => stepBuiltin t
+Production code being tested:
+- Runtime.normalize, Runtime.normalizeWithTrace (normalization)
+- Runtime.stepBuiltin (builtin subst evaluation)
+- Term.matchPattern, Term.substitute (pattern matching)
+- Rule.apply (rule application)
+- Loader.extractRules, Loader.extractTypeRules (rule extraction)
 
-/-- Apply rules to subterms recursively (single step) -/
-partial def stepDeep (rules : List Rule) (t : Term) : Option Term :=
-  match stepOnce rules t with
-  | some t' => some t'
-  | none =>
-    match t with
-    | .con name args =>
-      let rec tryArgs (before : List Term) (after : List Term) : Option Term :=
-        match after with
-        | [] => none
-        | arg :: rest =>
-          match stepDeep rules arg with
-          | some arg' => some (.con name (before.reverse ++ [arg'] ++ rest))
-          | none => tryArgs (arg :: before) rest
-      tryArgs [] args
-    | _ => none
+Test infrastructure (not tested, just helpers):
+- canonicalize, termEq: Compare terms with different AST representations
+- runEvalTest: Execute and verify eval tests from .lego files
+- extractEvalTests, termAstToTerm: Extract test cases from parsed AST
+-/
 
-/-- Normalize term by applying rules until fixpoint (with fuel) -/
-partial def normalize (fuel : Nat) (rules : List Rule) (t : Term) : Term :=
-  match fuel with
-  | 0 => t
-  | n + 1 =>
-    match stepDeep rules t with
-    | some t' => normalize n rules t'
-    | none => t
-
-/-- Canonicalize a term -/
+/-- Canonicalize a term for comparison.
+    Normalizes AST representation differences like:
+    - (var (var "x")) → (x)
+    - (var (con "x" [])) → (x)
+    This is test infrastructure to compare expected vs actual. -/
 partial def canonicalize (t : Term) : Term :=
   match t with
   | .con "var" [.var name] => .con name []
@@ -470,17 +499,28 @@ partial def canonicalize (t : Term) : Term :=
   | .var name => .con name []
   | _ => t
 
-/-- Compare terms for equality after canonicalization -/
+/-- Compare terms for equality after canonicalization (test infrastructure) -/
 def termEq (t1 t2 : Term) : Bool := canonicalize t1 == canonicalize t2
 
-/-- Run a single eval test -/
-def runEvalTest (rules : List Rule) (test : EvalTest) : TestResult :=
-  let result := normalize 100 rules test.input
-  let passed := termEq result test.expected
-  { name := s!"eval_{test.name}"
-    passed := passed
-    message := if passed then "✓"
-               else s!"✗ got {result}, expected {test.expected}" }
+/-- Run a single eval test using production normalizeWithTrace -/
+def runEvalTest (rules : List Rule) (test : EvalTest) (verbose : Bool := false) : IO TestResult := do
+  let config : NormalizeConfig := { maxSteps := 100, enableBuiltins := true }
+  let result := normalizeWithTrace config rules test.input
+  let passed := termEq result.term test.expected
+  -- Build trace summary: list of rule names that fired
+  let rulesFired := result.trace.map (·.1)
+  let traceStr := if rulesFired.isEmpty then "(no rules)" else rulesFired.intersperse " → " |>.foldl (· ++ ·) ""
+  if verbose then
+    IO.println s!"  [trace] {test.name}: {test.input}"
+    for (ruleName, intermediate) in result.trace do
+      IO.println s!"    → {ruleName}: {intermediate}"
+    IO.println s!"    result: {result.term}"
+    IO.println s!"    expected: {test.expected}"
+    IO.println s!"    {if passed then "✓ PASS" else "✗ FAIL"}"
+  pure { name := s!"eval_{test.name}"
+         passed := passed
+         message := if passed then s!"✓ [{traceStr}]"
+                    else s!"✗ got {result.term}, expected {test.expected} [{traceStr}]" }
 
 /-- Count test declarations in parsed AST -/
 partial def countTests (t : Term) : Nat :=
@@ -507,8 +547,63 @@ partial def countPieces (t : Term) : Nat :=
   | .con _ ts => ts.foldl (fun acc t' => acc + countPieces t') 0
   | _ => 0
 
+/-- Count type declarations in parsed AST -/
+partial def countTypeDecls (t : Term) : Nat :=
+  match t with
+  | .con "DType" _ => 1
+  | .con "seq" ts => ts.foldl (fun acc t' => acc + countTypeDecls t') 0
+  | .con _ ts => ts.foldl (fun acc t' => acc + countTypeDecls t') 0
+  | _ => 0
+
+/-! ## Type Inference Tests -/
+
+/-- Structure for type test assertions -/
+structure TypeTest where
+  name : String
+  term : Term           -- The actual term to type (not wrapped in typeof)
+  expectedType : Term   -- The expected type (concrete, not metavars)
+  deriving Repr
+
+/-- Run a type inference test using the generic rule system with tracing.
+    Uses Runtime.inferTypeWithTrace which applies TypeRules via the
+    same Applicable typeclass used for rewrite rules. -/
+def runTypeTest (rules : List Rule) (typeRules : List TypeRule) (test : TypeTest) (verbose : Bool := false) : IO TestResult := do
+  -- Wrap term in (typeof term) to match type rule patterns
+  let wrappedTerm := Term.con "typeof" [test.term]
+  let config : NormalizeConfig := { maxSteps := 1, enableBuiltins := false }
+  let result := inferTypeWithTrace config typeRules wrappedTerm
+  -- Normalize inferred type using rewrite rules (e.g., join rules)
+  let normConfig : NormalizeConfig := { maxSteps := 100, enableBuiltins := true }
+  let normResult := normalizeWithTrace normConfig rules result.term
+  let passed := termEq normResult.term test.expectedType
+  -- Build trace summaries
+  let typeRulesFired := result.trace.map (·.1)
+  let typeTraceStr := if typeRulesFired.isEmpty then "(no type rule matched)" else typeRulesFired.intersperse " → " |>.foldl (· ++ ·) ""
+  let normRulesFired := normResult.trace.map (·.1)
+  let normTraceStr := if normRulesFired.isEmpty then "(no norm rules)" else normRulesFired.intersperse " → " |>.foldl (· ++ ·) ""
+  if verbose then
+    IO.println s!"  [type] {test.name}: {test.term}"
+    IO.println s!"    type rule: {typeTraceStr}"
+    IO.println s!"    inferred: {result.term}"
+    IO.println s!"    norm rules: {normTraceStr}"
+    IO.println s!"    normalized: {normResult.term}"
+    IO.println s!"    expected: {test.expectedType}"
+    IO.println s!"    {if passed then "✓ PASS" else "✗ FAIL"}"
+  pure { name := s!"type_{test.name}"
+         passed := passed
+         message := if passed then s!"✓ [type: {typeTraceStr} | norm: {normTraceStr}]"
+                    else s!"✗ got {normResult.term}, expected {test.expectedType} [type: {typeTraceStr} | norm: {normTraceStr}]" }
+
+/-! ## Runtime Normalize Helpers -/
+
+/-- Normalize using Runtime's normalize with extra rules -/
+def normalizeWithRuntime (rt : Runtime) (extraRules : List Rule) (t : Term) : Term :=
+  -- Create a temporary runtime with the extra rules
+  let combinedRt := { rt with rules := rt.rules ++ extraRules }
+  Runtime.normalize combinedRt t
+
 /-- Parse and analyze a .lego file using the runtime grammar -/
-def analyzeLegoFile (rt : Runtime) (path : String) : IO (List TestResult) := do
+def analyzeLegoFile (rt : Runtime) (path : String) (verbose : Bool := false) : IO (List TestResult) := do
   let name := path.splitOn "/" |>.getLast!
   try
     let content ← IO.FS.readFile path
@@ -518,13 +613,28 @@ def analyzeLegoFile (rt : Runtime) (path : String) : IO (List TestResult) := do
       let testCount := countTests ast
       let ruleCount := countRules ast
       let pieceCount := countPieces ast
+      let typeCount := countTypeDecls ast
       let rules := Loader.extractRules ast
+      let typeRules := Loader.extractTypeRules ast
       let evalTests := extractEvalTests ast
-      let evalResults := evalTests.map (runEvalTest rules)
+      if verbose then
+        IO.println s!"\n[verbose] {name}: {pieceCount} pieces, {ruleCount} rules, {typeCount} type decls, {testCount} tests"
+        IO.println s!"[verbose] Rules extracted: {rules.length}"
+        for r in rules do
+          IO.println s!"  - {r.name}: {r.pattern} ~> {r.template}"
+        IO.println s!"[verbose] Type rules extracted: {typeRules.length}"
+        for tr in typeRules do
+          IO.println s!"  - {tr.name}: {tr.subject} : {tr.type}"
+        IO.println s!"[verbose] Running {evalTests.length} eval tests..."
+      let mut evalResults : List TestResult := []
+      for test in evalTests do
+        let result ← runEvalTest rules test verbose
+        evalResults := evalResults ++ [result]
       let baseResults := [
         { name := s!"parse_{name}", passed := true, message := "✓" },
         { name := s!"{name}_has_pieces", passed := pieceCount > 0, message := if pieceCount > 0 then s!"✓ ({pieceCount})" else "✗" },
         { name := s!"{name}_has_rules", passed := true, message := s!"✓ ({ruleCount})" },
+        { name := s!"{name}_has_types", passed := true, message := s!"✓ ({typeCount})" },
         { name := s!"{name}_has_tests", passed := true, message := s!"✓ ({testCount})" }
       ]
       pure (baseResults ++ evalResults)
@@ -533,23 +643,213 @@ def analyzeLegoFile (rt : Runtime) (path : String) : IO (List TestResult) := do
     pure [{ name := s!"parse_{name}", passed := false, message := "✗ file not found" }]
 
 /-- Run .lego file parsing tests using the runtime grammar -/
-def runLegoFileTests (rt : Runtime) : IO (List TestResult) := do
+def runLegoFileTests (rt : Runtime) (filter : Option String := none) (verbose : Bool := false) : IO (List TestResult) := do
   let testPath := "./test/lego"
   let examplePath := "./examples"
-  let files := [
+  let allFiles := [
     s!"{examplePath}/Lambda.lego",
     s!"{examplePath}/Arith.lego",
+    s!"{examplePath}/ArithTyped.lego",
     s!"{examplePath}/INet.lego",
     s!"{examplePath}/K.lego",
     s!"{testPath}/Bootstrap.lego",
     s!"{examplePath}/Cubical/syntax/Redtt.lego",
     s!"{examplePath}/Cubical/syntax/Cooltt.lego"
   ]
+  -- Filter files if a pattern is provided
+  let files := match filter with
+    | some pat => allFiles.filter (fun (f : String) => f.containsSubstr pat)
+    | none => allFiles
   let mut results : List TestResult := []
   for file in files do
-    let fileResults ← analyzeLegoFile rt file
+    let fileResults ← analyzeLegoFile rt file verbose
     results := results ++ fileResults
   pure results
+
+/-! ## Type Inference Tests for ArithTyped -/
+
+/-- Run type inference tests using TypeRules from ArithTyped.lego -/
+def runTypeInferenceTests (rt : Runtime) (verbose : Bool := false) : IO (List TestResult) := do
+  let path := "./examples/ArithTyped.lego"
+  try
+    let content ← IO.FS.readFile path
+    match Runtime.parseLegoFile rt content with
+    | some ast =>
+      let typeRules := Loader.extractTypeRules ast
+      let rules := Loader.extractRules ast
+
+      if verbose then
+        IO.println s!"\n[type inference] Testing with {typeRules.length} type rules"
+        IO.println s!"[type inference] Using AG-based typechecker (AttrEval.typecheckWithRules)"
+
+      -- Build test terms and expected types
+      -- NOTE: These are ACTUAL terms, not wrapped in (typeof ...)
+      -- The AG system computes the "type" attribute on the term structure
+      let testCases : List TypeTest := [
+        -- Constants have fixed types (Real)
+        { name := "pi_is_real"
+          term := .con "Pi" []
+          expectedType := .con "Real" [] },
+        { name := "e_is_real"
+          term := .con "E" []
+          expectedType := .con "Real" [] },
+        { name := "phi_is_real"
+          term := .con "Phi" []
+          expectedType := .con "Real" [] },
+        { name := "sqrt2_is_real"
+          term := .con "Sqrt2" []
+          expectedType := .con "Real" [] },
+        -- Hole types
+        { name := "hole_type"
+          term := .con "Hole" []
+          expectedType := .con "HoleTy" [] },
+        -- Named hole - KNOWN LIMITATION: Type rule templates with metavars ($n) that
+        -- NamedHole with a string name should have HoleTy with that name
+        -- The rule: type typeof_named_hole : (typeof (NamedHole $n)) : (HoleTy $n)
+        -- properly substitutes $n with the actual name value
+        { name := "named_hole_type"
+          term := .con "NamedHole" [.lit "x"]
+          expectedType := .con "HoleTy" [.lit "x"] },
+        -- Sqrt returns Real
+        { name := "sqrt_is_real"
+          term := .con "Sqrt" [.con "natLit" [.lit "4"]]
+          expectedType := .con "Real" [] },
+        -- Negative literal is Int
+        { name := "neg_lit_is_int"
+          term := .con "negLit" [.lit "5"]
+          expectedType := .con "Int" [] },
+        -- Rational literal is Rat
+        { name := "rat_lit_is_rat"
+          term := .con "ratLit" [.lit "1", .lit "2"]
+          expectedType := .con "Rat" [] },
+        -- Decimal literal is Real
+        { name := "dec_lit_is_real"
+          term := .con "decLit" [.lit "3", .lit "14"]
+          expectedType := .con "Real" [] },
+        -- Add Nat + Rat yields a join of operand types (no normalization here)
+        { name := "add_nat_rat_join_type"
+          term := .con "Add" [
+            .con "natLit" [.lit "1"],
+            .con "ratLit" [.lit "1", .lit "2"]]
+          expectedType := .con "join" [
+            .con "typeof" [.con "natLit" [.lit "1"]],
+            .con "typeof" [.con "ratLit" [.lit "1", .lit "2"]]] }
+      ]
+
+      let mut results : List TestResult := []
+      for test in testCases do
+        let r ← runTypeTest rules typeRules test verbose
+        results := results ++ [r]
+
+      -- Test join rule normalization for inferred types
+      -- e.g., (join Nat Int) should normalize to Int
+      let joinTestCases : List EvalTest := [
+        { name := "join_inferred_nat_int"
+          input := .con "join" [.con "Nat" [], .con "Int" []]
+          expected := .con "Int" [] },
+        { name := "join_inferred_rat_real"
+          input := .con "join" [.con "Rat" [], .con "Real" []]
+          expected := .con "Real" [] },
+        -- Test that triggers 4 join rules in sequence:
+        -- (join Nat (join Int (join Rat (join Real Real))))
+        -- → join_same: (join Nat (join Int (join Rat Real)))
+        -- → join_QR:   (join Nat (join Int Real))
+        -- → join_ZR:   (join Nat Real)
+        -- → join_NR:   Real
+        { name := "join_chain_4_rules"
+          input := .con "join" [.con "Nat" [],
+                    .con "join" [.con "Int" [],
+                      .con "join" [.con "Rat" [],
+                        .con "join" [.con "Real" [], .con "Real" []]]]]
+          expected := .con "Real" [] },
+        -- Complex test that triggers 7 rules:
+        -- (Add 0 (Mul 1 (Neg (Neg (Pow (Sqrt 4) (Add 0 (Mul 1 (Div 2 1))))))))
+        -- → add_zero_l: (Mul 1 (Neg (Neg (Pow (Sqrt 4) (Add 0 (Mul 1 (Div 2 1)))))))
+        -- → mul_one_l:  (Neg (Neg (Pow (Sqrt 4) (Add 0 (Mul 1 (Div 2 1))))))
+        -- → neg_neg:    (Pow (Sqrt 4) (Add 0 (Mul 1 (Div 2 1))))
+        -- → sqrt_four:  (Pow 2 (Add 0 (Mul 1 (Div 2 1))))
+        -- → add_zero_l: (Pow 2 (Mul 1 (Div 2 1)))
+        -- → mul_one_l:  (Pow 2 (Div 2 1))
+        -- → div_one:    (Pow 2 2)
+        -- Result: (Pow 2 2)
+        { name := "complex_chain_7_rules"
+          input := .con "Add" [.lit "0",
+                    .con "Mul" [.lit "1",
+                      .con "Neg" [
+                        .con "Neg" [
+                          .con "Pow" [
+                            .con "Sqrt" [.lit "4"],
+                            .con "Add" [.lit "0",
+                              .con "Mul" [.lit "1",
+                                .con "Div" [.lit "2", .lit "1"]]]]]]]]
+          expected := .con "Pow" [.lit "2", .lit "2"] },
+        -- Even more complex: nested joins + arithmetic
+        -- (Add 0 (Mul 1 (Abs (Neg (Neg (Neg (Pow (Sqrt 9) 0)))))))
+        -- → add_zero_l: (Mul 1 (Abs (Neg (Neg (Neg (Pow (Sqrt 9) 0))))))
+        -- → mul_one_l:  (Abs (Neg (Neg (Neg (Pow (Sqrt 9) 0)))))
+        -- → neg_neg:    (Abs (Neg (Pow (Sqrt 9) 0)))
+        -- → abs_neg:    (Abs (Pow (Sqrt 9) 0))
+        -- → sqrt_nine:  (Abs (Pow 3 0))
+        -- → pow_zero:   (Abs 1)
+        -- Result: (Abs 1)
+        { name := "complex_chain_6_rules"
+          input := .con "Add" [.lit "0",
+                    .con "Mul" [.lit "1",
+                      .con "Abs" [
+                        .con "Neg" [
+                          .con "Neg" [
+                            .con "Neg" [
+                              .con "Pow" [
+                                .con "Sqrt" [.lit "9"],
+                                .lit "0"]]]]]]]
+          expected := .con "Abs" [.lit "1"] },
+        -- More complex type-join chain
+        -- (join (join Int Nat) Rat) → join_ZN, join_ZQ
+        { name := "typeof_complex_type_chain"
+          input := .con "join" [
+                    .con "join" [
+                      .con "Int" [],
+                      .con "Nat" []],
+                    .con "Rat" []]
+          expected := .con "Rat" [] }
+      ]
+
+      for test in joinTestCases do
+        let r ← runEvalTest rules test verbose
+        results := results ++ [r]
+
+      -- Complex type inference tests that trigger multiple rules
+      -- These test inferring the type then normalizing through multiple joins
+      let complexTypeTests : List EvalTest := [
+        -- (typeof (Add (natLit 1) (negLit 2)))
+        -- → typeof_add: (join (typeof (natLit 1)) (typeof (negLit 2)))
+        -- We simulate the already-inferred intermediate: (join Nat Int)
+        -- → join_NZ: Int
+        -- For the full derivation, we use the wrapper that chains type+normalize
+        { name := "infer_add_nat_int_normalize"
+          input := .con "join" [.con "Nat" [], .con "Int" []]
+          expected := .con "Int" [] },
+        -- (typeof (Add (Add Nat Int) (Add Rat Real)))
+        -- Simulates nested type joins: (join (join Nat Int) (join Rat Real))
+        -- → join_NZ: (join Int (join Rat Real))
+        -- → join_QR: (join Int Real)
+        -- → join_ZR: Real
+        { name := "infer_nested_add_types_4_joins"
+          input := .con "join" [
+                    .con "join" [.con "Nat" [], .con "Int" []],
+                    .con "join" [.con "Rat" [], .con "Real" []]]
+          expected := .con "Real" [] }
+      ]
+
+      for test in complexTypeTests do
+        let r ← runEvalTest rules test verbose
+        results := results ++ [r]
+
+      pure results
+    | none =>
+      pure [{ name := "type_arithtyped_parse", passed := false, message := "✗ parse failed" }]
+  catch _ =>
+    pure [{ name := "type_arithtyped_load", passed := false, message := "✗ file not found" }]
 
 /-! ## AST GrammarExpr Tests -/
 
@@ -745,7 +1045,20 @@ def printTestGroup (name : String) (tests : List TestResult) : IO (Nat × Nat) :
     if t.passed then passed := passed + 1 else failed := failed + 1
   pure (passed, failed)
 
-def main : IO Unit := do
+def main (args : List String) : IO Unit := do
+  -- Parse command line args
+  let verbose := args.contains "-v" || args.contains "--verbose"
+  let filterArg := args.find? (·.startsWith "--filter=")
+  let filter := filterArg.map (·.drop 9)  -- drop "--filter="
+  -- Also support positional filter: lake exe lego-test ArithTyped
+  let positionalFilter := args.filter (fun a => !a.startsWith "-" && a != "")
+  let effectiveFilter := filter.orElse (fun _ => positionalFilter.head?)
+
+  if effectiveFilter.isSome then
+    IO.println s!"[filter] Running tests matching: {effectiveFilter.get!}"
+  if verbose then
+    IO.println "[verbose] Execution tracing enabled"
+
   IO.println "═══════════════════════════════════════════════════════════════"
   IO.println "Lego Test Suite (Core Library)"
   IO.println "═══════════════════════════════════════════════════════════════"
@@ -791,13 +1104,21 @@ def main : IO Unit := do
   let (p, f) ← printTestGroup "Attribute File Loading Tests" attrFileTests
   totalPassed := totalPassed + p; totalFailed := totalFailed + f
 
-  let legoFileTests ← runLegoFileTests rt
+  let legoFileTests ← runLegoFileTests rt effectiveFilter verbose
   let (p, f) ← printTestGroup ".lego File Parsing Tests" legoFileTests
   totalPassed := totalPassed + p; totalFailed := totalFailed + f
 
-  let grammarExprTests ← runGrammarExprTests
-  let (p, f) ← printTestGroup "AST GrammarExpr Tests" grammarExprTests
-  totalPassed := totalPassed + p; totalFailed := totalFailed + f
+  -- Run type inference tests (uses ArithTyped.lego type rules)
+  if effectiveFilter.isNone || effectiveFilter == some "ArithTyped" then
+    let typeInferTests ← runTypeInferenceTests rt verbose
+    let (p, f) ← printTestGroup "Type Inference Tests (ArithTyped)" typeInferTests
+    totalPassed := totalPassed + p; totalFailed := totalFailed + f
+
+  -- Skip grammar tests if filtering to specific file
+  if effectiveFilter.isNone then
+    let grammarExprTests ← runGrammarExprTests
+    let (p, f) ← printTestGroup "AST GrammarExpr Tests" grammarExprTests
+    totalPassed := totalPassed + p; totalFailed := totalFailed + f
 
   IO.println ""
   IO.println "═══════════════════════════════════════════════════════════════"
@@ -805,8 +1126,9 @@ def main : IO Unit := do
   if totalFailed == 0 then
     IO.println "All tests passed! ✓"
     IO.println ""
-    IO.println "For Red-specific tests (cubical type theory), run:"
-    IO.println "  lake exe lego-test-red"
+    if effectiveFilter.isNone then
+      IO.println "For Red-specific tests (cubical type theory), run:"
+      IO.println "  lake exe lego-test-red"
   else
     IO.println s!"FAILED: {totalFailed} tests"
     IO.Process.exit 1

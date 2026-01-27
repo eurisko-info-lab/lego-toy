@@ -20,6 +20,7 @@
 -/
 
 import Lego.Algebra
+import Lego.Util
 import Std.Data.HashMap
 import Std.Data.HashSet
 
@@ -126,12 +127,6 @@ def isGrammarRef : GrammarExpr → Option String
 
 /-! ## Helper functions -/
 
-/-- Enumerate a list with indices -/
-def zipWithIndex {α : Type} (xs : List α) : List (α × Nat) :=
-  let rec go (i : Nat) : List α → List (α × Nat)
-    | [] => []
-    | x :: rest => (x, i) :: go (i + 1) rest
-  go 0 xs
 
 /-- Extract base name from qualified name (e.g., "Term.expr" → "expr") -/
 def baseName (s : String) : String :=
@@ -263,18 +258,11 @@ def checkConflictingRules (rules : List Rule) : ValidationResult :=
 
 /-! ## Optimization Checks -/
 
-/-- Check if a character is alphabetic -/
-def isAlphaLike (c : Char) : Bool :=
-  c.isAlpha || c == '_'
-
-/-- Check if a string looks like a keyword -/
-def isKeywordLike (s : String) : Bool :=
-  !s.isEmpty && s.all isAlphaLike
 
 /-- Find leading keywords in a grammar expression -/
 partial def findLeadingKeywords : GrammarExpr → List String
   | .mk f => match f with
-    | .lit kw => if isKeywordLike kw then [kw] else []
+    | .lit kw => if Util.isKeywordLike kw then [kw] else []
     | .alt g1 g2 => findLeadingKeywords g1 ++ findLeadingKeywords g2
     | .seq g1 _ => findLeadingKeywords g1
     | .bind _ g => findLeadingKeywords g
@@ -320,7 +308,7 @@ partial def isPrefix (g1 g2 : GrammarExpr) : Bool :=
 /-- Check for unreachable alternatives in grammar -/
 def checkUnreachableAlts (grammar : HashMap String GrammarExpr) : ValidationResult :=
   let warnings := grammar.fold (init := ([] : List ValidationWarning)) fun acc prodName g =>
-    let alts := zipWithIndex (flattenAlts g)
+    let alts := Util.zipWithIndex (flattenAlts g)
     let pairs := alts.flatMap fun (a1, i) =>
       alts.filterMap fun (a2, j) =>
         if i < j then some (i, j, a1, a2) else none

@@ -12,6 +12,7 @@ import Lego.Attr
 import Lego.Interp
 import Lego.Bootstrap
 import Lego.Validation
+import Lego.Util
 import Std.Data.HashMap
 
 namespace Lego.Loader
@@ -531,9 +532,6 @@ partial def extractSymbols (g : GrammarExpr) : List String :=
 def extractAllSymbols (prods : Productions) : List String :=
   prods.flatMap (fun (_, g) => extractSymbols g) |>.eraseDups
 
-/-- Check if a string looks like a keyword (all alphabetic or underscore) -/
-def isKeywordLike (s : String) : Bool :=
-  !s.isEmpty && s.all fun c => c.isAlpha || c == '_' || c == '-'
 
 /-- Extract literals that appear at the START of a grammar expression -/
 partial def extractStartLiterals (g : GrammarExpr) : List String :=
@@ -693,7 +691,7 @@ def extractKeywords (prods : Productions) : List String :=
     if canEndWithStar starEndingProds refName then some lit else none
   -- Step 3: Filter to keyword-like strings
   -- Note: Language-specific keywords should be added by the caller
-  conflictingLits.filter isKeywordLike |>.eraseDups
+  conflictingLits.filter Util.isKeywordLikeWithDash |>.eraseDups
 where
   /-- Check if a grammar contains a specific literal -/
   containsLiteral (g : GrammarExpr) (lit : String) : Bool :=

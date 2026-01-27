@@ -208,15 +208,23 @@ def parseLegoFile (rt : Runtime) (content : String) : Option Term :=
 def parseLegoFileE (rt : Runtime) (content : String) : Except ParseError Term :=
   Loader.parseWithGrammarE rt.grammar content
 
+/-- Parse a file from path using a specific grammar -/
+def parseWithGrammarPath (grammar : Loader.LoadedGrammar) (path : String) : IO (Option Term) := do
+  let content ← IO.FS.readFile path
+  return Loader.parseWithGrammar grammar content
+
+/-- Parse a file from path with detailed error reporting using a specific grammar -/
+def parseWithGrammarPathE (grammar : Loader.LoadedGrammar) (path : String) : IO (Except ParseError Term) := do
+  let content ← IO.FS.readFile path
+  return Loader.parseWithGrammarE grammar content
+
 /-- Parse a .lego file from path -/
 def parseLegoFilePath (rt : Runtime) (path : String) : IO (Option Term) := do
-  let content ← IO.FS.readFile path
-  return parseLegoFile rt content
+  parseWithGrammarPath rt.grammar path
 
 /-- Parse a .lego file from path with detailed error reporting -/
 def parseLegoFilePathE (rt : Runtime) (path : String) : IO (Except ParseError Term) := do
-  let content ← IO.FS.readFile path
-  return parseLegoFileE rt content
+  parseWithGrammarPathE rt.grammar path
 
 /-- Parse a .rosetta file using Rosetta.lego's grammar -/
 def parseRosettaFile (rt : Runtime) (content : String) : Option Term :=
@@ -228,13 +236,11 @@ def parseRosettaFileE (rt : Runtime) (content : String) : Except ParseError Term
 
 /-- Parse a .rosetta file from path -/
 def parseRosettaFilePath (rt : Runtime) (path : String) : IO (Option Term) := do
-  let content ← IO.FS.readFile path
-  return parseRosettaFile rt content
+  parseWithGrammarPath rt.rosettaGrammar path
 
 /-- Parse a .rosetta file from path with detailed error reporting -/
 def parseRosettaFilePathE (rt : Runtime) (path : String) : IO (Except ParseError Term) := do
-  let content ← IO.FS.readFile path
-  return parseRosettaFileE rt content
+  parseWithGrammarPathE rt.rosettaGrammar path
 
 /-- Parse a .lean file using Lean.lego's grammar -/
 def parseLeanFile (rt : Runtime) (content : String) : Option Term :=
@@ -246,13 +252,11 @@ def parseLeanFileE (rt : Runtime) (content : String) : Except ParseError Term :=
 
 /-- Parse a .lean file from path -/
 def parseLeanFilePath (rt : Runtime) (path : String) : IO (Option Term) := do
-  let content ← IO.FS.readFile path
-  return parseLeanFile rt content
+  parseWithGrammarPath rt.leanGrammar path
 
 /-- Parse a .lean file from path with detailed error reporting -/
 def parseLeanFilePathE (rt : Runtime) (path : String) : IO (Except ParseError Term) := do
-  let content ← IO.FS.readFile path
-  return parseLeanFileE rt content
+  parseWithGrammarPathE rt.leanGrammar path
 
 /-- Load a language from a .lego file with grammar inheritance.
     When a language declares `lang X (Parent) :=`, we:

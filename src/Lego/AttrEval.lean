@@ -10,6 +10,7 @@
 
 import Lego.Attr
 import Lego.Loader
+import Lego.Util
 
 namespace Lego
 
@@ -356,12 +357,6 @@ structure EvalConfig where
   tracing : Bool := false
   deriving Repr
 
-/-- Helper: enumerate a list with indices -/
-def enumerate {α : Type} (xs : List α) : List (Nat × α) :=
-  let rec go (i : Nat) : List α → List (Nat × α)
-    | [] => []
-    | x :: xs => (i, x) :: go (i + 1) xs
-  go 0 xs
 
 /-- Helper: merge EvalEnv -/
 def mergeEvalEnv (acc child : EvalEnv) : EvalEnv :=
@@ -411,7 +406,7 @@ partial def evalSynWithErrors
       let binderInfo := getBinderInfo prod
 
       -- Step 1: Recursively evaluate children with scope handling
-      let childResults := enumerate children |>.map fun (i, child) =>
+      let childResults := Util.enumerate children |>.map fun (i, child) =>
         -- Check if this child is in a binding position (binder name in lam/Pi/etc)
         let isBindingPosition := match binderInfo with
           | some (binderIdx, _, _) => i == binderIdx
@@ -501,7 +496,7 @@ partial def evalInhWithErrors
 
       -- For each child, compute inherited attributes
       let inhDefs := defs.filter (fun d => d.flow == .inh)
-      let childEnvs := enumerate children |>.map fun (i, child) =>
+      let childEnvs := Util.enumerate children |>.map fun (i, child) =>
         let childName := s!"child{i}"
 
         -- For each inh attribute, check for rules targeting this child

@@ -18,6 +18,7 @@
 -/
 
 import Lego.Algebra
+import Lego.Util
 
 namespace Lego
 
@@ -149,12 +150,6 @@ partial def evalAttrExpr (expr : Term) (env : AttrEnv) : Term :=
 def findRule (prod : String) (target : AttrPath) (rules : List AttrRule) : Option AttrRule :=
   rules.find? (fun r => r.prod == prod && r.target == target)
 
-/-- Helper: map with index -/
-def mapWithIndex {α β : Type} (f : Nat → α → β) (xs : List α) : List β :=
-  let rec go (i : Nat) : List α → List β
-    | [] => []
-    | x :: xs => f i x :: go (i + 1) xs
-  go 0 xs
 
 /-- Catamorphism: evaluate synthesized attribute bottom-up.
 
@@ -169,7 +164,7 @@ partial def evalSyn (def_ : AttrDef) (term : Term) : AttrEnv :=
   match term with
   | .con prod children =>
     -- First, recursively compute children's attributes
-    let childEnvs := mapWithIndex (fun i child =>
+    let childEnvs := Util.mapWithIndex (fun i child =>
       let childEnv := evalSyn def_ child
       -- Prefix child's attributes with child name
       let childName := s!"child{i}"
@@ -207,7 +202,7 @@ partial def evalInh (def_ : AttrDef) (term : Term) (parentEnv : AttrEnv) : AttrE
   match term with
   | .con prod children =>
     -- For each child, compute its inherited attributes
-    let childEnvs := mapWithIndex (fun i child =>
+    let childEnvs := Util.mapWithIndex (fun i child =>
       let childName := s!"child{i}"
       -- Find rule for this child's inherited attribute
       match findRule prod [childName] def_.rules with

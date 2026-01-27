@@ -198,7 +198,7 @@ def coolttFuel : Nat := 50000
 /-- Debug parsing for a single CoolTT declaration, returning details -/
 def debugCoolttParse (rt : Runtime) (decl : String) : IO Unit := do
   try
-    let content ← IO.FS.readFile "./examples/Cubical/test/Cooltt.lego"
+    let content ← IO.FS.readFile "./examples/Cubical/syntax/Cooltt.lego"
     match Runtime.parseLegoFile rt content with
     | none => IO.println "Failed to load Cooltt.lego"
     | some ast =>
@@ -234,6 +234,10 @@ where
     | .lit s => s!"lit({s})"
     | .sym s => s!"sym({s})"
     | .number s => s!"num({s})"
+    | .sp => "sp"
+    | .nl => "nl"
+    | .indent => "indent"
+    | .dedent => "dedent"
 
 /-- Parse a single .cooltt file declaration using Cooltt grammar -/
 def parseCoolttDecl (coolttProds : List (String × GrammarExpr))
@@ -242,7 +246,7 @@ def parseCoolttDecl (coolttProds : List (String × GrammarExpr))
                     (decl : String) : Bool :=
   let declProd := "File.topdecl"
   let tokens := if tokenProds.isEmpty then
-    Bootstrap.tokenize decl
+    Lego.Bootstrap.tokenizeBootstrap decl
   else
     let mainProds := getMainTokenProdsOrdered tokenProds
     tokenizeWithGrammar coolttFuel tokenProds mainProds decl keywords
@@ -299,7 +303,7 @@ partial def findCoolttFiles (dir : String) : IO (List String) := do
 def runCoolttParsingTests (rt : Runtime) : IO (List TestResult) := do
   let grammarResult ← do
     try
-      let content ← IO.FS.readFile "./examples/Cubical/test/Cooltt.lego"
+      let content ← IO.FS.readFile "./examples/Cubical/syntax/Cooltt.lego"
       pure (Runtime.parseLegoFile rt content)
     catch _ =>
       pure none

@@ -82,6 +82,10 @@ lean_exe «lego-test» where
   -- Ensure proper linking with Init library
   moreLinkArgs := #["-lInit"]
 
+lean_exe «lego-test-red» where
+  root := `test.lean.TestRed
+  moreLinkArgs := #["-lInit"]
+
 lean_exe «lego-test-cool» where
   root := `test.lean.TestCool
   moreLinkArgs := #["-lInit"]

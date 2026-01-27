@@ -452,7 +452,7 @@ def loadCoolttGrammar (rt : Runtime) : IO (Option Productions) := do
 def testParseSurfaceType (rt : Runtime) : IO Bool := do
   -- Test that we can extract productions from Cooltt grammar
   match ← loadCoolttGrammar rt with
-  | none => 
+  | none =>
     IO.println "    Could not load Cooltt grammar"
     return false
   | some prods =>
@@ -462,7 +462,7 @@ def testParseSurfaceType (rt : Runtime) : IO Bool := do
 /-- Test: TypeAttrs AST to IR rules exist -/
 def testAstToIrRules (rules : List Rule) : IO Bool := do
   -- Check that AST→IR transformation rules exist
-  let astRules := rules.filter fun r => 
+  let astRules := rules.filter fun r =>
     r.name.startsWith "ast" || r.name.containsSubstr "ASTto"
   IO.println s!"    Found {astRules.length} AST→IR rules"
   return astRules.length > 0
@@ -484,14 +484,14 @@ def testElaborationChain (rules : List Rule) : IO Bool := do
 
 /-- Test: Quote rules for readback -/
 def testQuoteRules (rules : List Rule) : IO Bool := do
-  let quoteRules := rules.filter fun r => 
+  let quoteRules := rules.filter fun r =>
     r.name.startsWith "quote" || r.name.startsWith "readback"
   IO.println s!"    Found {quoteRules.length} quote/readback rules"
   return quoteRules.length > 0
 
 /-- Test: Unification rules -/
 def testUnifyRules (rules : List Rule) : IO Bool := do
-  let unifyRules := rules.filter fun r => 
+  let unifyRules := rules.filter fun r =>
     r.name.startsWith "unify" || r.name.containsSubstr "Unify"
   IO.println s!"    Found {unifyRules.length} unification rules"
   return unifyRules.length > 0

@@ -62,6 +62,9 @@ piece Expr
          | "snd" term → snd
          | "letE" term term term → letE
          | "univ" level → univ
+         | "nat" → nat
+         | "zero" → zero
+         | "suc" term → suc
          ;
   
   -- β-reduction rules
@@ -69,6 +72,16 @@ piece Expr
   rule fstPair: (fst (pair $a $b)) ~> $a ;
   rule sndPair: (snd (pair $a $b)) ~> $b ;
   rule letBeta: (letE $ty $val $body) ~> (subst 0 $val $body) ;
+  
+  -- Type rules for de Bruijn core terms
+  type univType: (univ $n) : (univ (lsuc $n)) ;
+  type natType: nat : (univ lzero) ;
+  type zeroType: zero : nat ;
+  type sucType: (suc $n) : nat when $n : nat ;
+  type piType: (pi $A $B) : (univ (lmax $l1 $l2)) 
+    when $A : (univ $l1), $B : (univ $l2) ;
+  type sigmaType: (sigma $A $B) : (univ (lmax $l1 $l2))
+    when $A : (univ $l1), $B : (univ $l2) ;
   
   test "beta": (app (lam (ix 0)) (lit "x")) ~~> (lit "x") ;
   test "fst": (fst (pair (lit "a") (lit "b"))) ~~> (lit "a") ;
@@ -251,10 +264,15 @@ piece Sub
 -- shift k e = e with free vars >= k incremented
 -----------------------------------------------------
 piece Shift
+  rule shiftLit: (shift $k $n (lit $s)) ~> (lit $s) ;
   rule shiftIx: (shift $k $n (ix $m)) ~> (ix (if (geq $m $k) (add $m $n) $m)) ;
   rule shiftLam: (shift $k $n (lam $body)) ~> (lam (shift (add $k 1) $n $body)) ;
   rule shiftApp: (shift $k $n (app $f $a)) ~> (app (shift $k $n $f) (shift $k $n $a)) ;
   rule shiftPi: (shift $k $n (pi $A $B)) ~> (pi (shift $k $n $A) (shift (add $k 1) $n $B)) ;
+  rule shiftPair: (shift $k $n (pair $a $b)) ~> (pair (shift $k $n $a) (shift $k $n $b)) ;
+  rule shiftFst: (shift $k $n (fst $p)) ~> (fst (shift $k $n $p)) ;
+  rule shiftSnd: (shift $k $n (snd $p)) ~> (snd (shift $k $n $p)) ;
+  rule shiftUniv: (shift $k $n (univ $l)) ~> (univ $l) ;
 
 -----------------------------------------------------
 -- Subst
@@ -262,11 +280,17 @@ piece Shift
 -- subst k v e = e[v/ix k]
 -----------------------------------------------------
 piece Subst
+  rule substLit: (subst $k $v (lit $s)) ~> (lit $s) ;
   rule substIxHit: (subst $k $v (ix $k)) ~> $v ;
   rule substIxMiss: (subst $k $v (ix $m)) ~> (ix (if (gt $m $k) (sub $m 1) $m))
     when (neq $k $m) ;
   rule substLam: (subst $k $v (lam $body)) ~> (lam (subst (add $k 1) (shift 0 1 $v) $body)) ;
   rule substApp: (subst $k $v (app $f $a)) ~> (app (subst $k $v $f) (subst $k $v $a)) ;
+  rule substPair: (subst $k $v (pair $a $b)) ~> (pair (subst $k $v $a) (subst $k $v $b)) ;
+  rule substFst: (subst $k $v (fst $p)) ~> (fst (subst $k $v $p)) ;
+  rule substSnd: (subst $k $v (snd $p)) ~> (snd (subst $k $v $p)) ;
+  rule substPi: (subst $k $v (pi $A $B)) ~> (pi (subst $k $v $A) (subst (add $k 1) (shift 0 1 $v) $B)) ;
+  rule substUniv: (subst $k $v (univ $l)) ~> (univ $l) ;
 
 -----------------------------------------------------
 -- Normalize

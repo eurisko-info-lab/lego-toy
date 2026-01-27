@@ -98,6 +98,10 @@ lean_exe «lego-test-cubical-gen» where
   root := `test.lean.TestCubicalGen
   moreLinkArgs := #["-lInit"]
 
+lean_exe «lego-test-cubical-integration» where
+  root := `test.lean.TestCubicalIntegration
+  moreLinkArgs := #["-lInit"]
+
 lean_exe «lego-test-minimal» where
   root := `test.lean.TestMinimalBootstrap
   moreLinkArgs := #["-lInit"]

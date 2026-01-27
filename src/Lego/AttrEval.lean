@@ -612,4 +612,47 @@ def errorSummary (errors : List TypeError) : String :=
   let (e, w, i) := countBySeverity errors
   s!"{e} error(s), {w} warning(s), {i} info"
 
+/-! ## TypeRule to AttrDef Conversion -/
+
+/-- Convert a TypeRule to an AttrRule for the "type" synthesized attribute.
+
+    This bridges the declarative type rule syntax:
+      type foo : (typeof (Con $a $b)) : (SomeType $a)
+
+    To the attribute grammar rule format:
+      { prod := "Con", target := [], expr := (SomeType child0.type) }
+
+    The key insight: TypeRules pattern match on `(typeof term)` and produce a type,
+    while AttrRules are keyed by production name and compute attributes. -/
+def typeRuleToAttrRule (tr : TypeRule) : Option AttrRule :=
+  match extractProdName tr.subject with
+  | some prodName =>
+    -- The type expression may reference children via metavars $a, $b, etc.
+    -- For now, we keep the expression as-is and let evalAttrExpr handle substitution
+    some { prod := prodName, target := [], expr := tr.type }
+  | none => none
+
+/-- Create an AttrDef for synthesized "type" attribute from TypeRules.
+
+    This is the bridge from the declarative type rules in .lego files
+    to the executable attribute grammar system. The resulting AttrDef:
+    - has flow = syn (synthesized, bottom-up)
+    - has one rule per TypeRule that matched a specific production -/
+def typeRulesToAttrDef (typeRules : List TypeRule) : AttrDef :=
+  let rules := typeRules.filterMap typeRuleToAttrRule
+  { name := "type"
+    flow := .syn
+    type := none  -- Polymorphic over type universe
+    rules := rules }
+
+/-- Type check a term using TypeRules via the attribute grammar system.
+
+    This is the main entry point for AG-based type checking:
+    1. Convert TypeRules to an AttrDef
+    2. Run the two-pass AG evaluation (inherited then synthesized)
+    3. Extract the "type" attribute from the result -/
+def typecheckWithRules (typeRules : List TypeRule) (term : Term) (ctx : Context := Context.empty) : EvalResult Term :=
+  let attrDef := typeRulesToAttrDef typeRules
+  typecheck [attrDef] term ctx
+
 end Lego

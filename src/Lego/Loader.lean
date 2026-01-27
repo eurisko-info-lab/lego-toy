@@ -1058,9 +1058,11 @@ partial def templateAstToTerm (t : Term) : Term :=
     match inner with
     | [x] => templateAstToTerm x
     | xs => .con "seq" (xs.map templateAstToTerm)
-  -- New clean format: (var (ident name)) → .var "$name"
+  -- Bare var (without explicit $ token): (var (ident name)) → nullary constructor
+  -- This handles cases like "Real", "Int" which are type names, not metavars.
+  -- Metavars have explicit "$" token: (var "$" (ident name)) handled above.
   | .con "var" [.con "ident" [.var name]] =>
-    .var s!"${name}"
+    .con name []  -- Treat bare idents as nullary constructors
   -- New format with parens: (con "(" (ident name) args... ")") → .con name [args...]
   | .con "con" (.lit "(" :: rest) =>
     let filtered := rest.filter (· != .lit "(") |>.filter (· != .lit ")")

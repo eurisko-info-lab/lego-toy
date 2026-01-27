@@ -1,21 +1,194 @@
 -----------------------------------------------------
--- Lego.Attr: Attribute Grammars as Named F-Algebras
+-- Lego.Attr: Semantic Extensions via Attribute Grammars
+--
+-- Architecture:
+--   Language = Syntax + Semantics
+--   
+--   Syntax (bidirectional, structural):
+--     Char* ⇌ Token*  (tokenizer/detokenizer)
+--     Token* ⇌ AST    (parser/printer)
+--   
+--   Semantics (forward-only, modular algebras):
+--     Attributes are semantic extensions to grammar pieces.
+--     Each attribute is a named F-algebra computing one aspect.
+--
+-- Separation of Concerns:
+--   1. DECLARATION - what semantics exist (per piece)
+--   2. SELECTION   - which semantics a use-case needs
+--   3. STRATEGY    - when/how to compute them
 --
 -- Mathematical Foundation:
 --   Synthesized (Syn) = Catamorphism: cata alg : μF → A
---   Inherited   (Inh) = Paramorphism: para alg : μF → A (with context)
+--   Inherited   (Inh) = Paramorphism: para alg : μF → A
 --   Both        = Hylomorphism: hylo alg coalg
---
--- This module builds on the recursion schemes in Algebra.rosetta.
--- An attribute is simply a *named* F-algebra, allowing us to:
---   1. Give semantic meaning to the algebra (e.g., "type", "value")
---   2. Compose multiple attributes (coproduct of algebras)
---   3. Support language pushouts: (L₁, A₁) ⊔ (L₂, A₂) = (L₁ ⊔ L₂, A₁ ⋈ A₂)
 --
 -- See Algebra.rosetta for: FAlgebra, cata, para, ana, hylo
 -----------------------------------------------------
 
 import Algebra;
+
+-----------------------------------------------------
+-- Semantic Extensions: Attributes as Piece Extensions
+--
+-- A SemanticAttr declares one semantic aspect (e.g., "type").
+-- It attaches F-algebra rules to grammar productions.
+-- Multiple attrs can be declared per piece, composed per use.
+-----------------------------------------------------
+
+adt SemanticAttr {
+  -- A named semantic attribute with rules per production
+  MkSemanticAttr : String       -- attribute name
+                -> AttrFlow     -- flow direction (Syn/Inh)
+                -> List AttrRule -- rules per production
+                -> SemanticAttr
+}
+
+-- Semantic extension to a grammar piece
+adt SemanticPiece {
+  -- Piece + its semantic attributes
+  MkSemanticPiece : String           -- piece name
+                 -> List SemanticAttr -- semantic extensions
+                 -> SemanticPiece
+}
+
+-- A semantic language bundles pieces with their semantics
+adt SemanticLang {
+  MkSemanticLang : String              -- language name
+                -> List SemanticPiece  -- pieces with semantics
+                -> SemanticLang
+}
+
+-----------------------------------------------------
+-- Use Cases: Semantic Bundles for Different Tools
+--
+-- A LanguageUse specifies which semantics are needed.
+-- Tools request different attribute subsets:
+--   LSP     = types + symbols + hover
+--   Lint    = warnings + style
+--   Compile = types + codegen
+--   Format  = layout hints
+--   Debug   = source maps
+-----------------------------------------------------
+
+adt LanguageUse {
+  UseLSP      : LanguageUse,
+  UseLint     : LanguageUse,
+  UseCompile  : LanguageUse,
+  UseFormat   : LanguageUse,
+  UseDebug    : LanguageUse,
+  UseCustom   : List String -> LanguageUse  -- custom attribute set
+}
+
+-- Get required attributes for a use case
+rewrite useRequiredAttrs:
+  (useRequiredAttrs UseLSP) ~> (List "type" "symbols" "hover" "completion") ;
+
+rewrite useRequiredAttrsLint:
+  (useRequiredAttrs UseLint) ~> (List "warnings" "style") ;
+
+rewrite useRequiredAttrsCompile:
+  (useRequiredAttrs UseCompile) ~> (List "type" "codegen") ;
+
+rewrite useRequiredAttrsFormat:
+  (useRequiredAttrs UseFormat) ~> (List "layout") ;
+
+rewrite useRequiredAttrsDebug:
+  (useRequiredAttrs UseDebug) ~> (List "sourcemap" "symbols") ;
+
+rewrite useRequiredAttrsCustom:
+  (useRequiredAttrs (UseCustom $attrs)) ~> $attrs ;
+
+-----------------------------------------------------
+-- Execution Strategies: When/How to Compute
+--
+-- Given a language use, we need an execution plan:
+--   Interleaved - compute during parsing (streaming)
+--   PostHoc     - compute after full parse (batch)
+--   Lazy        - compute on demand (query-driven)
+--
+-- The choice depends on:
+--   - Attribute dependencies (some need full tree)
+--   - Tool requirements (LSP needs incremental)
+--   - Performance (batch is simpler, lazy saves work)
+-----------------------------------------------------
+
+adt EvalStrategy {
+  Interleaved : EvalStrategy,  -- parse + eval simultaneously
+  PostHoc     : EvalStrategy,  -- parse then eval
+  Lazy        : EvalStrategy   -- eval on query
+}
+
+-- Execution plan: strategy + ordered attribute list
+adt ExecutionPlan {
+  MkExecutionPlan : EvalStrategy -> List String -> ExecutionPlan
+}
+
+-- Plan attribute evaluation based on use and strategy
+rewrite planExecution:
+  (planExecution $lang $use $strategy) ~>
+    (MkExecutionPlan $strategy (sortByDeps $lang (useRequiredAttrs $use))) ;
+
+-- Sort attributes by dependency order (topological)
+-- Attributes that depend on others must come after
+rewrite sortByDeps:
+  (sortByDeps $lang $attrs) ~>
+    (topoSort (attrDepGraph $lang $attrs)) ;
+
+-- Build dependency graph from attribute rules
+rewrite attrDepGraph:
+  (attrDepGraph (MkSemanticLang $name $pieces) $attrs) ~>
+    (foldl (graph attr . (addAttrDeps graph attr $pieces)) EmptyDepGraph $attrs) ;
+
+-- Recommend strategy based on use case
+rewrite recommendStrategy:
+  (recommendStrategy UseLSP)     ~> Lazy ;        -- incremental, on-demand
+  
+rewrite recommendStrategyLint:
+  (recommendStrategy UseLint)    ~> PostHoc ;     -- batch, all warnings
+  
+rewrite recommendStrategyCompile:
+  (recommendStrategy UseCompile) ~> PostHoc ;     -- batch, full codegen
+  
+rewrite recommendStrategyFormat:
+  (recommendStrategy UseFormat)  ~> Interleaved ; -- streaming OK
+  
+rewrite recommendStrategyDebug:
+  (recommendStrategy UseDebug)   ~> Lazy ;        -- on-demand
+
+-----------------------------------------------------
+-- Pipeline Integration: Parse Events + Semantic Hooks
+--
+-- For interleaved evaluation, we hook into parse events:
+--   OnShift   - token consumed
+--   OnReduce  - production completed
+--   OnAccept  - parse complete
+--
+-- Each event can trigger attribute computation.
+-----------------------------------------------------
+
+adt ParseEvent {
+  OnShift   : String -> ParseEvent,           -- shifted token
+  OnReduce  : String -> List Term -> ParseEvent, -- reduced production
+  OnAccept  : Term -> ParseEvent              -- parse complete
+}
+
+-- Hook: what to compute on each event
+adt SemanticHook {
+  MkHook : ParseEvent -> List String -> SemanticHook  -- event → attrs to compute
+}
+
+-- Generate hooks from execution plan for interleaved strategy
+rewrite generateHooks:
+  (generateHooks (MkExecutionPlan Interleaved $attrs)) ~>
+    (map (attr . (MkHook (OnReduce "any" Empty) (List $attr))) $attrs) ;
+
+rewrite generateHooksPostHoc:
+  (generateHooks (MkExecutionPlan PostHoc $attrs)) ~>
+    (List (MkHook (OnAccept (Var "tree")) $attrs)) ;
+
+rewrite generateHooksLazy:
+  (generateHooks (MkExecutionPlan Lazy $attrs)) ~>
+    Empty ; -- no hooks, compute on explicit query
 
 -----------------------------------------------------
 -- Attribute Flow Direction

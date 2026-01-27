@@ -1,0 +1,204 @@
+-- ArithTyped.lego: Typed arithmetic with number tower N ⊂ Z ⊂ Q ⊂ R
+--
+-- Features:
+--   - Number tower: N (natural) ⊂ Z (integer) ⊂ Q (rational) ⊂ R (real)
+--   - Literals: naturals, negatives, rationals, decimals
+--   - Constants: pi, e, phi (golden ratio), sqrt2
+--   - Holes: (hole) for inference, (hole "name") for named holes
+--   - Type attributes: infer minimal type, check coercions
+--   - Constant folding: evaluate pure expressions at compile time
+
+lang ArithTyped :=
+
+-----------------------------------------------------
+-- Types: The Number Tower
+-----------------------------------------------------
+
+piece NumType
+  numtype ::= nat_ty | int_ty | rat_ty | real_ty ;
+  nat_ty  ::= "Nat" → Nat ;
+  int_ty  ::= "Int" → Int ;
+  rat_ty  ::= "Rat" → Rat ;
+  real_ty ::= "Real" → Real ;
+
+-----------------------------------------------------
+-- Literals and Constants
+-----------------------------------------------------
+
+piece Literal
+  literal ::= nat_lit | neg_lit | rat_lit | dec_lit ;
+  nat_lit  ::= number → natLit ;
+  neg_lit  ::= "(" "neg" number ")" → negLit ;
+  rat_lit  ::= "(" number "/" number ")" → ratLit ;
+  dec_lit  ::= "(" number "." number ")" → decLit ;
+
+piece Constant
+  const ::= pi | euler | phi | sqrt2_const ;
+  pi          ::= "pi" → Pi ;
+  euler       ::= "e" → E ;
+  phi         ::= "phi" → Phi ;
+  sqrt2_const ::= "sqrt2" → Sqrt2 ;
+
+-----------------------------------------------------
+-- Holes: Placeholders for Inference
+-----------------------------------------------------
+
+piece Hole
+  hole ::= anon_hole | named_hole ;
+  anon_hole  ::= "(" "hole" ")" → Hole ;
+  named_hole ::= "(" "hole" string ")" → NamedHole ;
+
+-----------------------------------------------------
+-- Expressions
+-----------------------------------------------------
+
+piece Expr
+  expr ::= literal | const | hole | var | add | sub | mul | div 
+         | neg | absv | powv | sqrtv | typed ;
+  var   ::= ident → Var ;
+  add   ::= "(" "add" expr expr ")" → Add ;
+  sub   ::= "(" "sub" expr expr ")" → Sub ;
+  mul   ::= "(" "mul" expr expr ")" → Mul ;
+  div   ::= "(" "div" expr expr ")" → Div ;
+  neg   ::= "(" "neg" expr ")" → Neg ;
+  absv  ::= "(" "abs" expr ")" → Abs ;
+  powv  ::= "(" "pow" expr expr ")" → Pow ;
+  sqrtv ::= "(" "sqrt" expr ")" → Sqrt ;
+  typed ::= "(" expr ":" numtype ")" → Typed ;
+
+-----------------------------------------------------
+-- Type Judgments
+--
+-- Type inference using the number tower:
+--   Nat ⊂ Int ⊂ Rat ⊂ Real
+-----------------------------------------------------
+
+-- Type ordering (subtyping): N ≤ Z ≤ Q ≤ R
+type leq_NN : (leq Nat Nat) : Bool ;
+type leq_NZ : (leq Nat Int) : Bool ;
+type leq_NQ : (leq Nat Rat) : Bool ;
+type leq_NR : (leq Nat Real) : Bool ;
+type leq_ZZ : (leq Int Int) : Bool ;
+type leq_ZQ : (leq Int Rat) : Bool ;
+type leq_ZR : (leq Int Real) : Bool ;
+type leq_QQ : (leq Rat Rat) : Bool ;
+type leq_QR : (leq Rat Real) : Bool ;
+type leq_RR : (leq Real Real) : Bool ;
+
+-- Type of literals
+type typeof_nat : (typeof $n) : Nat when (isNatLit $n) ;
+type typeof_neg : (typeof (negLit $n)) : Int ;
+type typeof_rat : (typeof (ratLit $a $b)) : Rat ;
+type typeof_dec : (typeof (decLit $a $b)) : Real ;
+
+-- Type of constants
+type typeof_pi    : (typeof Pi) : Real ;
+type typeof_e     : (typeof E) : Real ;
+type typeof_phi   : (typeof Phi) : Real ;
+type typeof_sqrt2 : (typeof Sqrt2) : Real ;
+
+-- Type of holes
+type typeof_hole : (typeof (Hole)) : (HoleTy) ;
+type typeof_named_hole : (typeof (NamedHole $n)) : (HoleTy $n) ;
+
+-- Type of operations: join operand types
+type typeof_add : (typeof (Add $a $b)) : (join (typeof $a) (typeof $b)) ;
+type typeof_sub : (typeof (Sub $a $b)) : (join (typeof $a) (typeof $b)) ;
+type typeof_mul : (typeof (Mul $a $b)) : (join (typeof $a) (typeof $b)) ;
+type typeof_neg_expr : (typeof (Neg $a)) : (join Int (typeof $a)) ;
+type typeof_abs : (typeof (Abs $a)) : (typeof $a) ;
+
+-- Division always yields at least Rat
+type typeof_div : (typeof (Div $a $b)) : (join Rat (join (typeof $a) (typeof $b))) ;
+
+-- Sqrt always yields Real
+type typeof_sqrt : (typeof (Sqrt $a)) : Real ;
+
+-- Power with natural exponent preserves type
+type typeof_pow : (typeof (Pow $a $b)) : (join (typeof $a) (typeof $b)) ;
+
+-- Type annotation
+type typeof_typed : (typeof (Typed $e $t)) : $t when (leq (typeof $e) $t) ;
+
+-----------------------------------------------------
+-- Join (Least Upper Bound) Rules
+-----------------------------------------------------
+
+rule join_same : (join $t $t) ~> $t ;
+rule join_NZ   : (join Nat Int) ~> Int ;
+rule join_ZN   : (join Int Nat) ~> Int ;
+rule join_NQ   : (join Nat Rat) ~> Rat ;
+rule join_QN   : (join Rat Nat) ~> Rat ;
+rule join_NR   : (join Nat Real) ~> Real ;
+rule join_RN   : (join Real Nat) ~> Real ;
+rule join_ZQ   : (join Int Rat) ~> Rat ;
+rule join_QZ   : (join Rat Int) ~> Rat ;
+rule join_ZR   : (join Int Real) ~> Real ;
+rule join_RZ   : (join Real Int) ~> Real ;
+rule join_QR   : (join Rat Real) ~> Real ;
+rule join_RQ   : (join Real Rat) ~> Real ;
+
+-----------------------------------------------------
+-- Constant Folding (Evaluation Rules)
+-----------------------------------------------------
+
+-- Identity rules
+rule add_zero_l : (Add 0 $a) ~> $a ;
+rule add_zero_r : (Add $a 0) ~> $a ;
+rule mul_one_l  : (Mul 1 $a) ~> $a ;
+rule mul_one_r  : (Mul $a 1) ~> $a ;
+rule mul_zero_l : (Mul 0 $a) ~> 0 ;
+rule mul_zero_r : (Mul $a 0) ~> 0 ;
+rule sub_self   : (Sub $a $a) ~> 0 ;
+rule div_one    : (Div $a 1) ~> $a ;
+rule pow_zero   : (Pow $a 0) ~> 1 ;
+rule pow_one    : (Pow $a 1) ~> $a ;
+
+-- Double negation
+rule neg_neg : (Neg (Neg $a)) ~> $a ;
+
+-- Sqrt of perfect squares
+rule sqrt_zero : (Sqrt 0) ~> 0 ;
+rule sqrt_one  : (Sqrt 1) ~> 1 ;
+rule sqrt_four : (Sqrt 4) ~> 2 ;
+rule sqrt_nine : (Sqrt 9) ~> 3 ;
+
+-- Abs simplification
+rule abs_zero : (Abs 0) ~> 0 ;
+rule abs_neg  : (Abs (Neg $a)) ~> (Abs $a) ;
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+-- Join tests
+test "join_same" : (join Nat Nat) ~~> Nat ;
+test "join_NZ"   : (join Nat Int) ~~> Int ;
+test "join_ZQ"   : (join Int Rat) ~~> Rat ;
+test "join_QR"   : (join Rat Real) ~~> Real ;
+
+-- Identity rule tests
+test "add_zero" : (Add 0 5) ~~> 5 ;
+test "mul_one"  : (Mul 1 7) ~~> 7 ;
+test "mul_zero" : (Mul 0 9) ~~> 0 ;
+test "pow_zero" : (Pow 5 0) ~~> 1 ;
+test "pow_one"  : (Pow 3 1) ~~> 3 ;
+
+-- Double negation
+test "neg_neg" : (Neg (Neg 5)) ~~> 5 ;
+
+-- Sqrt tests
+test "sqrt_four" : (Sqrt 4) ~~> 2 ;
+test "sqrt_nine" : (Sqrt 9) ~~> 3 ;
+
+-- Abs tests
+test "abs_neg" : (Abs (Neg 3)) ~~> (Abs 3) ;
+
+-- Complex test: 4 rules applied
+-- (Add 0 (Mul 1 (Neg (Neg (Pow 5 1)))))
+-- → add_zero_l: (Mul 1 (Neg (Neg (Pow 5 1))))
+-- → mul_one_l:  (Neg (Neg (Pow 5 1)))
+-- → neg_neg:    (Pow 5 1)
+-- → pow_one:    5
+test "chain_4_rules" : (Add 0 (Mul 1 (Neg (Neg (Pow 5 1))))) ~~> 5 ;
+

@@ -332,7 +332,17 @@ instance : AST GrammarExpr where
   unit := GrammarExpr.empty
   seq := GrammarExpr.seq
 
-/-! ## Rule Algebra -/
+/-! ## Generic Rule Algebra -/
+
+/-- Typeclass for anything that can be applied to a term to produce a result.
+    Both rewrite rules and type rules implement this interface. -/
+class Applicable (R : Type) where
+  /-- Apply the rule to a term, returning the result if it matches -/
+  apply : R → Term → Option Term
+  /-- Get the name of the rule (for tracing) -/
+  name : R → String
+
+/-! ## Rewrite Rule -/
 
 /-- A rewrite rule: pattern ↔ template with optional guard -/
 structure Rule where
@@ -578,6 +588,11 @@ def Rule.apply (r : Rule) (t : Term) : Option Term :=
 def Rule.unapply (r : Rule) (t : Term) : Option Term :=
   r.toIso.backward t
 
+/-- Rule implements Applicable for the generic rule system -/
+instance : Applicable Rule where
+  apply := Rule.apply
+  name := Rule.name
+
 /-! ## Built-in Primitives (needed for guard evaluation) -/
 
 /-- Built-in rules for primitive operations (eq, neq, add, sub, etc.) -/
@@ -812,6 +827,59 @@ structure TypeRule where
 def TypeRule.matches (tr : TypeRule) (t : Term) : Option (List (String × Term)) :=
   matchPattern tr.subject t
 
+/-- Apply a type rule to infer the type of a term.
+    Returns the type with pattern variables substituted. -/
+def TypeRule.apply (tr : TypeRule) (t : Term) : Option Term :=
+  match tr.matches t with
+  | some bindings => some (applyTemplate bindings tr.type)
+  | none => none
+
+/-- TypeRule implements Applicable for the generic rule system -/
+instance : Applicable TypeRule where
+  apply := TypeRule.apply
+  name := TypeRule.name
+
+/-- Convert a TypeRule to an Iso for use with the meta-reducer.
+    Forward: term → type (type inference)
+    Backward: not meaningful for types, returns none -/
+def TypeRule.toIso (tr : TypeRule) : Iso Term Term where
+  forward := tr.apply
+  backward := fun _ => none  -- typing is not reversible
+
+/-! ## Type Inference via Meta-Reducer -/
+
+/-- Combine type rules into a single Iso that tries each rule (first match wins) -/
+def combineTypeRules (typeRules : List TypeRule) : Iso Term Term :=
+  match typeRules with
+  | [] => Iso.id
+  | tr :: trs => trs.foldl (fun acc tr' => Iso.orElse acc tr'.toIso) tr.toIso
+
+/-- Infer type of a term using combined type rules (first matching rule wins) -/
+def inferType (typeRules : List TypeRule) (t : Term) : Option Term :=
+  (combineTypeRules typeRules).forward t
+
+/-- Recursively infer types for all subterms, building type environment -/
+partial def inferTypes (typeRules : List TypeRule) (t : Term) : List (Term × Term) :=
+  let self := match inferType typeRules t with
+    | some ty => [(t, ty)]
+    | none => []
+  let children := match t with
+    | .con _ args => args.flatMap (inferTypes typeRules)
+    | _ => []
+  self ++ children
+
+/-- Extract the production name from a type rule subject.
+    For `(typeof (Pi))` returns "Pi".
+    For `(typeof (Add $a $b))` returns "Add". -/
+def extractProdName (subject : Term) : Option String :=
+  match subject with
+  | .con "typeof" [inner] =>
+    match inner with
+    | .con name _ => some name  -- (typeof (Con args...))
+    | .var _ => none            -- (typeof $x) - generic rule
+    | _ => none
+  | _ => none
+
 /-! ## Language: Composition of Pieces -/
 
 /-- Piece level: what kind of stream does this piece operate on? -/
@@ -864,6 +932,14 @@ def combineRules (rules : List Rule) : Iso Term Term :=
 /-- Get combined interpreter from all rules -/
 def interpreter (lang : Language) : Iso Term Term :=
   combineRules lang.allRules
+
+/-- Get combined type inference from all type rules -/
+def typeInferencer (lang : Language) : Iso Term Term :=
+  combineTypeRules lang.allTypeRules
+
+/-- Infer type using language's type rules -/
+def inferTypeWith (lang : Language) (t : Term) : Option Term :=
+  lang.typeInferencer.forward t
 
 end Language
 

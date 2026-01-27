@@ -354,6 +354,82 @@ where
 
 /-! ## Normalization with Runtime Rules -/
 
+/-- Configuration for normalization -/
+structure NormalizeConfig where
+  /-- Maximum reduction steps (fuel) -/
+  maxSteps : Nat := 1000
+  /-- Whether to enable built-in operations (subst, etc.) -/
+  enableBuiltins : Bool := true
+  deriving Inhabited
+
+/-- Result of normalization with optional trace -/
+structure NormalizeResult where
+  /-- The normalized term -/
+  term : Term
+  /-- Trace of (ruleName, intermediate term) pairs if tracing enabled -/
+  trace : List (String × Term) := []
+  deriving Inhabited
+
+/-- Apply built-in substitution: (subst x val body) → body[x := val] -/
+partial def applySubst (x : String) (val : Term) (body : Term) : Term :=
+  match body with
+  | .var name => if name == x then val else body
+  | .con "var" [.var name] => if name == x then val else body
+  | .con "var" [.con name []] => if name == x then val else body
+  | .lit _ => body
+  | .con name args => .con name (args.map (applySubst x val))
+
+/-- Apply built-in reductions (subst evaluation) -/
+def stepBuiltin (t : Term) : Option Term :=
+  match t with
+  | .con "subst" [.var x, val, body] =>
+    some (applySubst x val body)
+  | .con "subst" [.con x [], val, body] =>
+    some (applySubst x val body)
+  | _ => none
+
+/-! ## Generic Rule Application (works with Rule and TypeRule) -/
+
+/-- Apply a single step with any matching rule from a list, returning the rule name if matched.
+    Works with any type that implements Applicable (Rule, TypeRule, etc.) -/
+def applyOnceWithName [Lego.Applicable R] (rules : List R) (enableBuiltins : Bool) (t : Term) : Option (Term × String) :=
+  match rules.findSome? (fun r => Lego.Applicable.apply r t |>.map (·, Lego.Applicable.name r)) with
+  | some result => some result
+  | none => if enableBuiltins then stepBuiltin t |>.map (·, "builtin") else none
+
+/-- Apply rules to subterms recursively with tracing (single step).
+    Works with any type that implements Applicable. -/
+partial def applyDeepWithTrace [Lego.Applicable R] (rules : List R) (enableBuiltins : Bool) (t : Term) : Option (Term × String) :=
+  match applyOnceWithName rules enableBuiltins t with
+  | some result => some result
+  | none =>
+    match t with
+    | .con name args =>
+      let rec tryArgs (before : List Term) (after : List Term) : Option (Term × String) :=
+        match after with
+        | [] => none
+        | arg :: rest =>
+          match applyDeepWithTrace rules enableBuiltins arg with
+          | some (arg', ruleName) => some (.con name (before.reverse ++ [arg'] ++ rest), ruleName)
+          | none => tryArgs (arg :: before) rest
+      tryArgs [] args
+    | _ => none
+
+/-- Generic normalize with tracing: returns final term and list of (ruleName, intermediate term).
+    Works with any type that implements Applicable (Rule, TypeRule, etc.) -/
+partial def applyRulesWithTrace [Lego.Applicable R] (config : NormalizeConfig) (rules : List R) (t : Term) : NormalizeResult :=
+  go config.maxSteps t []
+where
+  go (fuel : Nat) (t : Term) (acc : List (String × Term)) : NormalizeResult :=
+    match fuel with
+    | 0 => { term := t, trace := acc.reverse }
+    | n + 1 =>
+      match applyDeepWithTrace rules config.enableBuiltins t with
+      | some (t', ruleName) => go n t' ((ruleName, t') :: acc)
+      | none => { term := t, trace := acc.reverse }
+
+/-! ## Rewrite Rule Normalization -/
+
 /-- Normalize a term using runtime-loaded rules -/
 partial def normalize (rt : Runtime) (t : Term) : Term :=
   normalizeWith 1000 rt.rules t
@@ -365,9 +441,32 @@ where
       match rules.findSome? (·.apply t) with
       | some t' => normalizeWith n rules t'
       | none =>
-        match t with
-        | .con c args => .con c (args.map (normalizeWith n rules))
-        | _ => t
+        -- Try builtin step
+        match stepBuiltin t with
+        | some t' => normalizeWith n rules t'
+        | none =>
+          match t with
+          | .con c args => .con c (args.map (normalizeWith n rules))
+          | _ => t
+
+/-- Normalize with tracing for rewrite rules (legacy API, uses generic applyRulesWithTrace) -/
+def normalizeWithTrace (config : NormalizeConfig) (rules : List Rule) (t : Term) : NormalizeResult :=
+  applyRulesWithTrace config rules t
+
+/-- Normalize with tracing using runtime rules -/
+def normalizeWithTraceRt (rt : Runtime) (t : Term) (config : NormalizeConfig := {}) : NormalizeResult :=
+  normalizeWithTrace config rt.rules t
+
+/-! ## Type Inference with Tracing -/
+
+/-- Infer the type of a term using type rules with tracing.
+    For type inference, we only apply rules at the top level (no deep recursion).
+    Returns the inferred type and trace of which type rule matched. -/
+def inferTypeWithTrace (_config : NormalizeConfig) (typeRules : List TypeRule) (t : Term) : NormalizeResult :=
+  -- Type inference typically only needs one step (find the matching type rule)
+  match applyOnceWithName typeRules false t with
+  | some (ty, ruleName) => { term := ty, trace := [(ruleName, ty)] }
+  | none => { term := .con "error" [.lit "no type rule matched"], trace := [] }
 
 /-! ## Pretty Printing -/
 

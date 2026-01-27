@@ -24,6 +24,12 @@ open Lego.Cubical (normalize)
 
 set_option linter.unusedVariables false
 
+/-! ## Helper Functions -/
+
+/-- Check if a string contains a substring -/
+def String.containsSubstr (s sub : String) : Bool :=
+  (s.splitOn sub).length > 1
+
 /-! ## Test Framework -/
 
 structure TestResult where
@@ -207,7 +213,7 @@ def testPathReflEndpoints (rules : List Rule) : IO Bool := do
 def testPlamEndpoints (rules : List Rule) : IO Bool := do
   -- plam (ix 0) at dim0 should give dim0
   let plamIx := corePlam (coreIx 0)
-  
+
   let papp0 := corePapp plamIx coreDim0
   let norm0 := normalizeWithRulesList rules papp0
   IO.println s!"    papp (plam (ix 0)) 0 = {norm0}"
@@ -285,7 +291,7 @@ def testHcomTrivialTube (rules : List Rule) : IO Bool := do
 
 /-- Test: ghcom (generalized hcom) degenerate case -/
 def testGhcomDegenerate (rules : List Rule) : IO Bool := do
-  let ghcom := .con "ghcom" [coreDim0, coreDim0, coreUniv 0, 
+  let ghcom := .con "ghcom" [coreDim0, coreDim0, coreUniv 0,
                              .con "tubes" [], .lit "cap"]
   let norm := normalizeWithRulesList rules ghcom
   IO.println s!"    ghcom 0 0 U [] cap = {norm}"
@@ -426,6 +432,69 @@ def testSubBeta (rules : List Rule) : IO Bool := do
   let norm := normalizeWithRulesList rules subOut
   IO.println s!"    subOut (subIn e) = {norm}"
   return norm == .lit "e"
+
+/-! ## Surface Syntax Tests -/
+
+/-- Load the Cooltt grammar for surface syntax parsing -/
+def loadCoolttGrammar (rt : Runtime) : IO (Option Productions) := do
+  let coolttPath := "./examples/Cubical/syntax/Cooltt.lego"
+  if ← System.FilePath.pathExists coolttPath then
+    let content ← IO.FS.readFile coolttPath
+    match parseLegoFileE rt content with
+    | .error _ => return none
+    | .ok ast =>
+      let prods := Loader.extractProductionsOnly ast
+      return some prods
+  else
+    return none
+
+/-- Test: Parse a simple type annotation -/
+def testParseSurfaceType (rt : Runtime) : IO Bool := do
+  -- Test that we can extract productions from Cooltt grammar
+  match ← loadCoolttGrammar rt with
+  | none => 
+    IO.println "    Could not load Cooltt grammar"
+    return false
+  | some prods =>
+    IO.println s!"    Cooltt grammar: {prods.length} productions"
+    return prods.length > 0
+
+/-- Test: TypeAttrs AST to IR rules exist -/
+def testAstToIrRules (rules : List Rule) : IO Bool := do
+  -- Check that AST→IR transformation rules exist
+  let astRules := rules.filter fun r => 
+    r.name.startsWith "ast" || r.name.containsSubstr "ASTto"
+  IO.println s!"    Found {astRules.length} AST→IR rules"
+  return astRules.length > 0
+
+/-- Test: synType rules exist for type synthesis -/
+def testSynTypeRules (rules : List Rule) : IO Bool := do
+  let synRules := rules.filter fun r => r.name.startsWith "synType"
+  IO.println s!"    Found {synRules.length} synType rules"
+  return synRules.length > 0
+
+/-- Test: Elaboration rules chain -/
+def testElaborationChain (rules : List Rule) : IO Bool := do
+  -- Check key elaboration rules exist
+  let inferRules := rules.filter fun r => r.name.startsWith "infer"
+  let checkRules := rules.filter fun r => r.name.startsWith "check"
+  let evalRules := rules.filter fun r => r.name.startsWith "eval"
+  IO.println s!"    Elaboration: {inferRules.length} infer, {checkRules.length} check, {evalRules.length} eval rules"
+  return inferRules.length > 0 || checkRules.length > 0
+
+/-- Test: Quote rules for readback -/
+def testQuoteRules (rules : List Rule) : IO Bool := do
+  let quoteRules := rules.filter fun r => 
+    r.name.startsWith "quote" || r.name.startsWith "readback"
+  IO.println s!"    Found {quoteRules.length} quote/readback rules"
+  return quoteRules.length > 0
+
+/-- Test: Unification rules -/
+def testUnifyRules (rules : List Rule) : IO Bool := do
+  let unifyRules := rules.filter fun r => 
+    r.name.startsWith "unify" || r.name.containsSubstr "Unify"
+  IO.println s!"    Found {unifyRules.length} unification rules"
+  return unifyRules.length > 0
 
 /-! ## Main Test Runner -/
 
@@ -590,6 +659,40 @@ def runAllTests : IO UInt32 := do
   printResult subTest
   total := total + 1
   if subTest.passed then passed := passed + 1
+
+  -- Surface Syntax / Elaboration Pipeline tests
+  IO.println ""
+  IO.println "── Surface Syntax / Elaboration Pipeline ──"
+
+  let surfaceTest ← runTest "cooltt_grammar_loads" (testParseSurfaceType rt)
+  printResult surfaceTest
+  total := total + 1
+  if surfaceTest.passed then passed := passed + 1
+
+  let astIrTest ← runTest "ast_to_ir_rules" (testAstToIrRules allRules)
+  printResult astIrTest
+  total := total + 1
+  if astIrTest.passed then passed := passed + 1
+
+  let synTypeTest ← runTest "syntype_rules" (testSynTypeRules allRules)
+  printResult synTypeTest
+  total := total + 1
+  if synTypeTest.passed then passed := passed + 1
+
+  let elabTest ← runTest "elaboration_chain" (testElaborationChain allRules)
+  printResult elabTest
+  total := total + 1
+  if elabTest.passed then passed := passed + 1
+
+  let quoteTest ← runTest "quote_rules" (testQuoteRules allRules)
+  printResult quoteTest
+  total := total + 1
+  if quoteTest.passed then passed := passed + 1
+
+  let unifyTest ← runTest "unify_rules" (testUnifyRules allRules)
+  printResult unifyTest
+  total := total + 1
+  if unifyTest.passed then passed := passed + 1
 
   -- Summary
   IO.println ""

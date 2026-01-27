@@ -93,6 +93,17 @@ token Token
       symch                  -- single symbol (fallback)
     ] ;
 
+  -- Keywords (must be tokenized as symbols, not identifiers)
+  keyword ::= "def" | "let" | "in" | "with" | "axiom" | "import" | "open"
+            | "type" | "dim" | "cof" | "sub" | "tp" | "sig" | "struct"
+            | "coe" | "hcom" | "hfill" | "com" | "cap" | "V" | "vproj"
+            | "path" | "path-p" | "trans" | "elim" | "ext" | "fst" | "snd"
+            | "nat" | "zero" | "suc" | "circle" | "base" | "loop" | "empty"
+            | "true" | "false" | "begin" | "end" | "equation" | "generalize"
+            | "abstract" | "section" | "view" | "export" | "repack" | "include"
+            | "renaming" | "as" | "unfold" | "set" | "shadowing" | "on" | "off"
+            | "cofibration-only" | "declarations" ;
+
 -----------------------------------------------------
 -- File Structure
 -----------------------------------------------------

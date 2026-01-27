@@ -165,7 +165,8 @@ def testGrammarFileType (name : String) (grammarPath : String) (files : List Str
   | some ast =>
     let prods := extractAllProductions ast
     let tokenProds := extractTokenProductions ast
-    let keywords := extractKeywords prods
+    -- Use extractKeywordsWithTokens to get keywords from both main and token productions
+    let keywords := extractKeywordsWithTokens prods tokenProds
 
     let mut passed := 0
     let mut failed : Array FailedFile := #[]
@@ -323,7 +324,7 @@ def main (args : List String) : IO UInt32 := do
   -- Test .red files (vendor/redtt)
   if cfg.testRed then
     let redFiles ← findFilesInDir "../vendor/redtt/library" "red"
-    let (p, t, f) ← testGrammarFileType "red" "./examples/Cubical/test/Redtt.lego" redFiles rt cfg.verbose
+    let (p, t, f) ← testGrammarFileType "red" "./examples/Cubical/syntax/Redtt.lego" redFiles rt cfg.verbose
     redPassed := p
     redTotal := t
     redFailed := f
@@ -333,7 +334,7 @@ def main (args : List String) : IO UInt32 := do
   -- Test .cooltt files (vendor/cooltt)
   if cfg.testCooltt then
     let coolttFiles ← findFilesInDir "../vendor/cooltt/test" "cooltt"
-    let (p, t, f) ← testGrammarFileType "cooltt" "./examples/Cubical/test/Cooltt.lego" coolttFiles rt cfg.verbose
+    let (p, t, f) ← testGrammarFileType "cooltt" "./examples/Cubical/syntax/Cooltt.lego" coolttFiles rt cfg.verbose
     coolttPassed := p
     coolttTotal := t
     coolttFailed := f

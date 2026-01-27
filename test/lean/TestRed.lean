@@ -205,8 +205,7 @@ def redValidationTests : List TestResult :=
 def runRedttParsingTests (rt : Runtime) : IO (List TestResult) := do
   -- Check for redtt library in common locations
   let possiblePaths := [
-    "vendor/redtt/library",
-    "../redtt/library"
+    "../vendor/redtt/library"
   ]
 
   let mut redttPath : Option String := none
@@ -224,7 +223,7 @@ def runRedttParsingTests (rt : Runtime) : IO (List TestResult) := do
 
   match redttPath with
   | none =>
-    IO.println "  Redtt library not found in vendor/redtt/library or ~/redtt/library"
+    IO.println "  Redtt library not found in ../vendor/redtt/library or ~/redtt/library"
     IO.println "  To run parsing tests: git clone https://github.com/RedPRL/redtt vendor/redtt"
     return [assertTrue "redtt_library_skipped" true "Library not available"]
   | some libPath =>
@@ -245,7 +244,8 @@ def runRedttParsingTests (rt : Runtime) : IO (List TestResult) := do
     | some redttAst =>
       let redttProds := Loader.extractAllProductions redttAst
       let tokenProds := Loader.extractTokenProductions redttAst
-      let keywords := Loader.extractKeywords redttProds
+      -- Use extractKeywordsWithTokens to get keywords from both main and token productions
+      let keywords := Loader.extractKeywordsWithTokens redttProds tokenProds
 
       IO.println s!"  Loaded {redttProds.length} productions, {keywords.length} keywords"
 

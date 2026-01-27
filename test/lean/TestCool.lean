@@ -313,21 +313,13 @@ def runCoolttParsingTests (rt : Runtime) : IO (List TestResult) := do
   | some ast =>
     let coolttProds := extractAllProductions ast
     let tokenProds := extractTokenProductions ast
-    -- CoolTT keywords - reserved words that start constructs AND operators used as names
-    -- Operators like +, -, * need to be keywords so they're tokenized as symbols not idents
-    -- Underscore _ is also a keyword (wildcard pattern)
-    -- Don't include type names (nat, circle, cof) or value names (zero, suc, base, loop)
-    -- as these are valid identifiers in many contexts
-    let coolttKeywords := ["abstract", "shadowing", "def", "axiom", "import",
-                           "let", "in", "elim", "with", "section", "view", "export", "repack",
-                           "begin", "end", "as", "sig", "struct", "open", "renaming",
-                           "generalize", "unfold", "ext", "sub", "coe", "com", "hcom", "hfill",
-                           "∨", "\\/", "∧", "/\\",
-                           -- Operators that can be function names
-                           "+", "-", "*",
-                           -- Wildcard pattern
-                           "_"]
-    let keywords := (extractKeywords coolttProds ++ coolttKeywords).eraseDups
+    -- Use extractKeywordsWithTokens to get keywords from both main and token productions
+    -- Also add operators that can be function names
+    let baseKeywords := extractKeywordsWithTokens coolttProds tokenProds
+    let extraKeywords := ["∨", "\\/", "∧", "/\\", "+", "-", "*", "_"]
+    let keywords := (baseKeywords ++ extraKeywords).eraseDups
+
+    IO.println s!"  Loaded {coolttProds.length} productions, {keywords.length} keywords"
 
     let testPath := "../vendor/cooltt/test"
     let testFiles ← findCoolttFiles testPath
@@ -366,7 +358,11 @@ def printTestGroup (name : String) (tests : List TestResult) : IO (Nat × Nat) :
   let mut failed := 0
   for test in tests do
     if test.passed then
-      IO.println s!"  ✓ {test.name}"
+      -- Show message even on success if it contains stats
+      if test.message.isEmpty then
+        IO.println s!"  ✓ {test.name}"
+      else
+        IO.println s!"  ✓ {test.name}: {test.message}"
       passed := passed + 1
     else
       IO.println s!"  ✗ {test.name}: {test.message}"

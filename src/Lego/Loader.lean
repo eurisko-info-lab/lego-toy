@@ -667,7 +667,7 @@ partial def findRefFollows (g : GrammarExpr) : List (String × String) :=
     These are productions like: keyword ::= "verified" | "repr" | ... ; -/
 def extractExplicitKeywords (prods : Productions) : List String :=
   prods.flatMap fun (name, g) =>
-    -- Look for productions named "*.keyword"
+    -- Look for productions named "*.keyword" or "keyword"
     if name.endsWith ".keyword" || name == "keyword" then
       extractSymbols g
     else
@@ -678,11 +678,29 @@ def extractExplicitKeywords (prods : Productions) : List String :=
 /-- Extract keywords that need reservation.
     Combines:
     1. Explicit keywords from `keyword` productions in token sections
-    2. FOLLOW-conflict keywords (literals following star-ending refs) -/
+    2. FOLLOW-conflict keywords (literals following star-ending refs)
+
+    NOTE: This version only searches `prods`. For language grammars with
+    separate token productions, use `extractKeywordsWithTokens` instead. -/
 def extractKeywords (prods : Productions) : List String :=
   -- Explicit keywords from token sections
   let explicit := extractExplicitKeywords prods
   -- FOLLOW-conflict keywords
+  let starEndingProds := computeStarEndingProds prods
+  let refFollows := prods.flatMap fun (_, g) => findRefFollows g
+  let conflictingLits := refFollows.filterMap fun (refName, lit) =>
+    if starEndingProds.contains refName then some lit else none
+  let followConflict := conflictingLits.filter Util.isKeywordLikeWithDash
+  -- Merge and deduplicate
+  (explicit ++ followConflict).eraseDups
+
+/-- Extract keywords with separate token productions (for language grammars).
+    Token sections may define explicit `keyword` productions that need to be
+    searched separately from the main grammar productions. -/
+def extractKeywordsWithTokens (prods : Productions) (tokenProds : Productions) : List String :=
+  -- Explicit keywords from main productions AND token productions
+  let explicit := extractExplicitKeywords prods ++ extractExplicitKeywords tokenProds
+  -- FOLLOW-conflict keywords (only from main grammar)
   let starEndingProds := computeStarEndingProds prods
   let refFollows := prods.flatMap fun (_, g) => findRefFollows g
   let conflictingLits := refFollows.filterMap fun (refName, lit) =>
@@ -725,8 +743,9 @@ def loadGrammarFromAST (ast : Term) (startProd : String) : LoadedGrammar :=
   let prods := extractAllProductions ast
   let tokenProds := extractTokenProductions ast
   let symbols := extractAllSymbols prods
-  -- Simple keyword extraction: all keyword-like literals from the grammar
-  let keywords := extractKeywords prods
+  -- Keyword extraction: search both main productions AND token productions
+  -- Token sections may define explicit `keyword` productions
+  let keywords := extractKeywordsWithTokens prods tokenProds
   let validationResult := validateProductions prods
   { productions := prods, tokenProductions := tokenProds, symbols := symbols, keywords := keywords, startProd := startProd, validation := validationResult }
 

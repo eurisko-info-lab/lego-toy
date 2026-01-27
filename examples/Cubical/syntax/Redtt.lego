@@ -72,6 +72,18 @@ token Token
   -- Single symbol (fallback)
   sym     ::= symch ;
 
+  -- Keywords (must be tokenized as symbols, not identifiers)
+  -- This tells the tokenizer to reserve these words so they aren't parsed as idents
+  keyword ::= "def" | "let" | "in" | "fun" | "where" | "with" | "data"
+            | "import" | "opaque" | "private" | "public" | "meta" | "quit"
+            | "type" | "coe" | "hcom" | "comp" | "box" | "cap"
+            | "V" | "vin" | "vproj" | "glue" | "elim"
+            | "path" | "pathd" | "refl" | "symm" | "trans" | "cong" | "ap" | "apd"
+            | "square" | "funext" | "equiv" | "id-equiv" | "is-equiv" | "fiber"
+            | "is-contr" | "is-prop" | "is-set" | "has-hlevel" | "pre"
+            | "kan" | "cof" | "and" | "or" | "boundary"
+            | "begin" | "end" | "check" | "print" | "normalize" | "debug" ;
+
 -----------------------------------------------------
 -- File Structure
 -----------------------------------------------------

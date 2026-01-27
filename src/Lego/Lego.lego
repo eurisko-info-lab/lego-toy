@@ -4,6 +4,7 @@
 -- Extends Bootstrap with semantic constructs.
 -- Bootstrap provides: lang, piece, token, rule, type, test syntax
 -- Lego adds: CorePrimitives, Binders, Products, ADT, Errors, Builtins
+--            and Cubical Type Theory primitives
 --
 -- Layers:
 --   Built-in (Lean) → Bootstrap.lego → Lego.lego → *.lego
@@ -197,3 +198,667 @@ piece Builtins
   type natForm: Nat : Univ ;
   type zeroType: zero : Nat ;
   type succType: (succ $n) : Nat when $n : Nat ;
+
+-----------------------------------------------------
+-- CUBICAL TYPE THEORY
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- Interval
+-- The interval type I with endpoints 0 and 1
+-----------------------------------------------------
+
+piece Interval
+  term ::= "I"                         → interval
+         | "dim0"                      → dim0
+         | "dim1"                      → dim1
+         | "dimVar" <number>           → dimVar ;
+
+  type intervalForm: I : Univ ;
+  type dim0Type: dim0 : I ;
+  type dim1Type: dim1 : I ;
+
+-----------------------------------------------------
+-- Cofibrations
+-- Face formulas for partial elements
+-----------------------------------------------------
+
+piece Cofibrations
+  term ::= "cof_top"                   → cof_top
+         | "cof_bot"                   → cof_bot
+         | "cof_eq" term term          → cof_eq
+         | "cof_and" term term         → cof_and
+         | "cof_or" term term          → cof_or ;
+
+  -- Simplification rules
+  rule eqRefl: (cof_eq $r $r) ~~> cof_top ;
+  rule eq01: (cof_eq dim0 dim1) ~~> cof_bot ;
+  rule eq10: (cof_eq dim1 dim0) ~~> cof_bot ;
+  rule andTop: (cof_and cof_top $φ) ~~> $φ ;
+  rule andBot: (cof_and cof_bot $φ) ~~> cof_bot ;
+  rule orTop: (cof_or cof_top $φ) ~~> cof_top ;
+  rule orBot: (cof_or cof_bot $φ) ~~> $φ ;
+
+-----------------------------------------------------
+-- Levels
+-- Universe level expressions
+-----------------------------------------------------
+
+piece Levels
+  level ::= "lzero"                    → lzero
+          | "lsuc" level               → lsuc
+          | "lmax" level level         → lmax
+          | "lvar" <number>            → lvar ;
+
+  term ::= "Univ" level                → univLevel ;
+
+  -- Normalization rules
+  rule maxIdempotent: (lmax $l $l) ~~> $l ;
+  rule maxZeroL: (lmax lzero $l) ~~> $l ;
+  rule maxZeroR: (lmax $l lzero) ~~> $l ;
+  rule maxSucSuc: (lmax (lsuc $l1) (lsuc $l2)) ~~> (lsuc (lmax $l1 $l2)) ;
+
+-----------------------------------------------------
+-- Path Types
+-- Identity types with computational content
+-- Path A a b = the type of paths from a to b in A
+-----------------------------------------------------
+
+piece PathTypes
+  term ::= "Path" term term term       → path
+         | "plam" <ident> "." term     → plam
+         | "papp" term term            → papp
+         | "refl" term                 → refl ;
+
+  -- Path computation rules
+  rule plamApp: (papp (plam $i . $body) $r) ~~> (SubstDim $i $r $body) ;
+  rule reflApp: (papp (refl $a) $r) ~~> $a ;
+
+  type pathForm: (Path $A $a $b) : Univ when $A : Univ, $a : $A, $b : $A ;
+  type plamType: (plam $i . $body) : (Path $A $a $b)
+    when [$i : I] $body : $A, (SubstDim $i dim0 $body) = $a, (SubstDim $i dim1 $body) = $b ;
+  type pappType: (papp $p $r) : $A when $p : (Path $A $a $b), $r : I ;
+  type reflType: (refl $a) : (Path $A $a $a) when $a : $A ;
+
+-----------------------------------------------------
+-- Kan Operations
+-- coe: coercion along a line of types
+-- hcom: homogeneous composition
+-- com: heterogeneous composition
+-----------------------------------------------------
+
+piece KanOps
+  term ::= "coe" term term term term   → coe
+         | "hcom" term term term term term → hcom
+         | "hcomTube" term term term tubes term → hcomTube
+         | "com" term term term tubes term → com ;
+  tubes ::= tube*                      → tubes ;
+  tube ::= "(" term "," term ")"       → tube ;
+
+  -- Degenerate direction: coe r r A a = a
+  rule coeRefl: (coe $r $r $A $a) ~~> $a ;
+  rule hcomRefl: (hcom $r $r $A $φ $cap) ~~> $cap ;
+
+  type coeType: (coe $r $s $A $a) : (SubstDim $i $s $A)
+    when $r : I, $s : I, [$i : I] $A : Univ, $a : (SubstDim $i $r $A) ;
+  type hcomType: (hcom $r $s $A $φ $cap) : $A
+    when $r : I, $s : I, $A : Univ, $φ : Cof, $cap : $A ;
+
+-----------------------------------------------------
+-- V-Types (Glue Types)
+-- For univalence: equiv A B → Path Univ A B
+-----------------------------------------------------
+
+piece VTypes
+  term ::= "Glue" term term term       → glue
+         | "glueEl" term term term     → glueEl
+         | "unglue" term               → unglue
+         | "vin" term term term        → vin
+         | "vproj" term term term term term → vproj ;
+
+  -- V-type reduction at endpoints
+  rule vin0: (vin dim0 $a $b) ~~> $a ;
+  rule vin1: (vin dim1 $a $b) ~~> $b ;
+
+-----------------------------------------------------
+-- Higher Inductive Types
+-----------------------------------------------------
+
+-- Circle S¹
+piece Circle
+  term ::= "S1"                        → s1
+         | "base"                      → base
+         | "loop" term                 → loop
+         | "S1Elim" term term term term → s1Elim ;
+
+  -- loop endpoints
+  rule loop0: (loop dim0) ~~> base ;
+  rule loop1: (loop dim1) ~~> base ;
+  rule s1ElimBase: (S1Elim $P $b $l base) ~~> $b ;
+
+  type s1Form: S1 : Univ ;
+  type baseType: base : S1 ;
+  type loopType: (loop $r) : S1 when $r : I ;
+
+-- Natural numbers (with HIT structure for coe/hcom)
+piece NatHIT
+  term ::= "natElim" term term term term → natElim ;
+
+  rule natElimZero: (natElim $P $z $s zero) ~~> $z ;
+  rule natElimSuc: (natElim $P $z $s (succ $n)) ~~> (App (App $s $n) (natElim $P $z $s $n)) ;
+
+-----------------------------------------------------
+-- Extension Types
+-- Partial elements and their extensions
+-----------------------------------------------------
+
+piece ExtTypes
+  term ::= "Partial" term term         → partial
+         | "Sub" term term term        → sub
+         | "subIn" term                → subIn
+         | "subOut" term               → subOut ;
+
+  -- β-reduction for subtypes
+  rule subBeta: (subOut (subIn $e)) ~~> $e ;
+
+  type partialType: (Partial $φ $A) : Univ when $φ : Cof, $A : Univ ;
+  type subType: (Sub $A $φ $u) : Univ when $A : Univ, $φ : Cof, $u : (Partial $φ $A) ;
+
+-----------------------------------------------------
+-- Transport and J
+-- Derived from path types
+-----------------------------------------------------
+
+piece Transport
+  term ::= "transp" term term term     → transp
+         | "J" term term term term term term → j ;
+
+  -- transp A φ a = transport along A when φ is false
+  rule transpRefl: (transp $A cof_top $a) ~~> $a ;
+
+  -- J : (A : Univ) → (a : A) → (P : (b : A) → Path A a b → Univ) →
+  --     P a (refl a) → (b : A) → (p : Path A a b) → P b p
+  rule jRefl: (J $A $a $P $d $a (refl $a)) ~~> $d ;
+
+-----------------------------------------------------
+-- CUBICAL PROOF THEORY
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- Propositions
+-- Prop universe with proof irrelevance
+-----------------------------------------------------
+
+piece Propositions
+  term ::= "Prop"                      → prop
+         | "propTrunc" term            → propTrunc
+         | "squash" term               → squash
+         | "propElim" term term term term → propElim
+         | "isProp" term               → isProp ;
+
+  -- Propositional truncation: ||A|| is the proposition that A is inhabited
+  -- squash a : ||A|| when a : A
+  -- All elements of ||A|| are equal (proof irrelevance)
+
+  type propForm: Prop : Univ ;
+  type propTruncForm: (propTrunc $A) : Prop when $A : Univ ;
+  type squashType: (squash $a) : (propTrunc $A) when $a : $A ;
+  type isPropForm: (isProp $A) : Univ when $A : Univ ;
+
+-----------------------------------------------------
+-- Dependent Paths (PathP)
+-- Heterogeneous paths over a line of types
+-----------------------------------------------------
+
+piece DependentPaths
+  term ::= "PathP" term term term      → pathP
+         | "toPathP" term              → toPathP
+         | "fromPathP" term            → fromPathP ;
+
+  -- PathP (i. A i) a0 a1 = dependent path from a0 : A 0 to a1 : A 1
+  -- When A is constant, PathP A a b ≃ Path A a b
+
+  type pathPForm: (PathP $A $a0 $a1) : Univ
+    when [$i : I] $A : Univ, $a0 : (SubstDim $i dim0 $A), $a1 : (SubstDim $i dim1 $A) ;
+
+  -- Conversion between Path and PathP for constant type lines
+  rule pathToPathP: (toPathP (plam $i . $body)) ~~> (plam $i . $body) ;
+  rule pathPToPath: (fromPathP (plam $i . $body)) ~~> (plam $i . $body) ;
+
+-----------------------------------------------------
+-- Path Combinators
+-- Composition, symmetry, transitivity
+-----------------------------------------------------
+
+piece PathCombinators
+  term ::= "sym" term                  → sym
+         | "trans" term term           → trans
+         | "cong" term term            → cong
+         | "congP" term term           → congP
+         | "funExt" term               → funExt
+         | "funExtP" term              → funExtP ;
+
+  -- sym : Path A a b → Path A b a
+  -- trans : Path A a b → Path A b c → Path A a c
+  -- cong : (f : A → B) → Path A a a' → Path B (f a) (f a')
+
+  -- Symmetry via dimension reversal
+  rule symDef: (sym (plam $i . $body)) ~~> (plam $i . (SubstDim $i (dimNeg $i) $body)) ;
+
+  -- Function extensionality
+  rule funExtApply: (papp (funExt (plam $x . $p)) $i) ~~> (plam $x . (papp $p $i)) ;
+
+  type symType: (sym $p) : (Path $A $b $a) when $p : (Path $A $a $b) ;
+  type transType: (trans $p $q) : (Path $A $a $c) when $p : (Path $A $a $b), $q : (Path $A $b $c) ;
+  type congType: (cong $f $p) : (Path $B (App $f $a) (App $f $b))
+    when $f : (Arrow $A $B), $p : (Path $A $a $b) ;
+  type funExtType: (funExt $h) : (Path (Arrow $A $B) $f $g)
+    when $h : (Arrow $A (Path $B (App $f $x) (App $g $x))) ;
+
+-----------------------------------------------------
+-- Equivalences
+-- Quasi-invertible maps and univalence
+-----------------------------------------------------
+
+piece Equivalences
+  term ::= "Equiv" term term           → equiv
+         | "idEquiv" term              → idEquiv
+         | "compEquiv" term term       → compEquiv
+         | "invEquiv" term             → invEquiv
+         | "equivFun" term             → equivFun
+         | "equivProof" term           → equivProof
+         | "ua" term                   → ua
+         | "uaβ" term term             → uaβ ;
+
+  -- Equiv A B = Σ (f : A → B), isEquiv f
+  -- ua : Equiv A B → Path Univ A B  (univalence)
+  -- uaβ : transport (ua e) a = equivFun e a
+
+  rule idEquivFun: (equivFun (idEquiv $A)) ~~> (Lam x . x) ;
+  rule uaRefl: (ua (idEquiv $A)) ~~> (refl $A) ;
+  rule uaβCompute: (coe dim0 dim1 (plam $i . (papp (ua $e) $i)) $a) ~~> (App (equivFun $e) $a) ;
+
+  type equivForm: (Equiv $A $B) : Univ when $A : Univ, $B : Univ ;
+  type idEquivType: (idEquiv $A) : (Equiv $A $A) when $A : Univ ;
+  type compEquivType: (compEquiv $e1 $e2) : (Equiv $A $C)
+    when $e1 : (Equiv $A $B), $e2 : (Equiv $B $C) ;
+  type invEquivType: (invEquiv $e) : (Equiv $B $A) when $e : (Equiv $A $B) ;
+  type equivFunType: (equivFun $e) : (Arrow $A $B) when $e : (Equiv $A $B) ;
+  type uaType: (ua $e) : (Path Univ $A $B) when $e : (Equiv $A $B) ;
+
+-----------------------------------------------------
+-- Contractibility and Fibers
+-- Fundamental notions for HoTT proofs
+-----------------------------------------------------
+
+piece Contractibility
+  term ::= "isContr" term              → isContr
+         | "center" term               → center
+         | "paths" term                → paths
+         | "fiber" term term           → fiber
+         | "isEquiv" term              → isEquiv
+         | "mkIsEquiv" term term term term → mkIsEquiv ;
+
+  -- isContr A = Σ (c : A), ((x : A) → Path A c x)
+  -- fiber f b = Σ (a : A), Path B (f a) b
+  -- isEquiv f = (b : B) → isContr (fiber f b)
+
+  type isContrForm: (isContr $A) : Univ when $A : Univ ;
+  type centerType: (center $c) : $A when $c : (isContr $A) ;
+  type pathsType: (paths $c) : (Arrow $A (Path $A (center $c) $x)) when $c : (isContr $A) ;
+  type fiberForm: (fiber $f $b) : Univ when $f : (Arrow $A $B), $b : $B ;
+  type isEquivForm: (isEquiv $f) : Univ when $f : (Arrow $A $B) ;
+
+-----------------------------------------------------
+-- H-Levels
+-- Hierarchy of truncation levels
+-----------------------------------------------------
+
+piece HLevels
+  term ::= "isSet" term                → isSet
+         | "isGroupoid" term           → isGroupoid
+         | "HLevel" term               → hLevel
+         | "isOfHLevel" term term      → isOfHLevel ;
+
+  -- isProp A = (x y : A) → Path A x y
+  -- isSet A = (x y : A) → isProp (Path A x y)
+  -- isGroupoid A = (x y : A) → isSet (Path A x y)
+  -- HLevel n = types at truncation level n
+
+  type isSetForm: (isSet $A) : Univ when $A : Univ ;
+  type isGroupoidForm: (isGroupoid $A) : Univ when $A : Univ ;
+  type hLevelForm: (HLevel $n) : Univ when $n : Nat ;
+  type isOfHLevelForm: (isOfHLevel $n $A) : Univ when $n : Nat, $A : Univ ;
+
+-----------------------------------------------------
+-- Sigma Types (Dependent Pairs)
+-- With cubical eliminators
+-----------------------------------------------------
+
+piece SigmaTypes
+  term ::= "Sigma" term term           → sigma
+         | "dpair" term term           → dpair
+         | "dfst" term                 → dfst
+         | "dsnd" term                 → dsnd
+         | "sigmaPath" term term       → sigmaPath ;
+
+  -- Sigma (x : A), B x = dependent pair type
+  -- dpair a b : Sigma A B when a : A, b : B a
+  -- sigmaPath : Path (Sigma A B) (a, b) (a', b') from Path A a a' and PathP B b b'
+
+  rule dfstPair: (dfst (dpair $a $b)) ~~> $a ;
+  rule dsndPair: (dsnd (dpair $a $b)) ~~> $b ;
+
+  type sigmaForm: (Sigma $A $B) : Univ when $A : Univ, [$x : $A] $B : Univ ;
+  type dpairType: (dpair $a $b) : (Sigma $A $B) when $a : $A, $b : (Subst $x $a $B) ;
+  type dfstType: (dfst $p) : $A when $p : (Sigma $A $B) ;
+  type dsndType: (dsnd $p) : (Subst $x (dfst $p) $B) when $p : (Sigma $A $B) ;
+
+-----------------------------------------------------
+-- Pi Types (Dependent Functions)
+-- With cubical eliminators
+-----------------------------------------------------
+
+piece PiTypes
+  term ::= "Pi" term term              → pi
+         | "piPath" term               → piPath
+         | "happly" term term          → happly ;
+
+  -- Pi (x : A), B x = dependent function type
+  -- piPath : Path (Pi A B) f g from (x : A) → Path (B x) (f x) (g x)
+  -- happly : Path (Pi A B) f g → (x : A) → Path (B x) (f x) (g x)
+
+  rule happlyApply: (happly (piPath $h) $x) ~~> (App $h $x) ;
+
+  type piForm: (Pi $A $B) : Univ when $A : Univ, [$x : $A] $B : Univ ;
+  type piPathType: (piPath $h) : (Path (Pi $A $B) $f $g)
+    when $h : (Pi $A (Path $B (App $f $x) (App $g $x))) ;
+  type happlyType: (happly $p $x) : (Path $B (App $f $x) (App $g $x))
+    when $p : (Path (Pi $A $B) $f $g), $x : $A ;
+
+-----------------------------------------------------
+-- Cubical Subtypes
+-- Refinement types with cofibrations
+-----------------------------------------------------
+
+piece CubicalSubtypes
+  term ::= "Glue" term term term       → glue2
+         | "unglue" term term          → unglue2
+         | "prim_glue" term term term term → primGlue
+         | "prim_unglue" term term term term → primUnglue ;
+
+  -- Glue [φ ↦ (T, f)] A = type that looks like T on φ and A elsewhere
+  -- Essential for proving univalence
+
+  type glue2Form: (Glue $A $φ $T) : Univ when $A : Univ, $φ : Cof, $T : Univ ;
+
+-----------------------------------------------------
+-- Proof Tactics
+-- Building blocks for interactive proofs
+-----------------------------------------------------
+
+piece ProofTactics
+  term ::= "goal" term                 → goal
+         | "have" <ident> term term term → have
+         | "let_" <ident> term term term → letTac
+         | "exact" term                → exact
+         | "by_path" term              → byPath
+         | "by_cong" term term         → byCong
+         | "by_funext" term            → byFunext
+         | "by_ua" term                → byUa ;
+
+  -- goal A = a hole to be filled with a proof of A
+  -- have x : A := proof in body = introduce local proof
+  -- exact e = complete proof with term e
+  -- by_path p = prove equality using path p
+  -- by_ua e = prove type equality using equivalence e
+
+  rule haveBeta: (have $x $A $proof $body) ~~> (Subst $x $proof $body) ;
+  rule letBeta: (let_ $x $A $val $body) ~~> (Subst $x $val $body) ;
+  rule exactBeta: (exact $e) ~~> $e ;
+
+  type goalType: (goal $A) : $A ;
+  type haveType: (have $x $A $proof $body) : $B
+    when $proof : $A, [$x : $A] $body : $B ;
+  type exactType: (exact $e) : $A when $e : $A ;
+
+-----------------------------------------------------
+-- CUBICAL FOR LANGUAGE DESIGNERS
+-----------------------------------------------------
+
+-----------------------------------------------------
+-- Verified Transformations
+-- Prove that rewrites preserve semantics
+--
+-- Key insight: If you have an equivalence between
+-- representations, you can transport properties.
+-----------------------------------------------------
+
+piece VerifiedTransform
+  decl ::= "verified" "rule" <ident> ":"
+           term "~>" term
+           "via" term ";" → verifiedRule ;
+
+  term ::= "preserves" term term term  → preserves
+         | "transport_prop" term term term → transportProp
+         | "optimize" term term        → optimize ;
+
+  -- (preserves f A B) = proof that f : A → B preserves some property
+  -- (transport_prop equiv prop a) = transport property along equivalence
+  -- (optimize rule expr) = apply verified optimization
+
+  -- When we have an equivalence e : Equiv A B and a property P : A → Prop
+  -- we can transport P to B: transport_prop e P a = P (equivFun (invEquiv e) (equivFun e a))
+  rule transportPropCompute:
+    (transport_prop (idEquiv $A) $P $a) ~~> (App $P $a) ;
+
+  -- Verified rule application: apply rule and transport proof
+  rule optimizeApply:
+    (optimize $rule (refl $e)) ~~> $e ;
+
+  type preservesForm:
+    (preserves $f $A $B) : Univ
+    when $f : (Arrow $A $B), $A : Univ, $B : Univ ;
+
+-----------------------------------------------------
+-- Quotient Types
+-- Define terms up to equivalence relation
+--
+-- Example: Natural numbers with commutative addition
+--   Quotient Nat (λx y. add x y = add y x)
+-----------------------------------------------------
+
+piece QuotientTypes
+  term ::= "Quotient" term term        → quotient
+         | "quot" term                 → quot
+         | "quotElim" term term term term → quotElim
+         | "quotEq" term term term     → quotEq ;
+
+  -- Quotient A R = A quotiented by equivalence relation R
+  -- quot a : Quotient A R when a : A
+  -- quotElim : (B : Quotient A R → Univ) →
+  --            ((a : A) → B (quot a)) →
+  --            ((a b : A) → R a b → Path (B (quot a)) ... ) →
+  --            (q : Quotient A R) → B q
+  -- quotEq : R a b → Path (Quotient A R) (quot a) (quot b)
+
+  -- Computation: eliminator on constructor
+  rule quotElimQuot:
+    (quotElim $B $f $resp (quot $a)) ~~> (App $f $a) ;
+
+  type quotientForm:
+    (Quotient $A $R) : Univ
+    when $A : Univ, $R : (Arrow $A (Arrow $A Prop)) ;
+  type quotType:
+    (quot $a) : (Quotient $A $R)
+    when $a : $A ;
+  type quotEqType:
+    (quotEq $a $b $r) : (Path (Quotient $A $R) (quot $a) (quot $b))
+    when $a : $A, $b : $A, $r : (App (App $R $a) $b) ;
+
+-----------------------------------------------------
+-- Representation Independence
+-- Switch between equivalent representations
+--
+-- Example: List vs Tree representations of sets
+--   If List ≃ Tree, properties of List transfer to Tree
+-----------------------------------------------------
+
+piece RepresentationIndep
+  decl ::= "repr" <ident> "≃" <ident>
+           "via" term ";" → reprEquiv ;
+
+  term ::= "coerce_repr" term term     → coerceRepr
+         | "lift_prop" term term term  → liftProp
+         | "repr_path" term term term  → reprPath ;
+
+  -- coerce_repr e a = transport value along representation equiv
+  -- lift_prop e P x = transport property along representation equiv
+  -- repr_path e a b p = transport path along representation equiv
+
+  -- Coercion is just equivFun
+  rule coerceReprApply:
+    (coerce_repr $e $a) ~~> (App (equivFun $e) $a) ;
+
+  -- Lifting property uses transport
+  rule liftPropApply:
+    (lift_prop (idEquiv $A) $P $x) ~~> (App $P $x) ;
+
+  type coerceReprType:
+    (coerce_repr $e $a) : $B
+    when $e : (Equiv $A $B), $a : $A ;
+  type liftPropType:
+    (lift_prop $e $P $x) : Prop
+    when $e : (Equiv $A $B), $P : (Arrow $A Prop), $x : $A ;
+
+-----------------------------------------------------
+-- Observational Equality
+-- Two terms are equal if they behave the same
+--
+-- This is the key for language designers:
+-- optimize(e) ≡ e when they have same observable behavior
+-----------------------------------------------------
+
+piece ObservationalEq
+  term ::= "obs_eq" term term term     → obsEq
+         | "obs_refl" term             → obsRefl
+         | "obs_sym" term              → obsSym
+         | "obs_trans" term term       → obsTrans
+         | "by_obs" term               → byObs ;
+
+  -- obs_eq A a b = a and b are observationally equal at type A
+  -- by_obs p = convert observational proof to path
+
+  -- Reflexivity of observational equality
+  rule obsReflPath: (by_obs (obs_refl $a)) ~~> (refl $a) ;
+
+  -- Symmetry
+  rule obsSymPath: (by_obs (obs_sym $p)) ~~> (sym (by_obs $p)) ;
+
+  -- Transitivity
+  rule obsTransPath:
+    (by_obs (obs_trans $p $q)) ~~> (trans (by_obs $p) (by_obs $q)) ;
+
+  type obsEqForm:
+    (obs_eq $A $a $b) : Prop
+    when $A : Univ, $a : $A, $b : $A ;
+  type obsReflType:
+    (obs_refl $a) : (obs_eq $A $a $a)
+    when $a : $A ;
+  type byObsType:
+    (by_obs $p) : (Path $A $a $b)
+    when $p : (obs_eq $A $a $b) ;
+
+-----------------------------------------------------
+-- Refinement Types
+-- Subtypes with proofs
+--
+-- Example: { n : Nat | n > 0 } for positive naturals
+-----------------------------------------------------
+
+piece RefinementTypes
+  term ::= "Refine" term term          → refine
+         | "refine" term term          → refineCon
+         | "unrefine" term             → unrefine
+         | "refine_proof" term         → refineProof ;
+
+  -- Refine A P = { x : A | P x }
+  -- refine a p : Refine A P when a : A and p : P a
+  -- unrefine r = extract underlying value
+  -- refine_proof r = extract proof
+
+  rule unrefineCon: (unrefine (refine $a $p)) ~~> $a ;
+  rule refineProofCon: (refine_proof (refine $a $p)) ~~> $p ;
+
+  type refineForm:
+    (Refine $A $P) : Univ
+    when $A : Univ, $P : (Arrow $A Prop) ;
+  type refineConType:
+    (refine $a $p) : (Refine $A $P)
+    when $a : $A, $p : (App $P $a) ;
+  type unrefineType:
+    (unrefine $r) : $A
+    when $r : (Refine $A $P) ;
+
+-----------------------------------------------------
+-- Inductive Families
+-- Indexed inductive types with path constructors
+--
+-- Example: Vec n A - vectors of length n
+-----------------------------------------------------
+
+piece InductiveFamilies
+  decl ::= "indfam" <ident> ":" term
+           "{" indConstr* "}" → indfamDef ;
+  indConstr ::= <ident> ":" term       → indConstr ;
+
+  term ::= "ind_elim" term term term   → indElim
+         | "ind_path" term term term   → indPath ;
+
+  -- For indexed types, paths between indices give paths between types
+  -- This enables: Vec 3 A ≡ Vec 3 A trivially
+  -- And: if n ≡ m then Vec n A ≡ Vec m A
+
+  rule indPathRefl:
+    (ind_path $F (refl $i) $x) ~~> (refl $x) ;
+
+  type indPathType:
+    (ind_path $F $p $x) : (Path $B $x $y)
+    when $F : (Arrow $I Univ), $p : (Path $I $i $j),
+         $x : (App $F $i), $y : (App $F $j) ;
+
+-----------------------------------------------------
+-- Language Composition
+-- Compose languages with verified interfaces
+--
+-- If Lang1 has Term1 and Lang2 has Term2,
+-- and we have Equiv Term1 Term2,
+-- we can compose them and transport properties.
+-----------------------------------------------------
+
+piece LangComposition
+  decl ::= "compose" <ident> <ident>
+           "via" term ";" → composeLang ;
+
+  term ::= "embed" term term           → embed
+         | "project" term term         → project
+         | "lift_rule" term term       → liftRule ;
+
+  -- embed e t = embed term from Lang1 into Lang2
+  -- project e t = project term from Lang2 to Lang1
+  -- lift_rule e r = lift rewrite rule along embedding
+
+  rule embedProject:
+    (project $e (embed $e $t)) ~~> $t ;
+
+  -- Lifting a rule: if r : t1 ~> t2 in Lang1,
+  -- then lift_rule e r : embed t1 ~> embed t2 in Lang2
+  rule liftRuleApply:
+    (lift_rule $e (refl $t)) ~~> (refl (embed $e $t)) ;
+
+  type embedType:
+    (embed $e $t) : $B
+    when $e : (Equiv $A $B), $t : $A ;
+  type projectType:
+    (project $e $t) : $A
+    when $e : (Equiv $A $B), $t : $B ;

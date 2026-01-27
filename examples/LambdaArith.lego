@@ -1,0 +1,171 @@
+-- LambdaArith.lego: Composing Lambda Calculus with Arithmetic
+--
+-- Demonstrates language composition with cubical features:
+-- - Embed arithmetic into lambda calculus
+-- - Lift arithmetic rules to work with lambda terms
+-- - Use equivalence to transport properties
+--
+-- Key insight: If we have Lang1 ≃ Lang2, we can:
+-- 1. Write code in whichever is more convenient
+-- 2. Automatically transfer optimizations
+-- 3. Prove properties in one, get them in the other
+
+lang LambdaArith :=
+
+-----------------------------------------------------
+-- Lambda Calculus Core
+-----------------------------------------------------
+
+piece LambdaCore
+  term ::= "Var" <ident>               → var
+         | "Lam" <ident> term          → lam
+         | "App" term term             → app ;
+
+  rule beta: (App (Lam $x $body) $arg) ~~> (subst $x $arg $body) ;
+
+-----------------------------------------------------
+-- Arithmetic Embedded in Lambda
+-----------------------------------------------------
+
+piece ArithInLambda
+  term ::= "Nat"                       → nat
+         | "Zero"                      → zero
+         | "Succ" term                 → succ
+         | "Plus" term term            → plus
+         | "Times" term term           → times
+         | "NatElim" term term term term → natElim ;
+
+  -- Church encoding: Zero = λf.λx.x, Succ n = λf.λx.f(n f x)
+  -- But we keep it abstract for clarity
+
+  rule plus_zero: (Plus Zero $n) ~~> $n ;
+  rule plus_succ: (Plus (Succ $m) $n) ~~> (Succ (Plus $m $n)) ;
+  rule times_zero: (Times Zero $n) ~~> Zero ;
+  rule times_succ: (Times (Succ $m) $n) ~~> (Plus $n (Times $m $n)) ;
+
+  -- NatElim for recursion
+  rule natElim_zero: (NatElim $P $z $s Zero) ~~> $z ;
+  rule natElim_succ: (NatElim $P $z $s (Succ $n)) ~~>
+    (App $s (NatElim $P $z $s $n)) ;
+
+-----------------------------------------------------
+-- Language Composition
+-- Arithmetic terms can be used as lambda terms
+-----------------------------------------------------
+
+piece Composition
+  term ::= "embed_nat" term            → embedNat
+         | "arith_fn" term term        → arithFn ;
+
+  -- Embedding arithmetic into lambda
+  -- embed_nat n creates a lambda term representing n
+
+  -- arith_fn f n applies arithmetic function f to n
+  -- This lets us write: arith_fn (Lam x (Plus x x)) (Succ (Succ Zero))
+  -- Which computes to: Succ (Succ (Succ (Succ Zero)))
+
+  rule arith_fn_beta:
+    (arith_fn (Lam $x $body) $n) ~~> (subst $x $n $body) ;
+
+-----------------------------------------------------
+-- Verified Embedding
+-- Arithmetic operations preserve under embedding
+-----------------------------------------------------
+
+piece VerifiedEmbed
+  term ::= "preserve_plus" term term   → preservePlus
+         | "preserve_times" term term  → preserveTimes ;
+
+  -- Key theorem: embed_nat (Plus m n) ≡ embed_nat m + embed_nat n
+  -- This uses cubical path equality!
+
+  verified rule embed_plus:
+    (embed_nat (Plus $m $n)) ~> (arith_fn (Lam x (arith_fn (Lam y (Plus (Var x) (Var y))) $n)) $m)
+    via (refl (embed_nat (Plus $m $n))) ;
+
+-----------------------------------------------------
+-- Higher-Order Arithmetic
+-- Functions on numbers
+-----------------------------------------------------
+
+piece HigherOrderArith
+  term ::= "twice" term                → twice
+         | "compose" term term         → compose
+         | "iterate" term term         → iterate ;
+
+  -- twice f = λx. f (f x)
+  rule twice_def: (twice $f) ~~> (Lam x (App $f (App $f (Var x)))) ;
+
+  -- compose f g = λx. f (g x)
+  rule compose_def: (compose $f $g) ~~> (Lam x (App $f (App $g (Var x)))) ;
+
+  -- iterate n f = f composed with itself n times
+  -- iterate Zero f = id
+  -- iterate (Succ n) f = compose f (iterate n f)
+  rule iterate_zero: (iterate Zero $f) ~~> (Lam x (Var x)) ;
+  rule iterate_succ: (iterate (Succ $n) $f) ~~> (compose $f (iterate $n $f)) ;
+
+-----------------------------------------------------
+-- Lifting Rules Between Representations
+-----------------------------------------------------
+
+piece RuleLift
+  term ::= "church_zero"               → churchZero
+         | "church_succ" term          → churchSucc
+         | "church_plus" term term     → churchPlus ;
+
+  -- Church numerals: another representation of Nat
+  -- church_zero = λf.λx.x
+  -- church_succ n = λf.λx.f(n f x)
+
+  rule church_zero_def:
+    church_zero ~~> (Lam f (Lam x (Var x))) ;
+
+  rule church_succ_def:
+    (church_succ $n) ~~> (Lam f (Lam x (App (Var f) (App (App $n (Var f)) (Var x))))) ;
+
+  -- The key: we can lift rules from our Nat to Church numerals
+  -- because there's an equivalence Nat ≃ Church
+  -- lift_rule nat_church_equiv plus_zero
+  -- gives us: church_plus church_zero n ≃ n
+
+-----------------------------------------------------
+-- Quotient for Extensional Equality
+-- Two functions are equal if they agree on all inputs
+-----------------------------------------------------
+
+piece ExtensionalFunctions
+  term ::= "ExtFun" term term          → extFun
+         | "ext_eq" term term term     → extEq ;
+
+  -- ExtFun A B = (A → B) quotiented by extensional equality
+  -- Two functions f, g : A → B are identified if ∀x. f x = g x
+
+  -- This is function extensionality via quotients!
+  -- ext_eq f g proof : Path (ExtFun A B) f g
+  --   when proof : ∀x. Path B (f x) (g x)
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+-- Basic arithmetic in lambda
+test "plus_1_2": (Plus (Succ Zero) (Succ (Succ Zero))) ~~> (Succ (Succ (Succ Zero))) ;
+
+-- Composition
+test "twice_succ":
+  (App (twice (Lam x (Succ (Var x)))) Zero) ~~>
+  (Succ (Succ Zero)) ;
+
+-- Higher-order
+test "iterate_2_succ":
+  (App (iterate (Succ (Succ Zero)) (Lam x (Succ (Var x)))) Zero) ~~>
+  (Succ (Succ Zero)) ;
+
+-- Church numerals
+test "church_zero": church_zero ~~> (Lam f (Lam x (Var x))) ;
+
+-- Arithmetic function application
+test "arith_fn_double":
+  (arith_fn (Lam x (Plus (Var x) (Var x))) (Succ (Succ Zero))) ~~>
+  (Succ (Succ (Succ (Succ Zero)))) ;

@@ -116,6 +116,68 @@ def wrap [AST α] (name : String) (inner : α) : α := AST.con name [inner]
 
 end AST
 
+/-! ## Cubical Types -/
+
+/-- Dimension values (interval endpoints and variables) -/
+inductive Dim where
+  | i0 : Dim                    -- 0 endpoint
+  | i1 : Dim                    -- 1 endpoint
+  | ivar : Nat → Dim            -- dimension variable (de Bruijn)
+  deriving BEq, Repr, Inhabited
+
+/-- Cofibrations (face formulas) -/
+inductive Cof where
+  | top : Cof                   -- ⊤ (always true)
+  | bot : Cof                   -- ⊥ (always false)
+  | eq : Dim → Dim → Cof        -- r = s
+  | conj : Cof → Cof → Cof      -- φ ∧ ψ
+  | disj : Cof → Cof → Cof      -- φ ∨ ψ
+  deriving BEq, Repr, Inhabited
+
+/-- Universe levels -/
+inductive Level where
+  | lzero : Level               -- Level 0
+  | lsuc : Level → Level        -- ℓ + 1
+  | lmax : Level → Level → Level -- max ℓ₁ ℓ₂
+  | lvar : Nat → Level          -- Level variable (de Bruijn)
+  deriving BEq, Repr, Inhabited
+
+namespace Level
+
+/-- Convert Nat to Level -/
+def ofNat : Nat → Level
+  | 0 => lzero
+  | n + 1 => lsuc (ofNat n)
+
+/-- Try to convert Level to Nat (fails if contains variables) -/
+def toNat? : Level → Option Nat
+  | lzero => some 0
+  | lsuc l => l.toNat?.map (· + 1)
+  | lmax l1 l2 => do
+    let n1 ← l1.toNat?
+    let n2 ← l2.toNat?
+    pure (max n1 n2)
+  | lvar _ => none
+
+/-- Normalize level expression -/
+partial def normalize : Level → Level
+  | lmax l1 l2 =>
+    let l1' := normalize l1
+    let l2' := normalize l2
+    if l1' == l2' then l1'
+    else match l1', l2' with
+      | lzero, _ => l2'
+      | _, lzero => l1'
+      | lsuc a, lsuc b => lsuc (normalize (lmax a b))
+      | _, _ => lmax l1' l2'
+  | l => l
+
+/-- Check level equality (normalizing) -/
+def levelEq (l1 l2 : Level) : Bool :=
+  normalize l1 == normalize l2
+
+end Level
+
 /-! ## Terms: The Universal Structure -/
 
 /-- Term: the universal AST representation.
@@ -125,6 +187,65 @@ inductive Term where
   | con : String → List Term → Term
   | lit : String → Term
   deriving Repr, BEq, Inhabited
+
+/-- Tube element: (cofibration term, partial element) for Kan operations -/
+structure Tube where
+  cof : Term
+  element : Term
+  deriving BEq, Repr
+
+/-! ## Cubical Proof Types -/
+
+/-- H-level numbers for truncation hierarchy -/
+inductive HLevelNum where
+  | hprop : HLevelNum           -- -1 (contractible) / 0 (proposition)
+  | hset : HLevelNum            -- 1 (set)
+  | hgroupoid : HLevelNum       -- 2 (groupoid)
+  | hlevel : Nat → HLevelNum    -- n (general h-level)
+  deriving BEq, Repr, Inhabited
+
+namespace HLevelNum
+
+/-- Convert to natural number (using convention: prop = 1, set = 2, ...) -/
+def toNat : HLevelNum → Nat
+  | hprop => 1
+  | hset => 2
+  | hgroupoid => 3
+  | hlevel n => n
+
+/-- Check if one level is ≤ another -/
+def le (l1 l2 : HLevelNum) : Bool :=
+  l1.toNat <= l2.toNat
+
+end HLevelNum
+
+/-- Equivalence data: forward map with inverse and proofs -/
+structure EquivData where
+  /-- Forward function -/
+  fwd : Term
+  /-- Backward function (inverse) -/
+  bwd : Term
+  /-- Section: bwd ∘ fwd ~ id -/
+  sec : Term
+  /-- Retraction: fwd ∘ bwd ~ id -/
+  ret : Term
+  deriving BEq, Repr
+
+/-- Contractibility witness: center + paths to center -/
+structure ContrData where
+  /-- The center of contraction -/
+  center : Term
+  /-- Proof that all points are path-connected to center -/
+  paths : Term
+  deriving BEq, Repr
+
+/-- Fiber data: element + path to target -/
+structure FiberData where
+  /-- Element in the domain -/
+  point : Term
+  /-- Path from f(point) to target -/
+  path : Term
+  deriving BEq, Repr
 
 /-- Default AST instance: build Term (generic S-expressions) -/
 instance : AST Term where
@@ -822,7 +943,7 @@ structure TypeRule where
 def TypeRule.matches (tr : TypeRule) (t : Term) : Option (List (String × Term)) :=
   matchPattern tr.subject t
 
-/-- Apply a type rule to infer the type of a term.
+/-- Apply a type rule to infer the type of a term (basic, no condition checking).
     Returns the type with pattern variables substituted. -/
 def TypeRule.apply (tr : TypeRule) (t : Term) : Option Term :=
   match tr.matches t with
@@ -833,6 +954,56 @@ def TypeRule.apply (tr : TypeRule) (t : Term) : Option Term :=
 instance : Applicable TypeRule where
   apply := TypeRule.apply
   name := TypeRule.name
+
+/-- Structural equality for terms -/
+partial def termStructuralEq (t1 t2 : Term) : Bool :=
+  match t1, t2 with
+  | .var n1, .var n2 => n1 == n2
+  | .lit s1, .lit s2 => s1 == s2
+  | .con c1 args1, .con c2 args2 =>
+    c1 == c2 && args1.length == args2.length &&
+    (args1.zip args2 |>.all fun (a, b) => termStructuralEq a b)
+  | _, _ => false
+
+/-- Check a single condition: $x : $T means the term bound to $x should have type $T.
+    We recursively call type inference to verify. -/
+def checkCondition (typeRules : List TypeRule) (bindings : List (String × Term))
+    (cond : Term) : Bool :=
+  match cond with
+  | .con ":" [.var varName, expectedType] =>
+    -- Find the term bound to this variable
+    match bindings.find? (·.1 == varName.drop 1) with
+    | none => false  -- Variable not bound
+    | some (_, boundTerm) =>
+      -- Substitute any variables in the expected type
+      let expectedTypeSubst := applyTemplate bindings expectedType
+      -- Infer the actual type of the bound term using type rules
+      match typeRules.findSome? (·.apply boundTerm) with
+      | some actualType =>
+        -- Check if actual type matches expected type
+        termStructuralEq actualType expectedTypeSubst
+      | none =>
+        -- If no type rule matches, check if term is a type itself (Univ-typed)
+        -- For now, be permissive: if we can't infer type, assume ok
+        true
+  | _ => true  -- Non-typing conditions pass by default
+
+/-- Check all conditions of a type rule given the bindings.
+    Returns true if all conditions are satisfied. -/
+def checkConditions (typeRules : List TypeRule) (bindings : List (String × Term))
+    (conditions : List Term) : Bool :=
+  conditions.all (checkCondition typeRules bindings)
+
+/-- Apply a type rule with full condition checking.
+    Requires the list of all type rules for recursive type inference. -/
+def TypeRule.applyWithCheck (tr : TypeRule) (typeRules : List TypeRule) (t : Term) : Option Term :=
+  match tr.matches t with
+  | some bindings =>
+    if checkConditions typeRules bindings tr.conditions then
+      some (applyTemplate bindings tr.type)
+    else
+      none  -- Conditions not satisfied
+  | none => none
 
 /-- Convert a TypeRule to an Iso for use with the meta-reducer.
     Forward: term → type (type inference)

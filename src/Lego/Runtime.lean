@@ -22,10 +22,12 @@ import Lego.Normalize
 import Lego.Interp
 import Lego.Loader
 import Lego.Bootstrap
+import Lego.Validation
 
 namespace Lego.Runtime
 
 open Lego
+open Lego.Validation (VerificationError validateCubical FullValidationResult validateFull)
 
 /-! ## Runtime State -/
 
@@ -39,6 +41,8 @@ structure Runtime where
   leanGrammar : Loader.LoadedGrammar
   /-- Loaded rules for normalization -/
   rules : List Rule
+  /-- Loaded type rules for type checking -/
+  typeRules : List TypeRule := []
 
 /-! ## Bootstrap Loading -/
 
@@ -176,11 +180,16 @@ def loadBootstrap (bootstrapPath : String := defaultBootstrapPath)
               keywords := mergedLeanKeywords
               startProd := "Module.module"  -- Lean files use module start
             }
+            -- Extract type rules from all loaded grammars
+            let legoTypeRules := Loader.extractTypeRules legoAst
+            let rosettaTypeRules := Loader.extractTypeRules rosettaAst
+            let leanTypeRules := Loader.extractTypeRules leanAst
             let runtime : Runtime := {
               grammar := legoGrammar
               rosettaGrammar := rosettaGrammar
               leanGrammar := leanGrammar
               rules := legoRules ++ rosettaRules ++ leanRules
+              typeRules := legoTypeRules ++ rosettaTypeRules ++ leanTypeRules
             }
             return Except.ok runtime
     catch e =>
@@ -258,6 +267,46 @@ def parseLeanFilePath (rt : Runtime) (path : String) : IO (Option Term) := do
 /-- Parse a .lean file from path with detailed error reporting -/
 def parseLeanFilePathE (rt : Runtime) (path : String) : IO (Except ParseError Term) := do
   parseWithGrammarPathE rt.leanGrammar path
+
+/-! ## Validation Functions -/
+
+/-- Validate cubical constructs (verified rules, repr equivalences) in an AST.
+    Returns list of verification errors. -/
+def validateCubicalAST (rt : Runtime) (ast : Term) : List VerificationError :=
+  validateCubical rt.typeRules ast
+
+/-- Parse and validate a .lego file, returning AST and any cubical verification errors -/
+def parseAndValidateLegoFile (rt : Runtime) (content : String)
+    : Except ParseError (Term × List VerificationError) :=
+  match parseLegoFileE rt content with
+  | .error e => .error e
+  | .ok ast => .ok (ast, validateCubicalAST rt ast)
+
+/-- Parse and validate a .lego file from path -/
+def parseAndValidateLegoFilePath (rt : Runtime) (path : String)
+    : IO (Except String (Term × List VerificationError)) := do
+  let content ← IO.FS.readFile path
+  match parseAndValidateLegoFile rt content with
+  | .error e => return .error s!"Parse error in {path}: {e}"
+  | .ok (ast, errors) => return .ok (ast, errors)
+
+/-- Parse and validate, failing if there are cubical verification errors -/
+def parseAndValidateLegoFileStrict (rt : Runtime) (content : String)
+    : Except String Term :=
+  match parseAndValidateLegoFile rt content with
+  | .error e => .error s!"Parse error: {e}"
+  | .ok (ast, []) => .ok ast
+  | .ok (_, errors) =>
+    let errorMsgs := errors.map VerificationError.format
+    .error s!"Verification errors:\n{"\n".intercalate errorMsgs}"
+
+/-- Infer type of a term using the runtime's type rules -/
+def inferTypeRt (rt : Runtime) (t : Term) : Option Term :=
+  inferType rt.typeRules t
+
+/-- Infer type with full condition checking -/
+def inferTypeWithCheck (rt : Runtime) (t : Term) : Option Term :=
+  rt.typeRules.findSome? fun tr => tr.applyWithCheck rt.typeRules t
 
 /-- Load a language from a .lego file with grammar inheritance.
     When a language declares `lang X (Parent) :=`, we:

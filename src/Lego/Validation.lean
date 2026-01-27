@@ -334,6 +334,99 @@ def validateRules (rules : List Rule) : ValidationResult :=
   checkUnboundVars rules ++
   checkConflictingRules rules
 
+/-! ## Verified Rule and Repr Validation -/
+
+/-- Error types for cubical verification -/
+inductive VerificationError where
+  | verifiedRuleInvalidProof (ruleName : String) (expected : String) (got : String) : VerificationError
+  | reprEquivInvalidProof (reprName : String) (expected : String) (got : String) : VerificationError
+  | typeCheckFailed (termDesc : String) (expected : String) (reason : String) : VerificationError
+  deriving Repr, BEq
+
+def VerificationError.format : VerificationError → String
+  | .verifiedRuleInvalidProof name exp got =>
+    s!"ERROR: Verified rule '{name}' proof has wrong type.\n  Expected: Path {exp}\n  Got: {got}"
+  | .reprEquivInvalidProof name exp got =>
+    s!"ERROR: Repr equivalence '{name}' proof has wrong type.\n  Expected: Equiv {exp}\n  Got: {got}"
+  | .typeCheckFailed desc exp reason =>
+    s!"ERROR: Type check failed for {desc}.\n  Expected: {exp}\n  Reason: {reason}"
+
+/-- Verify a "verified rule" declaration:
+    verified rule name : lhs ~> rhs via proof ;
+    The proof must have type: Path lhs rhs -/
+def verifyVerifiedRule (typeRules : List TypeRule) (ruleName : String)
+    (lhs rhs proof : Term) : Option VerificationError :=
+  -- Infer the type of the proof term
+  match inferType typeRules proof with
+  | some (.con "Path" [_, a, b]) =>
+    -- Check that a == lhs and b == rhs
+    if a == lhs && b == rhs then none
+    else some (.verifiedRuleInvalidProof ruleName
+      s!"Path _ {lhs} {rhs}"
+      s!"Path _ {a} {b}")
+  | some other =>
+    some (.verifiedRuleInvalidProof ruleName
+      s!"Path _ {lhs} {rhs}"
+      s!"{other}")
+  | none =>
+    -- Can't infer type - give a soft error
+    some (.typeCheckFailed s!"proof of verified rule '{ruleName}'"
+      s!"Path _ {lhs} {rhs}" "could not infer type of proof term")
+
+/-- Verify a "repr" declaration:
+    repr A ≃ B via equiv ;
+    The equiv must have type: Equiv A B -/
+def verifyReprEquiv (typeRules : List TypeRule) (reprName : String)
+    (typeA typeB equiv : Term) : Option VerificationError :=
+  -- Infer the type of the equivalence term
+  match inferType typeRules equiv with
+  | some (.con "Equiv" [a, b]) =>
+    -- Check that a == typeA and b == typeB
+    if a == typeA && b == typeB then none
+    else some (.reprEquivInvalidProof reprName
+      s!"Equiv {typeA} {typeB}"
+      s!"Equiv {a} {b}")
+  | some other =>
+    some (.reprEquivInvalidProof reprName
+      s!"Equiv {typeA} {typeB}"
+      s!"{other}")
+  | none =>
+    -- Can't infer type - give a soft error
+    some (.typeCheckFailed s!"equivalence proof of repr '{reprName}'"
+      s!"Equiv {typeA} {typeB}" "could not infer type of equivalence term")
+
+/-- Extract verified rules from AST and check them -/
+def validateVerifiedRules (typeRules : List TypeRule) (ast : Term) : List VerificationError :=
+  extractVerifiedRulesFromAST ast |>.filterMap fun (name, lhs, rhs, proof) =>
+    verifyVerifiedRule typeRules name lhs rhs proof
+where
+  extractVerifiedRulesFromAST (t : Term) : List (String × Term × Term × Term) :=
+    match t with
+    | .con "verifiedRule" [.con "ident" [.var name], lhs, rhs, proof] =>
+      [(name, lhs, rhs, proof)]
+    | .con "verifiedRule" [.con "ident" [.lit name], lhs, rhs, proof] =>
+      [(name, lhs, rhs, proof)]
+    | .con _ args => args.flatMap extractVerifiedRulesFromAST
+    | _ => []
+
+/-- Extract repr declarations from AST and check them -/
+def validateReprEquivs (typeRules : List TypeRule) (ast : Term) : List VerificationError :=
+  extractReprEquivsFromAST ast |>.filterMap fun (name, typeA, typeB, equiv) =>
+    verifyReprEquiv typeRules name typeA typeB equiv
+where
+  extractReprEquivsFromAST (t : Term) : List (String × Term × Term × Term) :=
+    match t with
+    | .con "reprEquiv" [.con "ident" [.var name], typeA, typeB, equiv] =>
+      [(name, typeA, typeB, equiv)]
+    | .con "reprEquiv" [.con "ident" [.lit name], typeA, typeB, equiv] =>
+      [(name, typeA, typeB, equiv)]
+    | .con _ args => args.flatMap extractReprEquivsFromAST
+    | _ => []
+
+/-- Validate cubical constructs: verified rules and repr equivalences -/
+def validateCubical (typeRules : List TypeRule) (ast : Term) : List VerificationError :=
+  validateVerifiedRules typeRules ast ++ validateReprEquivs typeRules ast
+
 /-- Main validation entry point -/
 def validate (grammar : HashMap String GrammarExpr) (rules : List Rule) : ValidationResult :=
   validateGrammar grammar ++ validateRules rules
@@ -349,5 +442,23 @@ def ValidationResult.passed (r : ValidationResult) : Bool :=
 /-- Check if validation is clean (no errors or warnings) -/
 def ValidationResult.clean (r : ValidationResult) : Bool :=
   r.errors.isEmpty && r.warnings.isEmpty
+
+/-- Combined validation result including cubical errors -/
+structure FullValidationResult where
+  grammarResult : ValidationResult
+  cubicalErrors : List VerificationError
+  deriving Repr
+
+def FullValidationResult.passed (r : FullValidationResult) : Bool :=
+  r.grammarResult.passed && r.cubicalErrors.isEmpty
+
+def FullValidationResult.formatAll (r : FullValidationResult) : List String :=
+  r.grammarResult.formatAll ++ r.cubicalErrors.map VerificationError.format
+
+/-- Full validation: grammar, rules, and cubical constructs -/
+def validateFull (grammar : HashMap String GrammarExpr) (rules : List Rule)
+    (typeRules : List TypeRule) (ast : Term) : FullValidationResult :=
+  { grammarResult := validate grammar rules
+    cubicalErrors := validateCubical typeRules ast }
 
 end Lego.Validation

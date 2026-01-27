@@ -167,9 +167,9 @@ lean_exe «lego-test-attr» where
   root := `test.lean.TestAttrUnit
   moreLinkArgs := #["-lInit"]
 
--- Validation module tests
+-- Validation module tests (cubical verification, type checking)
 lean_exe «lego-test-validation» where
-  root := `test.lean.TestValidationUnit
+  root := `test.lean.TestValidation
   moreLinkArgs := #["-lInit"]
 
 -- Language registry tests
@@ -185,4 +185,9 @@ lean_exe «lego-test-runtime-unit» where
 -- AttrEval tests
 lean_exe «lego-test-attr-eval» where
   root := `test.lean.TestAttrEvalUnit
+  moreLinkArgs := #["-lInit"]
+
+-- Cubical core tests
+lean_exe «lego-test-cubical-core» where
+  root := `test.lean.TestCubicalCore
   moreLinkArgs := #["-lInit"]

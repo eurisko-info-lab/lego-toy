@@ -35,8 +35,9 @@ token Token
   upper  ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
            | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
            | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' ;
+  -- NOTE: λ is NOT included in greek - it's a symbol for lambda, not an identifier letter
   greek  ::= 'α' | 'β' | 'γ' | 'δ' | 'ε' | 'ζ' | 'η' | 'θ' | 'ι' | 'κ'
-           | 'λ' | 'μ' | 'ν' | 'ξ' | 'ο' | 'π' | 'ρ' | 'σ' | 'τ' | 'υ'
+           | 'μ' | 'ν' | 'ξ' | 'ο' | 'π' | 'ρ' | 'σ' | 'τ' | 'υ'
            | 'φ' | 'χ' | 'ψ' | 'ω'
            | 'Α' | 'Β' | 'Γ' | 'Δ' | 'Ε' | 'Ζ' | 'Η' | 'Θ' | 'Ι' | 'Κ'
            | 'Λ' | 'Μ' | 'Ν' | 'Ξ' | 'Ο' | 'Π' | 'Ρ' | 'Σ' | 'Τ' | 'Υ'
@@ -44,7 +45,7 @@ token Token
   -- Double-struck letters for type theory (𝕀 for interval)
   mathbb ::= '𝕀' | '𝔽' | '𝕊' ;
   -- Math symbols that can appear in identifiers
-  mathsym ::= '≈' | '≅' | '≤' | '≥' | '∘' | '⊗' | '⊙' | '∧' | '∨' | '³' ;
+  mathsym ::= '≈' | '≃' | '≅' | '≤' | '≥' | '∘' | '⊗' | '⊙' | '∧' | '∨' | '³' ;
   alpha  ::= lower | upper | greek | mathbb | mathsym | '_' ;
   symch  ::= '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
            | ':' | ';' | ',' | '.' | '|' | '!' | '?' | '@'
@@ -74,6 +75,7 @@ token Token
 
   -- Keywords (must be tokenized as symbols, not identifiers)
   -- This tells the tokenizer to reserve these words so they aren't parsed as idents
+  -- NOTE: "_" is added as a keyword so it's tokenized as sym "_" for type holes
   keyword ::= "def" | "let" | "in" | "fun" | "where" | "with" | "data"
             | "import" | "opaque" | "private" | "public" | "meta" | "quit"
             | "type" | "coe" | "hcom" | "comp" | "box" | "cap"
@@ -82,7 +84,11 @@ token Token
             | "square" | "funext" | "equiv" | "id-equiv" | "is-equiv" | "fiber"
             | "is-contr" | "is-prop" | "is-set" | "has-hlevel" | "pre"
             | "kan" | "cof" | "and" | "or" | "boundary"
-            | "begin" | "end" | "check" | "print" | "normalize" | "debug" ;
+            | "begin" | "end" | "check" | "print" | "normalize" | "debug"
+            | "contr" | "hsuc" | "pt" | "base" | "loop" | "surf"
+            | "zero" | "suc" | "nil" | "cons" | "inl" | "inr" | "tt" | "ff"
+            | "ret" | "void" | "unit" | "bool" | "nat" | "int" | "list" | "maybe"
+            | "_" ;
 
 -----------------------------------------------------
 -- File Structure
@@ -94,17 +100,22 @@ piece File
 -----------------------------------------------------
 -- Imports: public? import path.to.module
 -- Module paths can have dots: data.bool, prelude.path
--- NOTE: 'data' is tokenized as symbol, so we accept name (ident or keyword)
+-- NOTE: keywords like 'data' can appear in module paths
+-- They are tokenized as symbols, so we accept them as alternatives to ident
 -----------------------------------------------------
 piece Imports
   importdecl ::= "public"? "import" modulepath ;
   modulepath ::= name ("." name)* ;
-  name       ::= ident | "data" | "def" | "import" | "public" | "where" | "let" | "in" | "elim" | "opaque" | "private" | "meta" ;
+  -- Keywords that can appear as module/file names
+  name       ::= ident | "data" | "def" | "import" | "public" | "where" | "let" | "in" 
+               | "elim" | "opaque" | "private" | "meta" | "path" | "type" | "fun"
+               | "or" | "and" | "void" | "unit" | "bool" | "nat" | "int" | "list" | "maybe" ;
 
 -----------------------------------------------------
 -- Definitions: def name (args) : type = body
 -- Modifiers: opaque (skip computation), private (not exported)
 -- Names can contain arrows: binnat→nat, nat→binnat→nat
+-- NOTE: Definition names can be keywords like 'fiber', 'equiv', 'path', etc.
 -----------------------------------------------------
 piece Definitions
   defmodifiers ::= ("opaque" | "private")* ;
@@ -112,11 +123,22 @@ piece Definitions
                | "quit" ;   -- quit halts processing
   defscheme  ::= defargs ":" expr      -- (x : A) : B
                | defargs ;              -- (x : A) with inferred type
-  defident   ::= ident "~" ident | ident ;
+  -- defident can be a keyword that's used as a definition name
+  defident   ::= defidentname "~" ident | defidentname ;
+  defidentname ::= ident | "fiber" | "equiv" | "is-equiv" | "is-contr" | "is-prop" | "is-set"
+                 | "path" | "pathd" | "refl" | "symm" | "trans" | "cong" | "ap" | "apd"
+                 | "funext" | "and" | "or" | "id-equiv" | "square" | "glue" | "box" | "cap"
+                 | "coe" | "hcom" | "comp" | "vin" | "vproj" | "V" 
+                 | "fun" | "pair" | "nat" | "int" | "binnat" | "list" | "bool" | "iso"
+                 | "contr" | "hsuc" | "prop" | "set" | "pt" | "base" | "loop" | "surf"
+                 | "has-hlevel" ;
   -- defname allows: foo, p→, binnat→nat, foo~bar
   -- The trailing ident after → is optional for names like p→
+  -- defnamepart can be a keyword (for names like iso→equiv, fun→pair, nat→binnat)
   defname    ::= defident defnamesuffix* ;
-  defnamesuffix ::= "→" ident | "→" | "~" ident ;
+  defnamepart ::= ident | "equiv" | "pair" | "fun" | "nat" | "binnat" | "int" | "list" | "bool" | "fiber" | "iso"
+                | "contr" | "hsuc" | "prop" | "set" | "pt" | "base" | "loop" | "surf" ;
+  defnamesuffix ::= "→" defnamepart | "→" | "~" ident ;
   defargs    ::= defarg* ;
   defarg     ::= "(" ident+ ":" expr ")" | ident ;
 
@@ -159,14 +181,22 @@ piece Meta
 -- data Name where | Con1 | Con2 (x : A) | ...
 -- data (A : type) ⊢ Name where ...  (parameterized)
 -- Constructors can have boundary constraints for HITs
+-- NOTE: Data type names can be keywords like 'or', 'and', 'fiber', 'equiv'
 -----------------------------------------------------
 piece DataTypes
-  datadecl    ::= "data" dataparams? ident "where" datacons ;
+  datadecl    ::= "data" dataparams? datatypename "where" datacons ;
   dataparams  ::= picell+ righttack ;
   righttack   ::= "⊢" | "!" "-" ;          -- RIGHT_TACK: ⊢ or !-
+  -- Data type names can be keywords (or, and, fiber, equiv, bool, nat, int, void, unit, list, etc.)
+  datatypename ::= ident | "or" | "and" | "fiber" | "equiv" | "is-equiv" | "is-contr" | "is-prop" | "is-set"
+                 | "bool" | "nat" | "int" | "void" | "unit" | "list" | "hlevel" ;
   datacons    ::= datacon* ;
   datacon     ::= "|" dataconname dataconargs constraints? ;
-  dataconname ::= ident | "*" | "★" | "☆" | "ε" | "η" ;
+  -- Constructor names can be keywords (square, pt, base, loop, etc.)
+  dataconname ::= ident | "*" | "★" | "☆" | "ε" | "η" 
+                | "square" | "pt" | "base" | "loop" | "surf" | "glue" | "ret"
+                | "zero" | "suc" | "nil" | "cons" | "inl" | "inr" | "tt" | "ff" | "refl"
+                | "contr" | "hsuc" ;
   dataconargs ::= dataconarg* ;
   dataconarg  ::= "(" ident+ ":" expr ")" ;
 
@@ -203,11 +233,19 @@ piece Lambda
   lampair    ::= "λ" "[" "," "]" "→" expr ; -- Pattern lambda for pairs
   lamelim    ::= "λ" "[" elimcases "]" ;    -- Inline eliminator
   binders    ::= binder+ ;
-  binder     ::= "(" ident+ ":" expr ")"    -- typed: (x : A)
-               | "(" pattern ("," pattern)* ")"  -- tuple: (x), (x, y)
+  -- Binder parsing for PEG: check comma FIRST before consuming pattern.
+  -- Use ident directly in tuple binder since that's the common case.
+  -- For nested patterns like ((x,y),z), they use the last alternative.
+  binder     ::= "(" ident "," identlist ")"     -- simple tuple: (a, b, c)
+               | "(" ident+ ":" expr ")"         -- typed: (x : A) or (x y : A)
+               | "(" pattern "," patternlist ")" -- nested tuple: ((x,y), z)
+               | "(" pattern ")"                 -- single grouping: (x)
                | "[" pattern "," "]"             -- bite: [x,]
                | "[" "," "]"                     -- split: [,]
                | bindername | "_" | "*" ;
+  identlist ::= ident ("," ident)* ;
+  patternlist ::= pattern ("," pattern)* ;
+  patternlist ::= pattern ("," pattern)* ;
   -- bindername allows compound names like x+y'/le/m (IH references as binders)
   bindername ::= ident bindernameplus? ;
   bindernameplus ::= "+" ident | "+" number ;
@@ -227,7 +265,9 @@ piece Let
   letin      ::= "let" letpat binders? (":" expr)? "=" letinvalue "in" expr ;
   letpat     ::= "(" pattern ("," pattern)* ")" | letname ;
   -- letname allows arrows in let bindings: u→inner
-  letname    ::= ident letnamesuffix* ;
+  -- letnameid can be a keyword (for names like square, pt, base, loop)
+  letname    ::= letnameid letnamesuffix* ;
+  letnameid  ::= ident | "square" | "pt" | "base" | "loop" | "surf" ;
   letnamesuffix ::= "→" ident | "→" ;
   letinvalue ::= letin | lam | lamstar | lampair | lamelim | compexpr | hcomexpr | coeexpr | piexpr | sigmaexpr | arrowexpr | appexpr ;
 
@@ -254,7 +294,9 @@ piece Application
   appexpr    ::= projexpr appitem* ;
   appitem    ::= projsuffix | projexpr ;
   projexpr   ::= atom projsuffix* ;
-  projsuffix ::= "." ident | levelspec ;
+  -- projname can be a keyword (for projections like .vproj)
+  projsuffix ::= "." projname | levelspec ;
+  projname   ::= ident | "vproj" ;
 
 -----------------------------------------------------
 -- Atomic Expressions
@@ -316,7 +358,14 @@ piece Atoms
                | "_"
                | number
                | ihident
+               | compoundname
                | ident
+               -- Data type names that are keywords but can be used as type constructors
+               | "or" | "and" | "void" | "unit" | "bool" | "nat" | "int" | "list" | "maybe"
+               -- Constructor names that are keywords but can be used as expressions
+               | "glue" | "ret" | "inl" | "inr" | "zero" | "suc" | "nil" | "cons"
+               | "tt" | "ff" | "base" | "loop" | "pt" | "refl"
+               | "contr" | "hsuc" | "square" | "surf"
                | "*" | "★" | "☆" ;
   pair       ::= "(" expr ("," expr)+ ")" ;
   hole       ::= "?" ;
@@ -324,6 +373,14 @@ piece Atoms
   -- Compound identifiers (IH references): m+n, n+0, m-n, predl~predr
   -- Note: allows ident+number (n+0) and ident+ident (m+n)
   ihident    ::= ident "~" ident | ident "+" number | ident "+" ident | ident "-" ident ;
+  -- Compound names with arrows like path→equiv, iso→equiv, etc.
+  -- These are used both in definitions and expressions
+  compoundname ::= compoundbase "→" compoundpart ;
+  compoundbase ::= ident | "path" | "equiv" | "iso" | "fiber" | "dec" | "prop" | "contr"
+                 | "fun" | "pair" | "nat" | "binnat" | "int" | "list" | "bool" | "biinv"
+                 | "paths" | "stable" | "discrete" | "retract" | "section" | "ha" | "subtype" ;
+  compoundpart ::= ident | "equiv" | "iso" | "path" | "stable" | "prop" | "set"
+                 | "ha" | "over" | "based" | "filler" | "pair" | "fun" ;
 
 -----------------------------------------------------
 -- Path Types
@@ -334,7 +391,7 @@ piece Atoms
 piece PathTypes
   pathtype   ::= "[" dimvars "]" arrowexpr constraints? ;
   pathsugar  ::= "path" levelspec? projexpr projexpr projexpr ;
-  pathdsugar ::= "pathd" projexpr projexpr projexpr ;
+  pathdsugar ::= "pathd" levelspec? projexpr projexpr projexpr ;
   dimvars    ::= ident+ ;
   -- constraints: [| clause | clause | ... ]
   -- A cofib is a disjunction: face | face | ...
@@ -387,10 +444,10 @@ piece VTypes
 -- equiv A B = (f : A → B) × is-equiv A B f
 -----------------------------------------------------
 piece EquivTypes
-  fibertype  ::= "fiber" projexpr projexpr projexpr projexpr ;
-  isequiv    ::= "is-equiv" projexpr projexpr projexpr ;
-  equivtype  ::= "equiv" projexpr projexpr ;
-  idequiv    ::= "id-equiv" projexpr ;
+  fibertype  ::= "fiber" levelspec? projexpr projexpr projexpr projexpr ;
+  isequiv    ::= "is-equiv" levelspec? projexpr projexpr projexpr ;
+  equivtype  ::= "equiv" levelspec? projexpr projexpr ;
+  idequiv    ::= "id-equiv" levelspec? projexpr ;
   isotoequiv ::= "iso→equiv" projexpr projexpr projexpr ;
 
 -----------------------------------------------------
@@ -444,7 +501,14 @@ piece Eliminators
   elimfirst  ::= elimpat "→" expr ;
   elimcase   ::= "|" elimpat "→" expr ;
   -- Symbols like ☆, η can have arguments just like regular constructors
-  elimpat    ::= ident elimpatargs? | "*" | "★" elimpatargs? | "☆" elimpatargs? | "ε" | "η" elimpatargs? ;
+  -- NOTE: elimpat can be a keyword like 'glue', 'ret', 'zero', 'suc', 'base', 'loop', etc.
+  elimpat    ::= elimpatname elimpatargs? | "*" | "★" elimpatargs? | "☆" elimpatargs? | "ε" | "η" elimpatargs? ;
+  -- Constructor names that might be keywords (glue for V-types, base/loop for S1, etc.)
+  -- NOTE: "_" is a keyword (for holes) but also valid as a wildcard pattern in elim
+  elimpatname ::= ident | "_" | "glue" | "box" | "cap" | "refl" | "path" | "coe" | "hcom" | "comp" 
+                | "fiber" | "equiv" | "is-equiv" | "is-contr" | "is-prop" | "is-set" | "trans" | "symm"
+                | "square" | "pt" | "base" | "loop" | "surf" | "ret"
+                | "zero" | "suc" | "nil" | "cons" | "inl" | "inr" | "tt" | "ff" | "contr" | "hsuc" ;
   elimpatargs ::= elimpatarg* ;
   elimpatarg ::= "(" elimpat ("→" ihbinding)? ")" | elimpat ;
   -- IH bindings: n+0 uses number, m+n uses ident
@@ -466,7 +530,8 @@ piece BoxCap
 -----------------------------------------------------
 piece RawTerms
   rawterm    ::= "`" "(" sexprlist ")" ;
-  sexpr      ::= ident | number | "@" | "(" sexprlist ")" ;
+  -- sexpr allows ident, number, @, parenthesized lists, and keywords (for raw terms like `(vin ...))
+  sexpr      ::= ident | number | "@" | "(" sexprlist ")" | keyword ;
   sexprlist  ::= sexpr* ;
 
 -----------------------------------------------------

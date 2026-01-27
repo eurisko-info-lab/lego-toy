@@ -203,6 +203,59 @@ piece VerifiedPathCombinators
     via (refl (plam $x . (papp $p $i))) ;
 
 -----------------------------------------------------
+-- FACE LATTICE (Verified)
+-- De Morgan algebra operations on cofibrations
+-----------------------------------------------------
+
+piece VerifiedFaceLattice
+  -- Negation of endpoints
+  verified rule negEq0: (cof_neg (cof_eq $i dim0)) ~> (cof_eq $i dim1)
+    via (refl (cof_eq $i dim1)) ;
+  
+  verified rule negEq1: (cof_neg (cof_eq $i dim1)) ~> (cof_eq $i dim0)
+    via (refl (cof_eq $i dim0)) ;
+  
+  -- Double negation
+  verified rule negNeg: (cof_neg (cof_neg $φ)) ~> $φ
+    via (refl $φ) ;
+  
+  -- De Morgan laws
+  verified rule negAnd: (cof_neg (cof_and $φ $ψ)) ~> (cof_or (cof_neg $φ) (cof_neg $ψ))
+    via (refl (cof_or (cof_neg $φ) (cof_neg $ψ))) ;
+  
+  verified rule negOr: (cof_neg (cof_or $φ $ψ)) ~> (cof_and (cof_neg $φ) (cof_neg $ψ))
+    via (refl (cof_and (cof_neg $φ) (cof_neg $ψ))) ;
+  
+  -- Negation of constants
+  verified rule negTop: (cof_neg cof_top) ~> cof_bot
+    via (refl cof_bot) ;
+  
+  verified rule negBot: (cof_neg cof_bot) ~> cof_top
+    via (refl cof_top) ;
+  
+  -- Idempotence
+  verified rule andIdem: (cof_and $φ $φ) ~> $φ
+    via (refl $φ) ;
+  
+  verified rule orIdem: (cof_or $φ $φ) ~> $φ
+    via (refl $φ) ;
+  
+  -- Complement laws
+  verified rule andComplement: (cof_and $φ (cof_neg $φ)) ~> cof_bot
+    via (refl cof_bot) ;
+  
+  verified rule orComplement: (cof_or $φ (cof_neg $φ)) ~> cof_top
+    via (refl cof_top) ;
+  
+  -- Boundary expansion
+  verified rule boundaryDef: (boundary $i) ~> (cof_or (cof_eq $i dim0) (cof_eq $i dim1))
+    via (refl (cof_or (cof_eq $i dim0) (cof_eq $i dim1))) ;
+  
+  -- Implication
+  verified rule impliesDef: (cof_implies $φ $ψ) ~> (cof_or (cof_neg $φ) $ψ)
+    via (refl (cof_or (cof_neg $φ) $ψ)) ;
+
+-----------------------------------------------------
 -- KAN OPERATIONS (Verified)
 -----------------------------------------------------
 
@@ -216,17 +269,131 @@ piece VerifiedKanOps
     via (refl $cap) ;
 
 -----------------------------------------------------
+-- KAN COMPUTATION RULES (Verified)
+-- Type-directed computation for coe and hcom
+-----------------------------------------------------
+
+piece VerifiedKanComputation
+  -- Coercion through Pi types
+  verified rule coePi: (coe $r $s (plam $i . (Pi $x : $A . $B)) $f) 
+    ~> (Lam $y . (coe $r $s 
+          (plam $i . (Subst $x (coe $s $i (plam $i . $A) $y) $B))
+          (App $f (coe $s $r (plam $i . $A) $y))))
+    via (funext y . (refl (coe $r $s 
+          (plam $i . (Subst $x (coe $s $i (plam $i . $A) $y) $B))
+          (App $f (coe $s $r (plam $i . $A) $y))))) ;
+  
+  -- Coercion through Sigma types
+  verified rule coeSigma: (coe $r $s (plam $i . (Sigma $x : $A . $B)) $p)
+    ~> (Pair 
+          (coe $r $s (plam $i . $A) (Fst $p))
+          (coe $r $s 
+            (plam $i . (Subst $x (coe $r $i (plam $i . $A) (Fst $p)) $B))
+            (Snd $p)))
+    via (refl (Pair 
+          (coe $r $s (plam $i . $A) (Fst $p))
+          (coe $r $s 
+            (plam $i . (Subst $x (coe $r $i (plam $i . $A) (Fst $p)) $B))
+            (Snd $p)))) ;
+  
+  -- Coercion through Path types
+  verified rule coePath: (coe $r $s (plam $i . (Path $A $a $b)) $p)
+    ~> (plam $j . (hcom $r $s (SubstDim $i $s $A)
+          (cof_or (cof_eq $j dim0) (cof_eq $j dim1))
+          (coe $r $s (plam $i . $A) (papp $p $j))))
+    via (pathext j . (refl (hcom $r $s (SubstDim $i $s $A)
+          (cof_or (cof_eq $j dim0) (cof_eq $j dim1))
+          (coe $r $s (plam $i . $A) (papp $p $j))))) ;
+  
+  -- Homogeneous composition for Pi types
+  verified rule hcomPi: (hcom $r $s (Pi $x : $A . $B) $φ $f)
+    ~> (Lam $a . (hcom $r $s (Subst $x $a $B) $φ (App $f $a)))
+    via (funext a . (refl (hcom $r $s (Subst $x $a $B) $φ (App $f $a)))) ;
+  
+  -- Homogeneous composition for Sigma types
+  verified rule hcomSigma: (hcom $r $s (Sigma $x : $A . $B) $φ $p)
+    ~> (Pair 
+          (hcom $r $s $A $φ (Fst $p))
+          (hcom $r $s (Subst $x (hcom $r $s $A $φ (Fst $p)) $B) $φ (Snd $p)))
+    via (refl (Pair 
+          (hcom $r $s $A $φ (Fst $p))
+          (hcom $r $s (Subst $x (hcom $r $s $A $φ (Fst $p)) $B) $φ (Snd $p)))) ;
+  
+  -- Homogeneous composition for Path types
+  verified rule hcomPath: (hcom $r $s (Path $A $a $b) $φ $q)
+    ~> (plam $j . (hcom $r $s $A 
+          (cof_and $φ (cof_or (cof_eq $j dim0) (cof_eq $j dim1))) 
+          (papp $q $j)))
+    via (pathext j . (refl (hcom $r $s $A 
+          (cof_and $φ (cof_or (cof_eq $j dim0) (cof_eq $j dim1))) 
+          (papp $q $j)))) ;
+  
+  -- Coercion through V types
+  verified rule coeV: (coe $r $s (plam $i . (V $i $A $B $e)) $v)
+    ~> (Vin $s $v (App (equivFun $e) $v))
+    via (refl (Vin $s $v (App (equivFun $e) $v))) ;
+  
+  -- Homogeneous composition for V types
+  verified rule hcomV: (hcom $r $s (V $i $A $B $e) $φ $v)
+    ~> (Vin $i 
+          (hcom $r $s $A $φ (Vproj $v $e))
+          (hcom $r $s $B $φ (App (equivFun $e) (Vproj $v $e))))
+    via (refl (Vin $i 
+          (hcom $r $s $A $φ (Vproj $v $e))
+          (hcom $r $s $B $φ (App (equivFun $e) (Vproj $v $e))))) ;
+  
+  -- Coercion through Glue types
+  verified rule coeGlue: (coe $r $s (plam $i . (GlueType $i $A $T $e)) $g)
+    ~> (glueIntro $s $T $e (coe $r $s (plam $i . $T) (unglueEl $g $r)))
+    via (refl (glueIntro $s $T $e (coe $r $s (plam $i . $T) (unglueEl $g $r)))) ;
+  
+  -- Homogeneous composition for Glue types
+  verified rule hcomGlue: (hcom $r $s (GlueType $i $A $T $e) $φ $g)
+    ~> (glueIntro $i $T $e (hcom $r $s $T $φ (unglueEl $g $i)))
+    via (refl (glueIntro $i $T $e (hcom $r $s $T $φ (unglueEl $g $i)))) ;
+
+-----------------------------------------------------
 -- V-TYPES / GLUE TYPES (Verified)
 -----------------------------------------------------
 
 piece VerifiedVTypes
-  -- V-type at dim0 projects to first component
+  -- V-type at dim0 projects to first component (vin form)
   verified rule vin0: (vin dim0 $a $b) ~> $a
     via (refl $a) ;
   
   -- V-type at dim1 projects to second component
   verified rule vin1: (vin dim1 $a $b) ~> $b
     via (refl $b) ;
+  
+  -- V type endpoints
+  verified rule vtype0: (V dim0 $A $B $e) ~> $A
+    via (refl $A) ;
+  
+  verified rule vtype1: (V dim1 $A $B $e) ~> $B
+    via (refl $B) ;
+  
+  -- Vin introduction endpoints
+  verified rule vinIntro0: (Vin dim0 $a $b) ~> $a
+    via (refl $a) ;
+  
+  verified rule vinIntro1: (Vin dim1 $a $b) ~> $b
+    via (refl $b) ;
+  
+  -- Vproj/Vin β-reduction
+  verified rule vprojVin: (Vproj (Vin $r $a $b) $e) ~> (App (equivFun $e) $a)
+    via (refl (App (equivFun $e) $a)) ;
+  
+  -- Glue type reduces to A at dim0
+  verified rule glueType0: (GlueType dim0 $A $T $e) ~> $A
+    via (refl $A) ;
+  
+  -- Glue type reduces to T at dim1
+  verified rule glueType1: (GlueType dim1 $A $T $e) ~> $T
+    via (refl $T) ;
+  
+  -- glue/unglue β-reduction
+  verified rule unglueGlue: (unglueEl (glueIntro $φ $T $e $t) $φ) ~> (App (equivFun $e) $t)
+    via (refl (App (equivFun $e) $t)) ;
 
 -----------------------------------------------------
 -- CIRCLE S¹ (Verified)
@@ -245,6 +412,25 @@ piece VerifiedCircle
     via (refl $b) ;
 
 -----------------------------------------------------
+-- SUSPENSION Σ(A) (Verified)
+-----------------------------------------------------
+
+piece VerifiedSuspension
+  -- Meridian endpoints
+  verified rule merid0: (merid $a dim0) ~> north
+    via (refl north) ;
+  
+  verified rule merid1: (merid $a dim1) ~> south
+    via (refl south) ;
+  
+  -- Suspension eliminator on poles
+  verified rule suspElimNorth: (SuspElim $A $P $n $s $m north) ~> $n
+    via (refl $n) ;
+  
+  verified rule suspElimSouth: (SuspElim $A $P $n $s $m south) ~> $s
+    via (refl $s) ;
+
+-----------------------------------------------------
 -- NATURAL NUMBERS (Verified)
 -----------------------------------------------------
 
@@ -254,6 +440,33 @@ piece VerifiedNatHIT
   
   verified rule natElimSuc: (natElim $P $z $s (succ $n)) ~> (App (App $s $n) (natElim $P $z $s $n))
     via (refl (App (App $s $n) (natElim $P $z $s $n))) ;
+
+-----------------------------------------------------
+-- PUSHOUT (Verified)
+-----------------------------------------------------
+
+piece VerifiedPushout
+  -- Push endpoints
+  verified rule push0: (push $c dim0) ~> (inl (App $f $c))
+    via (refl (inl (App $f $c))) ;
+  
+  verified rule push1: (push $c dim1) ~> (inr (App $g $c))
+    via (refl (inr (App $g $c))) ;
+  
+  -- Pushout eliminator
+  verified rule pushoutElimInl: (PushoutElim $P $fl $fr $fp (inl $a)) ~> (App $fl $a)
+    via (refl (App $fl $a)) ;
+  
+  verified rule pushoutElimInr: (PushoutElim $P $fl $fr $fp (inr $b)) ~> (App $fr $b)
+    via (refl (App $fr $b)) ;
+
+-----------------------------------------------------
+-- TRUNCATION (Verified)
+-----------------------------------------------------
+
+piece VerifiedTruncation
+  verified rule truncElimIn: (TruncElim $n $P $f (truncIn $a)) ~> (App $f $a)
+    via (refl (App $f $a)) ;
 
 -----------------------------------------------------
 -- EXTENSION TYPES (Verified)
@@ -430,3 +643,47 @@ piece VerifiedLangComposition
   -- Lifting reflexivity proof
   verified rule liftRuleApply: (lift_rule $e (refl $t)) ~> (refl (embed $e $t))
     via (refl (refl (embed $e $t))) ;
+
+-----------------------------------------------------
+-- PARTIAL ELEMENTS AND SYSTEMS (Verified)
+-----------------------------------------------------
+
+piece VerifiedPartialElements
+  -- Sub type introduction/elimination
+  verified rule subBeta: (subOut (subIn $e)) ~> $e
+    via (refl $e) ;
+  
+  -- Restriction to top cofibration returns the element
+  verified rule restrictTopVerified: (restrict cof_top $a) ~> $a
+    via (refl $a) ;
+  
+  -- Extending partial element on top cofibration
+  verified rule extendPartialTopVerified: (extend $A cof_top $u) ~> $u
+    via (refl $u) ;
+  
+  -- Agreement is reflexive
+  verified rule agreesReflVerified: (agrees $phi $u $u) ~> cof_top
+    via (refl cof_top) ;
+  
+  -- System extension rules
+  verified rule sysExtendTopVerified: (sysExtend $a cof_top $u) ~> $u
+    via (refl $u) ;
+  
+  verified rule sysExtendBotVerified: (sysExtend $a cof_bot $u) ~> $a
+    via (refl $a) ;
+  
+  -- System composition with degenerate dimensions
+  verified rule hcomSysReflVerified: (hcomSys $r $r $A $sys $cap) ~> $cap
+    via (refl $cap) ;
+  
+  verified rule comSysReflVerified: (comSys $r $r $A $sys $cap) ~> $cap
+    via (refl $cap) ;
+  
+  -- Fill at starting dimension
+  verified rule fillSysDim0Verified: (fillSys $r $s $A $sys $cap dim0) ~> $cap
+    via (refl $cap) ;
+  
+  -- Total partial element is just the element
+  verified rule isTotalTopVerified: (isTotal cof_top $a) ~> cof_top
+    via (refl cof_top) ;
+

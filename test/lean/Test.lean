@@ -641,7 +641,10 @@ def analyzeLegoFile (rt : Runtime) (path : String) (verbose : Bool := false) : I
 def runLegoFileTests (rt : Runtime) (filter : Option String := none) (verbose : Bool := false) : IO (List TestResult) := do
   let testPath := "./test/lego"
   let examplePath := "./examples"
+  let srcPath := "./src/Lego"
   let allFiles := [
+    s!"{srcPath}/CubicalBase.lego",
+    s!"{srcPath}/Lego.lego",
     s!"{examplePath}/Lambda.lego",
     s!"{examplePath}/Arith.lego",
     s!"{examplePath}/ArithTyped.lego",
@@ -649,7 +652,8 @@ def runLegoFileTests (rt : Runtime) (filter : Option String := none) (verbose : 
     s!"{examplePath}/K.lego",
     s!"{testPath}/Bootstrap.lego",
     s!"{examplePath}/Cubical/syntax/Redtt.lego",
-    s!"{examplePath}/Cubical/syntax/Cooltt.lego"
+    s!"{examplePath}/Cubical/syntax/Cooltt.lego",
+    s!"{examplePath}/CubicalProofs.lego"
   ]
   -- Filter files if a pattern is provided
   let files := match filter with

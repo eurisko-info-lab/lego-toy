@@ -39,6 +39,17 @@ inductive Severity where
   | info    : Severity  -- informational
   deriving Repr, BEq
 
+/-- Source location for error messages -/
+structure SourceLoc where
+  file : String := "<unknown>"
+  line : Nat := 0
+  column : Nat := 0
+  deriving Repr, BEq, Inhabited
+
+def SourceLoc.format (loc : SourceLoc) : String :=
+  if loc.line > 0 then s!"{loc.file}:{loc.line}:{loc.column}"
+  else loc.file
+
 /-- Validation error (blocks execution) -/
 inductive ValidationError where
   | undefinedProduction (ref : String) (source : String) : ValidationError
@@ -46,6 +57,12 @@ inductive ValidationError where
   | unboundVariable (varName : String) (ruleName : String) : ValidationError
   | circularImport (modName : String) : ValidationError
   | invalidSyntax (ctx : String) (message : String) : ValidationError
+  -- Cubical-specific errors
+  | dimensionMismatch (expected : String) (got : String) (ctx : String) : ValidationError
+  | invalidCofibration (cof : String) (reason : String) : ValidationError
+  | pathEndpointMismatch (endpoint : String) (expected : String) (got : String) : ValidationError
+  | systemIncomplete (cof : String) (missingFace : String) : ValidationError
+  | glueMalformed (reason : String) : ValidationError
   deriving Repr, BEq
 
 /-- Validation warning (execution continues) -/
@@ -87,6 +104,22 @@ def ValidationError.format : ValidationError → String
       s!"ERROR: Circular import of '{modName}'"
   | .invalidSyntax ctx msg =>
       s!"ERROR: Invalid syntax in {ctx}: {msg}"
+  -- Cubical-specific errors with helpful context
+  | .dimensionMismatch expected got ctx =>
+      s!"ERROR: Dimension mismatch in {ctx}: expected {expected}, got {got}\n" ++
+      s!"  Hint: Dimensions must be 0, 1, or dimension variables"
+  | .invalidCofibration cof reason =>
+      s!"ERROR: Invalid cofibration '{cof}': {reason}\n" ++
+      s!"  Hint: Valid forms: i=0, i=1, φ∧ψ, φ∨ψ, ⊤, ⊥"
+  | .pathEndpointMismatch endpoint expected got =>
+      s!"ERROR: Path endpoint mismatch at {endpoint}: expected {expected}, got {got}\n" ++
+      s!"  Hint: Path types require p@0 = a and p@1 = b for Path A a b"
+  | .systemIncomplete cof missingFace =>
+      s!"ERROR: Incomplete system for cofibration '{cof}': missing face {missingFace}\n" ++
+      s!"  Hint: Systems must cover all faces of the cofibration"
+  | .glueMalformed reason =>
+      s!"ERROR: Malformed Glue type: {reason}\n" ++
+      s!"  Hint: Glue requires (φ, T, f : T ≃ A) where φ is a cofibration"
 
 def ValidationWarning.format : ValidationWarning → String
   | .conflictingRules r1 r2 reason =>
@@ -503,5 +536,230 @@ def validateFull (grammar : HashMap String GrammarExpr) (rules : List Rule)
   let normRules := rulesToNormRules rules
   { grammarResult := validate grammar rules
     cubicalErrors := validateCubical typeRules normRules ast }
+
+/-! ## Cubical-Specific Validation Helpers -/
+
+/-- Check if a term is a valid dimension (0, 1, or dim var) -/
+def isValidDimension (t : Term) : Bool :=
+  match t with
+  | .con "dim0" [] => true
+  | .con "dim1" [] => true
+  | .var _ => true  -- dimension variable
+  | .con "dimVar" [_] => true
+  | _ => false
+
+/-- Check if a term is a valid cofibration -/
+def isValidCofibration (t : Term) : Bool :=
+  match t with
+  | .con "cof_top" [] => true
+  | .con "cof_bot" [] => true
+  | .con "cof_eq" [i, j] => isValidDimension i && isValidDimension j
+  | .con "cof_and" [φ, ψ] => isValidCofibration φ && isValidCofibration ψ
+  | .con "cof_or" [φ, ψ] => isValidCofibration φ && isValidCofibration ψ
+  | .var _ => true  -- cofibration variable
+  | _ => false
+
+/-- Validate a path type has consistent endpoints -/
+def validatePathType (rules : List (Term × Term)) (pathType : Term) (pathTerm : Term) : Option ValidationError :=
+  match pathType with
+  | .con "Path" [_, a, b] =>
+    let fuel := 1000
+    -- Compute path endpoints by applying @ 0 and @ 1
+    let endpoint0 := Cubical.normalize fuel rules (.con "papp" [pathTerm, .con "dim0" []])
+    let endpoint1 := Cubical.normalize fuel rules (.con "papp" [pathTerm, .con "dim1" []])
+    let aNorm := Cubical.normalize fuel rules a
+    let bNorm := Cubical.normalize fuel rules b
+    -- Check endpoint at 0
+    if endpoint0 != aNorm then
+      some (.pathEndpointMismatch "0" s!"{a}" s!"{endpoint0}")
+    -- Check endpoint at 1
+    else if endpoint1 != bNorm then
+      some (.pathEndpointMismatch "1" s!"{b}" s!"{endpoint1}")
+    else none
+  | _ => some (.invalidSyntax "path type" "expected Path A a b form")
+
+/-- Extract disjunctive faces from a cofibration (the faces that need separate branches) -/
+partial def extractDisjunctiveFaces (cof : Term) : List Term :=
+  match cof with
+  | .con "cof_top" [] => []  -- top is trivially satisfied, no branches needed
+  | .con "cof_bot" [] => []  -- bot is impossible, no branches needed
+  | .con "cof_eq" [i, j] => [.con "cof_eq" [i, j]]  -- single atomic face
+  | .con "cof_and" [φ, _ψ] =>
+    -- Conjunction: a single branch covers both constraints
+    -- Return just the first face (the branch must satisfy both)
+    extractDisjunctiveFaces φ
+  | .con "cof_or" [φ, ψ] =>
+    -- Disjunction: need separate branches for each side
+    extractDisjunctiveFaces φ ++ extractDisjunctiveFaces ψ
+  | _ => [cof]  -- treat as atomic face
+
+/-- Check if two terms are equal up to normalization -/
+def termsEqualNorm (rules : List (Term × Term)) (t1 t2 : Term) : Bool :=
+  let fuel := 1000
+  Cubical.normalize fuel rules t1 == Cubical.normalize fuel rules t2
+
+/-- Check if a branch's cofibration matches a required face -/
+def branchMatchesFace (rules : List (Term × Term)) (branch : Term) (face : Term) : Bool :=
+  match branch with
+  | .con "sysBranch" [branchCof, _] => termsEqualNorm rules branchCof face
+  | .con "sysComp" [branchCof, _] => termsEqualNorm rules branchCof face
+  | _ => false  -- unknown branch format
+
+/-- Extract cofibration from a system branch -/
+def branchCofibration : Term → Option Term
+  | .con "sysBranch" [cof, _] => some cof
+  | .con "sysComp" [cof, _] => some cof
+  | _ => none
+
+/-- Validate a system is complete for its cofibration.
+    Checks:
+    1. All disjunctive faces have corresponding branches
+    2. Branches on overlapping faces are compatible (would need normalization to fully check) -/
+def validateSystem (rules : List (Term × Term)) (cof : Term) (branches : List Term) : Option ValidationError :=
+  if branches.isEmpty then
+    some (.systemIncomplete (toString cof) "no branches provided")
+  else
+    let requiredFaces := extractDisjunctiveFaces cof
+    -- For each required face, check there's a matching branch
+    let branchCofs := branches.filterMap branchCofibration
+    let uncovered := requiredFaces.filter fun face =>
+      not (branchCofs.any fun bc => termsEqualNorm rules bc face)
+    if uncovered.isEmpty then none
+    else some (.systemIncomplete (toString cof)
+      s!"missing branch(es) for face(s): {uncovered.map toString}")
+
+/-- Describe a term for error messages -/
+partial def describeTerm (t : Term) : String :=
+  match t with
+  | .var v => s!"variable '{v}'"
+  | .lit l => s!"literal '{l}'"
+  | .con "lam" _ => "lambda abstraction"
+  | .con "app" [f, _] => s!"application of {describeTerm f}"
+  | .con "Path" _ => "path type"
+  | .con "plam" _ => "path abstraction"
+  | .con "papp" _ => "path application"
+  | .con "refl" _ => "reflexivity proof"
+  | .con "coe" _ => "coercion"
+  | .con "hcom" _ => "homogeneous composition"
+  | .con "Glue" _ => "Glue type"
+  | .con "glue" _ => "glue term"
+  | .con "unglue" _ => "unglue"
+  | .con name args =>
+    if args.isEmpty then s!"'{name}'"
+    else s!"'{name}' with {args.length} arguments"
+
+/-- Suggestion for common errors -/
+def suggestFix (err : ValidationError) : Option String :=
+  match err with
+  | .undefinedProduction ref _ =>
+    some s!"Did you mean to import a piece that defines '{ref}'?"
+  | .unboundVariable v _ =>
+    some s!"Check that ${v} appears in the pattern (left side) of the rule"
+  | .dimensionMismatch _ _ _ =>
+    some "Dimensions must be 0, 1, or bound dimension variables"
+  | .pathEndpointMismatch _ _ _ =>
+    some "Use 'refl' for trivial paths, or check your path construction"
+  | _ => none
+
+/-! ## Glue Type Validation -/
+
+/-- Validate a Glue type has proper structure:
+    Glue [φ ↦ (T, f)] A requires:
+    1. φ is a valid cofibration
+    2. f : T ≃ A (an equivalence) -/
+def validateGlue (typeRules : List TypeRule) (glueType : Term) : Option ValidationError :=
+  match glueType with
+  | .con "Glue" [φ, t, equiv, a] =>
+    -- Check cofibration is valid
+    if !isValidCofibration φ then
+      some (.glueMalformed s!"'{φ}' is not a valid cofibration")
+    else
+      -- Check equivalence type
+      match inferType typeRules equiv with
+      | some (.con "Equiv" [fromTy, toTy]) =>
+        -- Check T matches fromTy and A matches toTy (structurally)
+        if fromTy != t then
+          some (.glueMalformed s!"equivalence domain '{fromTy}' doesn't match T '{t}'")
+        else if toTy != a then
+          some (.glueMalformed s!"equivalence codomain '{toTy}' doesn't match A '{a}'")
+        else none
+      | some other =>
+        some (.glueMalformed s!"expected equivalence, got '{other}'")
+      | none =>
+        -- Can't infer type - soft pass
+        none
+  | .con "Glue" args =>
+    some (.glueMalformed s!"expected 4 arguments (φ, T, equiv, A), got {args.length}")
+  | _ =>
+    some (.invalidSyntax "Glue type" "expected Glue [φ ↦ (T, f)] A form")
+
+/-! ## Comprehensive Cubical Term Validation -/
+
+/-- Recursively validate all cubical constructs in a term -/
+partial def validateCubicalTerm (typeRules : List TypeRule) (rules : List (Term × Term))
+    (t : Term) : List ValidationError :=
+  let selfErrors := match t with
+    -- Validate path types and terms
+    | .con "Path" _ =>
+      -- Path type itself is always valid if well-formed
+      []
+    | .con "plam" [body] =>
+      -- Path lambda: validate body
+      validateCubicalTerm typeRules rules body
+    | .con "papp" [p, r] =>
+      -- Path application: validate dimension
+      let dimErrors := if !isValidDimension r then
+        [ValidationError.dimensionMismatch "dimension" (toString r) "path application"]
+      else []
+      dimErrors ++ validateCubicalTerm typeRules rules p
+
+    -- Validate Glue types
+    | .con "Glue" _ =>
+      match validateGlue typeRules t with
+      | some err => [err]
+      | none => []
+
+    -- Validate systems
+    | .con "sys" (cof :: branches) =>
+      match validateSystem rules cof branches with
+      | some err => [err]
+      | none => []
+
+    -- Validate coercions
+    | .con "coe" [r, s, _, _] =>
+      let rErr := if !isValidDimension r then
+        [ValidationError.dimensionMismatch "dimension" (toString r) "coe start"]
+      else []
+      let sErr := if !isValidDimension s then
+        [ValidationError.dimensionMismatch "dimension" (toString s) "coe end"]
+      else []
+      rErr ++ sErr
+
+    -- Validate hcom
+    | .con "hcom" [r, s, _, φ, _] =>
+      let rErr := if !isValidDimension r then
+        [ValidationError.dimensionMismatch "dimension" (toString r) "hcom start"]
+      else []
+      let sErr := if !isValidDimension s then
+        [ValidationError.dimensionMismatch "dimension" (toString s) "hcom end"]
+      else []
+      let cofErr := if !isValidCofibration φ then
+        [ValidationError.invalidCofibration (toString φ) "invalid in hcom"]
+      else []
+      rErr ++ sErr ++ cofErr
+
+    | _ => []
+
+  -- Recursively validate children
+  let childErrors := match t with
+    | .con _ args => args.flatMap (validateCubicalTerm typeRules rules)
+    | _ => []
+
+  selfErrors ++ childErrors
+
+/-- Extract all cubical constructs from AST and validate them -/
+def validateAllCubicalTerms (typeRules : List TypeRule) (rules : List (Term × Term))
+    (ast : Term) : List ValidationError :=
+  validateCubicalTerm typeRules rules ast
 
 end Lego.Validation

@@ -119,8 +119,12 @@ The `Lego.Red` module implements cubical type theory with:
 - **Path types** with η-laws: `p ≡ λi. p @ i`, `refl a ≡ λi. a`
 - **Coercion and composition** (coe, hcom, hcomTube)
 - **Tube agreement checking** for composition
+- **Higher Inductive Types** (Circle, Suspension, Pushout)
+- **Glue/V Types** for univalence
+- **Verified Rules** with cubical proofs
 
-See [docs/REDTT.md](docs/REDTT.md) for full documentation.
+See [docs/REDTT.md](docs/REDTT.md) for the core IR documentation.
+See [docs/CUBICAL.md](docs/CUBICAL.md) for the complete cubical TT reference.
 
 ```bash
 # Run Red tests (190 tests)

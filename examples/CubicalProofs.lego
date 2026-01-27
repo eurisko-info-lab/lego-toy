@@ -13,6 +13,21 @@
 --
 -- Inherits from VerifiedLego which provides verified versions
 -- of all core rules with cubical proofs.
+--
+-- RULE DESIGN PATTERN:
+-- ====================
+-- Regular rules (`rule`) are used for DEFINITIONAL computation:
+--   - These define how terms compute by definition
+--   - Example: `add zero n ~> n` is the definition of addition
+--   - No proof needed - it's true by construction
+--
+-- Verified rules (`verified rule ... via proof`) are used for THEOREMS:
+--   - These are semantic-preserving transformations that require proof
+--   - Example: `add n zero ~> n` is NOT definitional - requires induction!
+--   - The `via` clause provides a cubical proof term
+--
+-- Key insight: `add zero n = n` is immediate (left zero by definition)
+--              `add n zero = n` requires proof (right zero is a theorem)
 
 lang CubicalProofs (VerifiedLego) :=
 
@@ -35,10 +50,11 @@ piece PathExamples
          | "true"                      → true
          | "false"                     → false ;
 
-  -- Standard evaluation rules
-  rule add_zero: (add zero $n) ~> $n ;
-  rule add_suc: (add (suc $m) $n) ~> (suc (add $m $n)) ;
-  rule append_nil: (append nil $xs) ~> $xs ;
+  -- DEFINITIONAL computation rules (no proof needed)
+  -- These are the defining equations of addition and append
+  rule add_zero: (add zero $n) ~> $n ;           -- Definition: 0 + n = n
+  rule add_suc: (add (suc $m) $n) ~> (suc (add $m $n)) ;  -- Definition: (1+m) + n = 1 + (m+n)
+  rule append_nil: (append nil $xs) ~> $xs ;     -- Definition: [] ++ xs = xs
   rule append_cons: (append (cons $x $xs) $ys) ~> (cons $x (append $xs $ys)) ;
 
 -----------------------------------------------------
@@ -47,22 +63,23 @@ piece PathExamples
 -----------------------------------------------------
 
 piece ReflProofs
-  -- Identity optimization: simplify redundant constructs
-  -- add n zero = n (right identity)
-  
+  -- THEOREM: Right identity for addition (requires induction to prove!)
+  -- Unlike add_zero (left identity), this is NOT definitional.
+  -- add n zero = n must be proven by induction on n.
+  -- 
   -- The proof uses refl: Path Nat (add n zero) (add n zero)
   -- Then we need to show add n zero reduces to n
   verified rule add_zero_right:
     (add $n zero) ~> $n
     via (refl $n) ;
 
-  -- List identity: append xs nil = xs
+  -- THEOREM: Right identity for append (requires induction on xs)
   verified rule append_nil_right:
     (append $xs nil) ~> $xs
     via (refl $xs) ;
 
-  -- Nested optimization: redundant double negation
-  -- not (not b) = b for booleans
+  -- THEOREM: Double negation elimination for booleans
+  -- not (not b) = b requires case analysis on b
   verified rule double_neg:
     (not (not $b)) ~> $b
     via (refl $b) ;

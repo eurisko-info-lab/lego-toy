@@ -8,11 +8,15 @@
   - Kan operations (coe, hcom)
   - NbE (Normalization by Evaluation)
   - Standard reduction rules
+  - Memoization for normalized terms (performance optimization)
 -/
 
 import Lego.Algebra
+import Std.Data.HashMap
 
 namespace Lego
+
+open Std (HashMap)
 
 /-- Configuration for normalization -/
 structure NormalizeConfig where
@@ -22,6 +26,8 @@ structure NormalizeConfig where
   enableBuiltins : Bool := true
   /-- Whether to enable cubical operations -/
   enableCubical : Bool := true
+  /-- Whether to enable memoization -/
+  enableMemo : Bool := true
   deriving Inhabited
 
 /-- Result of normalization with optional trace -/
@@ -31,6 +37,64 @@ structure NormalizeResult where
   /-- Trace of (ruleName, intermediate term) pairs if tracing enabled -/
   trace : List (String × Term) := []
   deriving Inhabited
+
+/-! ## Memoization Cache -/
+
+/-- Global memoization cache for normalized terms.
+    Uses term hash for fast lookup. -/
+structure NormCache where
+  /-- Map from term hash to normalized term -/
+  cache : HashMap UInt64 Term := HashMap.emptyWithCapacity
+  /-- Cache hits counter -/
+  hits : Nat := 0
+  /-- Cache misses counter -/
+  misses : Nat := 0
+
+instance : Inhabited NormCache where
+  default := { cache := HashMap.emptyWithCapacity, hits := 0, misses := 0 }
+
+/-- Hash a term for memoization -/
+partial def termHash (t : Term) : UInt64 :=
+  match t with
+  | .var s => hash s
+  | .lit s => hash s + 1
+  | .con name args =>
+    let nameHash := hash name
+    args.foldl (init := nameHash) fun acc arg => acc * 31 + termHash arg
+
+/-- Lookup in cache -/
+def NormCache.lookup (cache : NormCache) (t : Term) : Option Term :=
+  cache.cache.get? (termHash t)
+
+/-- Insert into cache -/
+def NormCache.insert (cache : NormCache) (t : Term) (result : Term) : NormCache :=
+  { cache with cache := cache.cache.insert (termHash t) result }
+
+/-! ## Rule Indexing -/
+
+/-- Rule index: maps head constructor to applicable rules -/
+abbrev RuleIndex := HashMap String (List (Term × Term))
+
+/-- Get head constructor of a term (for indexing) -/
+def getHead (t : Term) : Option String :=
+  match t with
+  | .con name _ => some name
+  | _ => none
+
+/-- Build index from rules for O(1) lookup -/
+def buildRuleIndex (rules : List (Term × Term)) : RuleIndex :=
+  rules.foldl (init := HashMap.emptyWithCapacity) fun idx (pat, tmpl) =>
+    match getHead pat with
+    | some head =>
+      let existing := idx.getD head []
+      idx.insert head ((pat, tmpl) :: existing)
+    | none => idx
+
+/-- Lookup rules by head constructor -/
+def lookupRules (index : RuleIndex) (t : Term) : List (Term × Term) :=
+  match getHead t with
+  | some head => index.getD head []
+  | none => []
 
 /-! ## Cubical Operations -/
 
@@ -365,8 +429,32 @@ def nbeNormalize (t : Term) : Term :=
 
 /-! ## Single-Step Reduction -/
 
+/-- Fast check: is term already a value (no redexes)? -/
+def isValue (t : Term) : Bool :=
+  match t with
+  | .var _ => true
+  | .lit _ => true
+  | .con "lam" _ => true        -- λ is a value
+  | .con "plam" _ => true       -- path λ is a value
+  | .con "pair" _ => true       -- pairs are values
+  | .con "refl" _ => true       -- refl is a value
+  | .con "idEquiv" _ => true    -- idEquiv is a value
+  | .con "dim0" [] => true      -- dimension endpoints are values
+  | .con "dim1" [] => true
+  | .con "cof_top" [] => true   -- cofibration constants
+  | .con "cof_bot" [] => true
+  | .con "base" [] => true      -- HIT points
+  | .con "north" [] => true
+  | .con "south" [] => true
+  | .con "zero" [] => true      -- natural numbers
+  | .con "suc" _ => true
+  | _ => false
+
 /-- One step of reduction (built-in rules) -/
 partial def step (rules : List (Term × Term)) (t : Term) : Option Term :=
+  -- Fast path: values don't reduce
+  if isValue t then none
+  else
   -- Try β-reduction first
   match t with
   -- Lambda calculus
@@ -622,6 +710,38 @@ partial def normalize (fuel : Nat) (rules : List (Term × Term)) (t : Term) : Te
         let args' := args.map (normalize fuel rules)
         if args' == args then t else .con name args'
       | _ => t
+
+/-- Normalize with memoization for better performance on repeated subterms.
+    This is especially important for cubical type theory where the same
+    cofibration or dimension expression may appear many times. -/
+partial def normalizeMemo (fuel : Nat) (rules : List (Term × Term))
+    (cache : NormCache) (t : Term) : Term × NormCache :=
+  if fuel == 0 then (t, cache)
+  else
+    -- Check cache first
+    match cache.lookup t with
+    | some result => (result, { cache with hits := cache.hits + 1 })
+    | none =>
+      let cache' := { cache with misses := cache.misses + 1 }
+      -- Try one step
+      match step rules t with
+      | some t' =>
+        let (result, cache'') := normalizeMemo (fuel - 1) rules cache' t'
+        (result, cache''.insert t result)
+      | none =>
+        -- Try normalizing subterms
+        match t with
+        | .con name args =>
+          let (args', cache'') := args.foldl (init := ([], cache')) fun (acc, c) arg =>
+            let (arg', c') := normalizeMemo fuel rules c arg
+            (acc ++ [arg'], c')
+          let result := if args' == args then t else .con name args'
+          (result, cache''.insert t result)
+        | _ => (t, cache'.insert t t)
+
+/-- Normalize with memoization (simplified interface) -/
+def normalizeWithCache (fuel : Nat) (rules : List (Term × Term)) (t : Term) : Term :=
+  (normalizeMemo fuel rules {} t).1
 
 /-! ## Conversion Checking -/
 

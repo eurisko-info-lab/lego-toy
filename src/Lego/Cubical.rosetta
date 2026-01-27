@@ -1,0 +1,258 @@
+-----------------------------------------------------
+-- Cubical.rosetta: Cubical Type Theory in Rosetta
+--
+-- This specifies the cubical TT primitives for multi-target
+-- code generation (Lean, Scala, Haskell, Rust).
+--
+-- Covers: Interval, Cofibrations, Paths, Kan ops, Equivalences
+-----------------------------------------------------
+
+import Lego;
+
+-----------------------------------------------------
+-- Interval
+-- The abstract interval I with endpoints 0 and 1
+-----------------------------------------------------
+
+adt Dim {
+  Dim0 : Dim,
+  Dim1 : Dim,
+  DimVar : Nat -> Dim,
+  DimNeg : Dim -> Dim,
+  DimMax : Dim -> Dim -> Dim,
+  DimMin : Dim -> Dim -> Dim
+}
+
+rewrite dimNeg0: (DimNeg Dim0) ~> Dim1 ;
+rewrite dimNeg1: (DimNeg Dim1) ~> Dim0 ;
+rewrite dimNegNeg: (DimNeg (DimNeg $r)) ~> $r ;
+rewrite dimMax0: (DimMax Dim0 $r) ~> $r ;
+rewrite dimMax1: (DimMax Dim1 $r) ~> Dim1 ;
+rewrite dimMin0: (DimMin Dim0 $r) ~> Dim0 ;
+rewrite dimMin1: (DimMin Dim1 $r) ~> $r ;
+
+-----------------------------------------------------
+-- Cofibrations
+-- Face formulas for partial elements
+-----------------------------------------------------
+
+adt Cof {
+  CofTop : Cof,
+  CofBot : Cof,
+  CofEq : Dim -> Dim -> Cof,
+  CofAnd : Cof -> Cof -> Cof,
+  CofOr : Cof -> Cof -> Cof,
+  CofNeg : Cof -> Cof
+}
+
+-- Equality simplification
+rewrite cofEqRefl: (CofEq $r $r) ~> CofTop ;
+rewrite cofEq01: (CofEq Dim0 Dim1) ~> CofBot ;
+rewrite cofEq10: (CofEq Dim1 Dim0) ~> CofBot ;
+
+-- And/Or with top/bot
+rewrite cofAndTop: (CofAnd CofTop $phi) ~> $phi ;
+rewrite cofAndBot: (CofAnd CofBot $phi) ~> CofBot ;
+rewrite cofOrTop: (CofOr CofTop $phi) ~> CofTop ;
+rewrite cofOrBot: (CofOr CofBot $phi) ~> $phi ;
+
+-- De Morgan laws
+rewrite cofNegTop: (CofNeg CofTop) ~> CofBot ;
+rewrite cofNegBot: (CofNeg CofBot) ~> CofTop ;
+rewrite cofNegNeg: (CofNeg (CofNeg $phi)) ~> $phi ;
+rewrite cofNegAnd: (CofNeg (CofAnd $phi $psi)) ~> (CofOr (CofNeg $phi) (CofNeg $psi)) ;
+rewrite cofNegOr: (CofNeg (CofOr $phi $psi)) ~> (CofAnd (CofNeg $phi) (CofNeg $psi)) ;
+
+-- Lattice laws
+rewrite cofAndIdem: (CofAnd $phi $phi) ~> $phi ;
+rewrite cofOrIdem: (CofOr $phi $phi) ~> $phi ;
+rewrite cofAndComplement: (CofAnd $phi (CofNeg $phi)) ~> CofBot ;
+rewrite cofOrComplement: (CofOr $phi (CofNeg $phi)) ~> CofTop ;
+
+-----------------------------------------------------
+-- Path Types
+-- Identity types with computational content
+-----------------------------------------------------
+
+adt PathExpr {
+  PathType : Term -> Term -> Term -> PathExpr,
+  PLam : PathExpr -> PathExpr,
+  PApp : PathExpr -> Dim -> PathExpr,
+  Refl : Term -> PathExpr
+}
+
+rewrite pappPlam: (PApp (PLam $body) $r) ~> (substDim 0 $r $body) ;
+rewrite pappRefl: (PApp (Refl $a) $r) ~> $a ;
+
+-----------------------------------------------------
+-- Path Combinators
+-----------------------------------------------------
+
+adt PathCombinator {
+  Sym : PathExpr -> PathCombinator,
+  Trans : PathExpr -> PathExpr -> PathCombinator,
+  Cong : Term -> PathExpr -> PathCombinator,
+  FunExt : Term -> PathCombinator
+}
+
+rewrite symRefl: (Sym (Refl $a)) ~> (Refl $a) ;
+rewrite transReflL: (Trans (Refl $a) $q) ~> $q ;
+rewrite transReflR: (Trans $p (Refl $b)) ~> $p ;
+rewrite congRefl: (Cong $f (Refl $a)) ~> (Refl (App $f $a)) ;
+
+-----------------------------------------------------
+-- Kan Operations
+-- Coercion and homogeneous composition
+-----------------------------------------------------
+
+adt KanOp {
+  Coe : Dim -> Dim -> Term -> Term -> KanOp,
+  Hcom : Dim -> Dim -> Term -> Cof -> Term -> KanOp
+}
+
+-- Degenerate cases
+rewrite coeRefl: (Coe $r $r $A $a) ~> $a ;
+rewrite hcomRefl: (Hcom $r $r $A $phi $cap) ~> $cap ;
+
+-----------------------------------------------------
+-- Equivalences
+-----------------------------------------------------
+
+adt Equiv {
+  EquivType : Term -> Term -> Equiv,
+  IdEquiv : Term -> Equiv,
+  CompEquiv : Equiv -> Equiv -> Equiv,
+  InvEquiv : Equiv -> Equiv,
+  EquivFun : Equiv -> Equiv,
+  Ua : Equiv -> Equiv
+}
+
+rewrite idEquivFun: (EquivFun (IdEquiv $A)) ~> (Lam x . x) ;
+rewrite uaRefl: (Ua (IdEquiv $A)) ~> (Refl $A) ;
+rewrite invEquivId: (InvEquiv (IdEquiv $A)) ~> (IdEquiv $A) ;
+rewrite invEquivInv: (InvEquiv (InvEquiv $e)) ~> $e ;
+rewrite compEquivIdL: (CompEquiv (IdEquiv $A) $e) ~> $e ;
+rewrite compEquivIdR: (CompEquiv $e (IdEquiv $B)) ~> $e ;
+
+-----------------------------------------------------
+-- Glue Types (for univalence)
+-----------------------------------------------------
+
+adt Glue {
+  GlueType : Term -> System -> Glue,
+  GlueIn : Term -> Term -> Glue,
+  Unglue : Glue -> Glue
+}
+
+rewrite unglueGlue: (Unglue (GlueIn $a $t)) ~> $a ;
+
+-----------------------------------------------------
+-- V Types (simpler univalence)
+-----------------------------------------------------
+
+adt VType {
+  V : Dim -> Term -> Term -> Equiv -> VType,
+  Vin : Dim -> Term -> Term -> VType,
+  Vproj : VType -> VType
+}
+
+rewrite vtype0: (V Dim0 $A $B $e) ~> $A ;
+rewrite vtype1: (V Dim1 $A $B $e) ~> $B ;
+rewrite vin0: (Vin Dim0 $a $b) ~> $a ;
+rewrite vin1: (Vin Dim1 $a $b) ~> $b ;
+
+-----------------------------------------------------
+-- Higher Inductive Types
+-----------------------------------------------------
+
+-- Circle
+adt Circle {
+  S1 : Circle,
+  Base : Circle,
+  Loop : Dim -> Circle
+}
+
+rewrite loop0: (Loop Dim0) ~> Base ;
+rewrite loop1: (Loop Dim1) ~> Base ;
+
+-- Suspension
+adt Susp (A : Type) {
+  SuspType : Term -> Susp,
+  North : Susp,
+  South : Susp,
+  Merid : Term -> Dim -> Susp
+}
+
+rewrite merid0: (Merid $a Dim0) ~> North ;
+rewrite merid1: (Merid $a Dim1) ~> South ;
+
+-- Pushout  
+adt Pushout (A B C : Type) {
+  PushoutType : Term -> Term -> Term -> Term -> Term -> Pushout,
+  Inl : Term -> Pushout,
+  Inr : Term -> Pushout,
+  Push : Term -> Dim -> Pushout
+}
+
+-----------------------------------------------------
+-- Partial Elements and Systems
+-----------------------------------------------------
+
+adt Partial {
+  PartialType : Cof -> Term -> Partial,
+  SubType : Term -> Cof -> Term -> Partial,
+  SubIn : Term -> Partial,
+  SubOut : Partial -> Partial
+}
+
+rewrite subBeta: (SubOut (SubIn $e)) ~> $e ;
+
+adt System {
+  SysEmpty : System,
+  SysExtend : System -> Cof -> Term -> System,
+  SysProj : System -> Cof -> System
+}
+
+rewrite sysExtendTop: (SysExtend $a CofTop $u) ~> $u ;
+rewrite sysExtendBot: (SysExtend $a CofBot $u) ~> $a ;
+
+-----------------------------------------------------
+-- System Composition
+-----------------------------------------------------
+
+adt SysComp {
+  HcomSys : Dim -> Dim -> Term -> System -> Term -> SysComp,
+  ComSys : Dim -> Dim -> Term -> System -> Term -> SysComp,
+  FillSys : Dim -> Dim -> Term -> System -> Term -> Dim -> SysComp
+}
+
+rewrite hcomSysRefl: (HcomSys $r $r $A $sys $cap) ~> $cap ;
+rewrite comSysRefl: (ComSys $r $r $A $sys $cap) ~> $cap ;
+
+-----------------------------------------------------
+-- Verified Rules
+-- Rules with proof terms
+-----------------------------------------------------
+
+adt VerifiedRule {
+  Verified : String -> Term -> Term -> PathExpr -> VerifiedRule
+}
+
+-- A verified rule is valid when the proof term has the right type
+-- proof : Path (resultType pattern) (reduce pattern) (reduce template)
+
+-----------------------------------------------------
+-- Tests
+-----------------------------------------------------
+
+test "dimNeg0": (DimNeg Dim0) ~~> Dim1 ;
+test "dimNeg1": (DimNeg Dim1) ~~> Dim0 ;
+test "cofEqRefl": (CofEq Dim0 Dim0) ~~> CofTop ;
+test "cofEq01": (CofEq Dim0 Dim1) ~~> CofBot ;
+test "cofNegTop": (CofNeg CofTop) ~~> CofBot ;
+test "cofNegBot": (CofNeg CofBot) ~~> CofTop ;
+test "coeRefl": (Coe Dim0 Dim0 A a) ~~> a ;
+test "hcomRefl": (Hcom Dim0 Dim0 A phi cap) ~~> cap ;
+test "uaRefl": (Ua (IdEquiv A)) ~~> (Refl A) ;
+test "loop0": (Loop Dim0) ~~> Base ;
+test "subBeta": (SubOut (SubIn e)) ~~> e ;

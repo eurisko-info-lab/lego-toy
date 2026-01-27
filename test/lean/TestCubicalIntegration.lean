@@ -274,6 +274,86 @@ def testNatTypes (typeRules : List TypeRule) : IO Bool := do
 
   return natTy.isSome || zeroTy.isSome || sucTy.isSome || true
 
+/-! ## Higher Inductive Type Tests -/
+
+/-- Build circle base point -/
+def coreBase : Term := .con "base" []
+
+/-- Build loop constructor -/
+def coreLoop (r : Term) : Term := .con "loop" [r]
+
+/-- Build circle eliminator -/
+def coreCircleElim (p : Term) (b : Term) (l : Term) (x : Term) : Term :=
+  .con "circleElim" [p, b, l, x]
+
+/-- Test: loop endpoints
+    loop 0 → base
+    loop 1 → base -/
+def testLoopEndpoints (rules : List Rule) : IO Bool := do
+  let loop0 := coreLoop coreDim0
+  let norm0 := normalizeWithRulesList rules loop0
+  IO.println s!"    loop 0 = {norm0}"
+
+  let loop1 := coreLoop coreDim1
+  let norm1 := normalizeWithRulesList rules loop1
+  IO.println s!"    loop 1 = {norm1}"
+
+  return norm0 == coreBase && norm1 == coreBase
+
+/-- Test: circle eliminator at base
+    circleElim P b l base → b -/
+def testCircleElimBase (rules : List Rule) : IO Bool := do
+  let elim := coreCircleElim (.var "P") (.lit "b") (.var "l") coreBase
+  let norm := normalizeWithRulesList rules elim
+  IO.println s!"    circleElim P b l base = {norm}"
+  return norm == .lit "b"
+
+/-- Test: Nat eliminator at zero
+    natElim P z s zero → z -/
+def testNatElimZero (rules : List Rule) : IO Bool := do
+  let elim := .con "natElim" [.var "P", .lit "z", .var "s", .con "zero" []]
+  let norm := normalizeWithRulesList rules elim
+  IO.println s!"    natElim P z s zero = {norm}"
+  return norm == .lit "z"
+
+/-- Test: Nat eliminator at suc
+    natElim P z s (suc n) → s n (natElim P z s n)
+    Note: may normalize to (elim nat ...) form -/
+def testNatElimSuc (rules : List Rule) : IO Bool := do
+  let n := .lit "n"
+  let sucN := .con "suc" [n]
+  let elim := .con "natElim" [.var "P", .lit "z", .var "s", sucN]
+  let norm := normalizeWithRulesList rules elim
+  IO.println s!"    natElim P z s (suc n) = {norm}"
+  -- Result should be (app (app s n) (natElim/elim P z s n))
+  match norm with
+  | .con "app" [.con "app" [.var "s", _], .con "natElim" _] => return true
+  | .con "app" [.con "app" [.var "s", _], .con "elim" _] => return true  -- HIT form
+  | _ => return false
+
+/-- Test: V-type boundary
+    vin 0 a b → a
+    vin 1 a b → b -/
+def testVinBoundary (rules : List Rule) : IO Bool := do
+  let vin0 := .con "vin" [coreDim0, .lit "a", .lit "b"]
+  let norm0 := normalizeWithRulesList rules vin0
+  IO.println s!"    vin 0 a b = {norm0}"
+
+  let vin1 := .con "vin" [coreDim1, .lit "a", .lit "b"]
+  let norm1 := normalizeWithRulesList rules vin1
+  IO.println s!"    vin 1 a b = {norm1}"
+
+  return norm0 == .lit "a" && norm1 == .lit "b"
+
+/-- Test: Sub type beta
+    subOut (subIn e) → e -/
+def testSubBeta (rules : List Rule) : IO Bool := do
+  let subInE := .con "subIn" [.lit "e"]
+  let subOut := .con "subOut" [subInE]
+  let norm := normalizeWithRulesList rules subOut
+  IO.println s!"    subOut (subIn e) = {norm}"
+  return norm == .lit "e"
+
 /-! ## Main Test Runner -/
 
 def runAllTests : IO UInt32 := do
@@ -373,6 +453,40 @@ def runAllTests : IO UInt32 := do
   printResult natTest
   total := total + 1
   if natTest.passed then passed := passed + 1
+
+  -- Higher Inductive Type tests
+  IO.println ""
+  IO.println "── Higher Inductive Type Tests ──"
+
+  let loopTest ← runTest "loop_endpoints" (testLoopEndpoints allRules)
+  printResult loopTest
+  total := total + 1
+  if loopTest.passed then passed := passed + 1
+
+  let circElimTest ← runTest "circle_elim_base" (testCircleElimBase allRules)
+  printResult circElimTest
+  total := total + 1
+  if circElimTest.passed then passed := passed + 1
+
+  let natElimZTest ← runTest "nat_elim_zero" (testNatElimZero allRules)
+  printResult natElimZTest
+  total := total + 1
+  if natElimZTest.passed then passed := passed + 1
+
+  let natElimSTest ← runTest "nat_elim_suc" (testNatElimSuc allRules)
+  printResult natElimSTest
+  total := total + 1
+  if natElimSTest.passed then passed := passed + 1
+
+  let vinTest ← runTest "vin_boundary" (testVinBoundary allRules)
+  printResult vinTest
+  total := total + 1
+  if vinTest.passed then passed := passed + 1
+
+  let subTest ← runTest "sub_beta" (testSubBeta allRules)
+  printResult subTest
+  total := total + 1
+  if subTest.passed then passed := passed + 1
 
   -- Summary
   IO.println ""

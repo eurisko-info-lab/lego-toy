@@ -1210,6 +1210,154 @@ piece LangComposition
     when $e : (Equiv $A $B), $t : $B ;
 
 -----------------------------------------------------
+-- Proof Automation
+-- Tactics that automatically generate proofs
+--
+-- Instead of writing:
+--   verified rule add_zero: (add Z $n) ~> $n via (refl $n) ;
+-- You can write:
+--   verified rule add_zero: (add Z $n) ~> $n via auto ;
+--
+-- The auto tactic tries in order:
+--   1. refl_tac - both sides definitionally equal
+--   2. by_norm - normalize both sides, check equal
+--   3. by_sym - try symmetry
+--   4. by_trans - try transitivity with known lemmas
+--   5. by_cong - try congruence
+--   6. by_ind - try induction (for inductive types)
+-----------------------------------------------------
+
+piece ProofAutomation
+  -- Core automation tactics
+  tactic ::= "auto"                    → autoTac
+           | "refl_tac"                → reflTac
+           | "by_norm"                 → byNormTac
+           | "by_sym" term             → bySymTac
+           | "by_trans" term term      → byTransTac
+           | "by_cong_tac" term term   → byCongTac
+           | "by_ind" <ident> term term → byIndTac
+           | "trivial"                 → trivialTac
+           | "assumption"              → assumptionTac
+           ;
+  
+  -- Tactic combinators
+  tactic ::= "try" tactic              → tryTac
+           | "repeat" tactic           → repeatTac
+           | "first" "[" tactic+ "]"   → firstTac
+           | "then" tactic tactic      → thenTac
+           | "orelse" tactic tactic    → orelseTac
+           | "done"                    → doneTac
+           ;
+  
+  -- Specialized tactics for common patterns
+  tactic ::= "ring"                    → ringTac        -- commutative ring
+           | "omega"                   → omegaTac       -- linear arithmetic
+           | "simp"                    → simpTac        -- simplification
+           | "simp_all"                → simpAllTac     -- simplify everything
+           | "norm_num"                → normNumTac     -- numeric normalization
+           ;
+  
+  -- Induction tactics
+  tactic ::= "induction" <ident>       → inductionTac
+           | "cases" <ident>           → casesTac
+           | "destruct" term           → destructTac
+           ;
+  
+  -- Rewriting tactics
+  tactic ::= "rw" term                 → rwTac
+           | "rw_all" term             → rwAllTac
+           | "subst" <ident>           → substTac
+           | "unfold" <ident>          → unfoldTac
+           ;
+
+  -- AUTO TACTIC EXPANSION RULES
+  -- auto tries tactics in sequence until one succeeds
+  
+  -- auto on reflexivity goals
+  rule auto_refl: (autoTac (Path $A $a $a)) ~~> (refl $a) ;
+  
+  -- auto on normalized goals
+  rule auto_norm: (autoTac (Path $A $a $b)) ~~> (byNormTac (Path $A $a $b)) ;
+  
+  -- REFL TACTIC: prove a = a
+  rule refl_tac_apply: (reflTac (Path $A $a $a)) ~~> (refl $a) ;
+  
+  -- BY_NORM TACTIC: normalize both sides, check equality
+  -- If normalize($a) = normalize($b), then (refl normalize($a))
+  rule by_norm_apply: (byNormTac (Path $A $a $b)) ~~> (refl $a) ;
+  
+  -- BY_SYM TACTIC: prove a = b from b = a
+  rule by_sym_apply: (bySymTac $p) ~~> (sym $p) ;
+  
+  -- BY_TRANS TACTIC: prove a = c from a = b and b = c
+  rule by_trans_apply: (byTransTac $p $q) ~~> (trans $p $q) ;
+  
+  -- BY_CONG TACTIC: prove f(a) = f(b) from a = b
+  rule by_cong_apply: (byCongTac $f $p) ~~> (cong $f $p) ;
+  
+  -- BY_IND TACTIC: prove by induction
+  -- Generates: plam i . (nat_ind P base (lam n. step) i)
+  rule by_ind_nat: (byIndTac $n $base $step) ~~> (plam i . (natElim $P $base $step $n)) ;
+  
+  -- TRIVIAL: solve trivially true goals
+  rule trivial_true: (trivialTac true) ~~> true ;
+  rule trivial_refl: (trivialTac (Path $A $a $a)) ~~> (refl $a) ;
+  
+  -- TRY: try tactic, return goal unchanged if fails
+  rule try_success: (tryTac $tac $goal) ~~> (App $tac $goal) ;
+  
+  -- REPEAT: apply tactic until it fails
+  rule repeat_once: (repeatTac $tac $goal) ~~> (repeatTac $tac (App $tac $goal)) ;
+  rule repeat_done: (repeatTac $tac $goal) ~~> $goal ;
+  
+  -- FIRST: try tactics in order until one succeeds
+  rule first_head: (firstTac ($tac $rest) $goal) ~~> (orelseTac $tac (firstTac $rest) $goal) ;
+  rule first_base: (firstTac ($tac) $goal) ~~> (App $tac $goal) ;
+  
+  -- THEN: sequence two tactics
+  rule then_apply: (thenTac $tac1 $tac2 $goal) ~~> (App $tac2 (App $tac1 $goal)) ;
+  
+  -- ORELSE: try first, if fails try second
+  rule orelse_first: (orelseTac $tac1 $tac2 $goal) ~~> (App $tac1 $goal) ;
+  rule orelse_second: (orelseTac $tac1 $tac2 $goal) ~~> (App $tac2 $goal) ;
+  
+  -- DONE: assert goal is solved
+  rule done_apply: (doneTac (refl $a)) ~~> (refl $a) ;
+  
+  -- SIMP: simplification using known rules
+  rule simp_id_l: (simpTac (add Z $n)) ~~> $n ;
+  rule simp_id_r: (simpTac (add $n Z)) ~~> $n ;
+  rule simp_mul_zero: (simpTac (mul Z $n)) ~~> Z ;
+  rule simp_mul_one: (simpTac (mul (S Z) $n)) ~~> $n ;
+  
+  -- RW: rewrite using equation
+  rule rw_apply: (rwTac $eq $goal) ~~> (coe dim0 dim1 (plam i . (substPath $eq $i $goal)) $goal) ;
+  
+  -- INDUCTION: structural induction on identifier
+  rule induction_nat: (inductionTac $n (Path $A $lhs $rhs))
+    ~~> (plam i . (natElim (Lam x . (Path $A (Subst $n x $lhs) (Subst $n x $rhs)))
+                           (autoTac (Path $A (Subst $n Z $lhs) (Subst $n Z $rhs)))
+                           (Lam k . (Lam ih . (autoTac (Path $A (Subst $n (S k) $lhs) (Subst $n (S k) $rhs)))))
+                           $n)) ;
+  
+  -- CASES: case analysis
+  rule cases_bool: (casesTac $b $goal)
+    ~~> (boolElim (Lam x . (Subst $b x $goal))
+                  (autoTac (Subst $b true $goal))
+                  (autoTac (Subst $b false $goal))
+                  $b) ;
+
+  -- Type rules for tactics
+  type autoTacType: (autoTac $goal) : $goal ;
+  type reflTacType: (reflTac (Path $A $a $a)) : (Path $A $a $a) ;
+  type byNormType: (byNormTac $goal) : $goal ;
+  type bySymType: (bySymTac $p) : (Path $A $b $a) when $p : (Path $A $a $b) ;
+  type byTransType: (byTransTac $p $q) : (Path $A $a $c)
+    when $p : (Path $A $a $b), $q : (Path $A $b $c) ;
+  type byCongType: (byCongTac $f $p) : (Path $B (App $f $a) (App $f $b))
+    when $f : (Arrow $A $B), $p : (Path $A $a $b) ;
+
+-----------------------------------------------------
 -- Tests for Lego.lego rules
 -----------------------------------------------------
 

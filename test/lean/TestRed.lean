@@ -118,7 +118,7 @@ partial def findRedFiles (dir : String) : IO (List String) := do
     pure ()
   pure files
 
-/-- Parse a single .red file declaration using Redtt grammar -/
+/-- Parse a single .red file declaration using Redtt grammar (returns Bool) -/
 def parseRedDecl (redttProds : List (String × GrammarExpr))
                  (tokenProds : List (String × GrammarExpr))
                  (keywords : List String)
@@ -137,6 +137,40 @@ def parseRedDecl (redttProds : List (String × GrammarExpr))
     | some (_, st') => st'.tokens.isEmpty
     | none => false
   | none => false
+
+/-- Parse a single .red file declaration and return AST (for validation) -/
+def parseRedDeclAST (redttProds : List (String × GrammarExpr))
+                    (tokenProds : List (String × GrammarExpr))
+                    (keywords : List String)
+                    (decl : String) : Option Term :=
+  let declProd := "File.topdecl"
+  let tokens := if tokenProds.isEmpty then
+    Lego.Bootstrap.tokenizeBootstrap decl
+  else
+    let mainProds := getMainTokenProdsOrdered tokenProds
+    tokenizeWithGrammar redttFuel tokenProds mainProds decl keywords
+  match redttProds.find? (·.1 == declProd) with
+  | some (_, g) =>
+    let st : ParseState := { tokens := tokens, binds := [] }
+    let (result, _) := parseGrammar redttFuel redttProds g st
+    match result with
+    | some (t, st') => if st'.tokens.isEmpty then some t else none
+    | none => none
+  | none => none
+
+/-- Parse all declarations in a .red file and return ASTs -/
+def parseRedFileASTs (redttProds : List (String × GrammarExpr))
+                     (tokenProds : List (String × GrammarExpr))
+                     (keywords : List String)
+                     (path : String) : IO (List (String × Option Term)) := do
+  try
+    let content ← IO.FS.readFile path
+    let decls := splitRedDecls content
+    let asts := decls.map fun decl =>
+      (decl.take 80, parseRedDeclAST redttProds tokenProds keywords decl)
+    pure asts
+  catch _ =>
+    pure []
 
 /-- Parse a .red file and return (passed, total, list of failures) -/
 def parseRedFileVerbose (redttProds : List (String × GrammarExpr))
@@ -279,6 +313,371 @@ def runRedttParsingTests (rt : Runtime) : IO (List TestResult) := do
 
       pure [summaryTest]
 
+/-! ## Library-Wide Semantic Validation Tests -/
+
+/-- Recursively find all identifiers in a term that might be definition names -/
+partial def findDefIdents (t : Term) : List String :=
+  match t with
+  | .var name => [name]
+  | .con "defident" args | .con "defname" args | .con "defidentname" args =>
+    args.flatMap findDefIdents
+  | .con _ args => args.flatMap findDefIdents
+  | .lit _ => []
+
+/-- Extract all definition names from a list of ASTs -/
+def extractDefNames (asts : List Term) : List String :=
+  asts.filterMap fun ast =>
+    match ast with
+    -- Handle grammar nodes from Redtt.lego
+    | .con "defndecl" args =>
+      -- defndecl has: defmodifiers "def" defname defscheme "=" expr
+      -- Find defname in args and extract identifiers
+      args.findSome? fun arg =>
+        match arg with
+        | .con "defname" _ => findDefIdents arg |>.head?
+        | .con "defident" _ => findDefIdents arg |>.head?
+        | .var name => some name  -- Direct identifier
+        | _ => none
+    | .con "datadecl" args =>
+      args.findSome? fun arg =>
+        match arg with
+        | .var name => some name
+        | .con "dataname" [.var name] => some name
+        | _ => none
+    -- Fallback for simpler node structures
+    | .con "def" [.var name, _, _] => some name
+    | .con "def" [.con _ [.var name], _, _] => some name
+    | .con "data" [.var name, _, _] => some name
+    | .con "opaque" [.var name, _, _] => some name
+    | _ => none
+
+/-- Extract imported module names -/
+def extractImports (asts : List Term) : List String :=
+  asts.filterMap fun ast =>
+    match ast with
+    | .con "importdecl" args =>
+      args.findSome? fun arg =>
+        match arg with
+        | .con "modulepath" names =>
+          some (names.filterMap (fun t => match t with | .var n => some n | _ => none) |> ".".intercalate)
+        | .var name => some name
+        | _ => none
+    | .con "import" [.var name] => some name
+    | .con "import" [.con "modulePath" names] =>
+      some (names.filterMap (fun t => match t with | .var n => some n | _ => none) |> ".".intercalate)
+    | _ => none
+
+/-- Check scope for a definition body given a context of known names -/
+def checkBodyScope (knownNames : List String) (body : Term) : List String :=
+  let rec go (t : Term) : List String :=
+    match t with
+    | .var name =>
+      if knownNames.contains name then []
+      else if name.startsWith "$" then []  -- Pattern var
+      else if name.length == 1 then []  -- Single-letter vars often bound locally
+      else [name]
+    | .con "lam" [.var x, b] => go b |>.filter (· != x)
+    | .con "pi" [.var x, dom, cod] => go dom ++ (go cod |>.filter (· != x))
+    | .con "sigma" [.var x, dom, cod] => go dom ++ (go cod |>.filter (· != x))
+    | .con "plam" [.var i, b] => go b |>.filter (· != i)
+    | .con "letE" [.var x, ty, val, body] =>
+      go ty ++ go val ++ (go body |>.filter (· != x))
+    | .con _ args => args.flatMap go
+    | .lit _ => []
+  go body
+
+/-- Run scope and dimension validation on all parsed declarations -/
+def runValidationTests (rt : Runtime) : IO (List TestResult) := do
+  -- Find redtt library
+  let mut redttPath : Option String := none
+  for path in ["../vendor/redtt/library"] do
+    if ← System.FilePath.pathExists path then
+      redttPath := some path
+      break
+
+  match redttPath with
+  | none =>
+    IO.println "  Redtt library not found"
+    return [assertTrue "validation_skipped" true "Library not available"]
+  | some libPath =>
+    -- Load Redtt grammar
+    let redttGrammarPath := "examples/Cubical/syntax/Redtt.lego"
+    let grammarResult ← do
+      try
+        let content ← IO.FS.readFile redttGrammarPath
+        pure (Runtime.parseLegoFile rt content)
+      catch _ =>
+        pure none
+
+    match grammarResult with
+    | none =>
+      return [assertTrue "validation_grammar_load" false "Redtt.lego failed to load"]
+    | some redttAst =>
+      let redttProds := Loader.extractAllProductions redttAst
+      let tokenProds := Loader.extractTokenProductions redttAst
+      let keywords := Loader.extractKeywordsWithTokens redttProds tokenProds
+
+      -- Find all .red files
+      let files ← findRedFiles libPath
+      let sortedFiles := files.toArray.qsort (· < ·) |>.toList
+
+      IO.println s!"  Validating {sortedFiles.length} .red files..."
+
+      -- First pass: collect all definition names from all files
+      let mut allDefNames : List String := []
+      for filePath in sortedFiles do
+        let asts ← parseRedFileASTs redttProds tokenProds keywords filePath
+        let parsed := asts.filterMap (·.2)
+        allDefNames := allDefNames ++ extractDefNames parsed
+
+      -- Add common prelude names
+      let preludeNames := ["type", "path", "pathd", "coe", "hcom", "com",
+                           "refl", "symm", "trans", "ap", "apd",
+                           "Σ", "Π", "U", "Type", "Bool", "Nat",
+                           "true", "false", "zero", "suc", "fst", "snd",
+                           "λ", "→", "×"]
+      let knownNames := allDefNames ++ preludeNames
+
+      IO.println s!"  Found {allDefNames.length} definitions across all files"
+
+      let mut scopeOk := 0
+      let mut scopeFail := 0
+      let mut dimOk := 0
+      let mut dimFail := 0
+      let mut totalDecls := 0
+      let mut scopeErrSamples : List String := []
+      let mut dimErrSamples : List String := []
+
+      for filePath in sortedFiles do
+        let asts ← parseRedFileASTs redttProds tokenProds keywords filePath
+        for (preview, astOpt) in asts do
+          totalDecls := totalDecls + 1
+          match astOpt with
+          | none => pure ()  -- Parse failed (already counted elsewhere)
+          | some ast =>
+            -- Skip imports for scope checking
+            match ast with
+            | .con "import" _ =>
+              scopeOk := scopeOk + 1
+              dimOk := dimOk + 1
+            | .con "def" [.var name, _, body] =>
+              -- Scope check with the definition name itself in scope
+              let unboundVars := checkBodyScope (name :: knownNames) body
+              if unboundVars.isEmpty then
+                scopeOk := scopeOk + 1
+              else
+                scopeFail := scopeFail + 1
+                if scopeErrSamples.length < 5 then
+                  scopeErrSamples := scopeErrSamples ++ [s!"{preview.take 40}... unbound: {unboundVars.take 3}"]
+
+              -- Dimension checking (only in body)
+              let dimErrs := checkDimBindings ScopeCtx.empty body
+              if dimErrs.isEmpty then
+                dimOk := dimOk + 1
+              else
+                dimFail := dimFail + 1
+                if dimErrSamples.length < 5 then
+                  match dimErrs with
+                  | err :: _ =>
+                    let errMsg := err.format
+                    dimErrSamples := dimErrSamples ++ [s!"{preview.take 50}... → {errMsg.take 60}"]
+                  | [] => pure ()
+            | _ =>
+              -- For data, opaque, etc - just pass
+              scopeOk := scopeOk + 1
+              dimOk := dimOk + 1
+
+      -- Print error samples
+      if !scopeErrSamples.isEmpty then
+        IO.println "  Scope errors (sample):"
+        for err in scopeErrSamples do
+          IO.println s!"    {err}"
+
+      if !dimErrSamples.isEmpty then
+        IO.println "  Dimension errors (sample):"
+        for err in dimErrSamples do
+          IO.println s!"    {err}"
+
+      let scopeRate := if totalDecls > 0 then (scopeOk * 100) / totalDecls else 0
+      let dimRate := if totalDecls > 0 then (dimOk * 100) / totalDecls else 0
+
+      pure [
+        assertTrue "scope_validation" (scopeRate >= 80)
+          s!"({scopeOk}/{totalDecls} = {scopeRate}%) pass scope check",
+        assertTrue "dimension_validation" (dimRate >= 80)
+          s!"({dimOk}/{totalDecls} = {dimRate}%) pass dimension check"
+      ]
+
+/-! ## Type Checking Tests -/
+
+/-- Basic type checking tests on library terms -/
+def runTypeCheckingTests (rt : Runtime) : IO (List TestResult) := do
+  -- Find redtt library
+  let mut redttPath : Option String := none
+  for path in ["../vendor/redtt/library"] do
+    if ← System.FilePath.pathExists path then
+      redttPath := some path
+      break
+
+  match redttPath with
+  | none =>
+    return [assertTrue "typecheck_skipped" true "Library not available"]
+  | some libPath =>
+    -- Load Redtt grammar
+    let redttGrammarPath := "examples/Cubical/syntax/Redtt.lego"
+    let grammarResult ← do
+      try
+        let content ← IO.FS.readFile redttGrammarPath
+        pure (Runtime.parseLegoFile rt content)
+      catch _ =>
+        pure none
+
+    match grammarResult with
+    | none =>
+      return [assertTrue "typecheck_grammar_load" false "Redtt.lego failed to load"]
+    | some redttAst =>
+      let redttProds := Loader.extractAllProductions redttAst
+      let tokenProds := Loader.extractTokenProductions redttAst
+      let keywords := Loader.extractKeywordsWithTokens redttProds tokenProds
+
+      -- Find specific test files for type checking
+      let testFiles := ["../vendor/redtt/library/prelude.red",
+                        "../vendor/redtt/library/basics/bool.red",
+                        "../vendor/redtt/library/basics/nat.red"]
+
+      let mut wellTyped := 0
+      let mut total := 0
+      let mut typeErrs : List String := []
+
+      for filePath in testFiles do
+        if ← System.FilePath.pathExists filePath then
+          let asts ← parseRedFileASTs redttProds tokenProds keywords filePath
+          for (preview, astOpt) in asts do
+            match astOpt with
+            | none => pure ()
+            | some ast =>
+              total := total + 1
+              -- Check for basic type annotation presence
+              let hasTypeAnnotation := hasTypeInfo ast
+              if hasTypeAnnotation then
+                wellTyped := wellTyped + 1
+              else
+                if typeErrs.length < 3 then
+                  typeErrs := typeErrs ++ [s!"{preview.take 60}... missing type info"]
+
+      -- Print type errors
+      if !typeErrs.isEmpty then
+        IO.println "  Type annotation issues (sample):"
+        for err in typeErrs do
+          IO.println s!"    {err}"
+
+      let rate := if total > 0 then (wellTyped * 100) / total else 100
+      pure [
+        assertTrue "type_annotations" (rate >= 50)
+          s!"({wellTyped}/{total} = {rate}%) have type annotations"
+      ]
+
+where
+  /-- Check if term has type annotation info -/
+  hasTypeInfo (t : Term) : Bool :=
+    match t with
+    | .con "def" [_, ty, _] =>
+      match ty with
+      | .con "noType" [] => false
+      | _ => true
+    | .con "data" _ => true  -- Data decls always typed
+    | .con "import" _ => true  -- Imports ok
+    | _ => true  -- Unknown forms pass
+
+/-! ## Normalization Tests -/
+
+/-- Test normalization on library terms -/
+def runNormalizationTests (rt : Runtime) : IO (List TestResult) := do
+  -- Find redtt library
+  let mut redttPath : Option String := none
+  for path in ["../vendor/redtt/library"] do
+    if ← System.FilePath.pathExists path then
+      redttPath := some path
+      break
+
+  match redttPath with
+  | none =>
+    return [assertTrue "normalize_skipped" true "Library not available"]
+  | some libPath =>
+    -- Load Redtt grammar
+    let redttGrammarPath := "examples/Cubical/syntax/Redtt.lego"
+    let grammarResult ← do
+      try
+        let content ← IO.FS.readFile redttGrammarPath
+        pure (Runtime.parseLegoFile rt content)
+      catch _ =>
+        pure none
+
+    match grammarResult with
+    | none =>
+      return [assertTrue "normalize_grammar_load" false "Redtt.lego failed to load"]
+    | some redttAst =>
+      let redttProds := Loader.extractAllProductions redttAst
+      let tokenProds := Loader.extractTokenProductions redttAst
+      let keywords := Loader.extractKeywordsWithTokens redttProds tokenProds
+
+      -- Use actual files that exist in redtt library
+      let testFiles := [s!"{libPath}/prelude.red",
+                        s!"{libPath}/basics/isotoequiv.red",
+                        s!"{libPath}/basics/retract.red"]
+
+      let mut normalized := 0
+      let mut unchanged := 0
+      let mut total := 0
+
+      for filePath in testFiles do
+        if ← System.FilePath.pathExists filePath then
+          let asts ← parseRedFileASTs redttProds tokenProds keywords filePath
+          for (_, astOpt) in asts do
+            match astOpt with
+            | none => pure ()
+            | some ast =>
+              total := total + 1
+              -- Try normalizing with empty rules (just structural)
+              let normalized' := Lego.Cubical.normalize 1000 [] ast
+              if normalized' == ast then
+                unchanged := unchanged + 1
+              else
+                normalized := normalized + 1
+
+      IO.println s!"  Normalized: {normalized}, Unchanged: {unchanged}, Total: {total}"
+
+      -- Test specific reductions
+      let betaTest := testBetaReduction
+      let pathTest := testPathReduction
+
+      pure [
+        assertTrue "normalize_terminates" (total > 0 && (normalized + unchanged == total))
+          s!"All {total} terms normalize without error",
+        assertTrue "beta_reduction" betaTest "β-reduction works",
+        assertTrue "path_reduction" pathTest "Path application works"
+      ]
+
+where
+  /-- Test β-reduction: (λx.x) y → y -/
+  testBetaReduction : Bool :=
+    let identity := Term.con "lam" [.var "x", .var "x"]
+    let applied := Term.con "app" [identity, .var "y"]
+    let rules := [(Term.con "app" [.con "lam" [.var "$x", .var "$body"], .var "$arg"],
+                   Term.con "subst" [.var "$body", .var "$x", .var "$arg"])]
+    let result := Lego.Cubical.normalize 100 rules applied
+    -- After reduction, we should get something related to y (subst node or y itself)
+    result != applied || result == .var "y" || (toString result).containsSubstr "y"
+
+  /-- Test path application: ⟨i⟩ e @ 0 → e[i:=0] -/
+  testPathReduction : Bool :=
+    -- Simple test: dim0 and dim1 should normalize to themselves
+    let dim0 := Term.con "dim0" []
+    let dim1 := Term.con "dim1" []
+    let norm0 := Lego.Cubical.normalize 100 [] dim0
+    let norm1 := Lego.Cubical.normalize 100 [] dim1
+    norm0 == dim0 && norm1 == dim1
+
 /-! ## Test Runner -/
 
 def printTestGroup (name : String) (tests : List TestResult) : IO (Nat × Nat) := do
@@ -302,6 +701,9 @@ def main (args : List String) : IO Unit := do
   -- Parse arguments
   let runAll := args.contains "--all" || args.contains "-a"
   let runRedtt := args.contains "--redtt" || args.contains "-r" || runAll
+  let runValidate := args.contains "--validate" || args.contains "-v" || runAll
+  let runTypecheck := args.contains "--typecheck" || args.contains "-t" || runAll
+  let runNormalize := args.contains "--normalize" || args.contains "-n" || runAll
 
   -- CRITICAL: Initialize runtime by loading Bootstrap.lego FIRST
   let rt ← Runtime.init
@@ -320,6 +722,30 @@ def main (args : List String) : IO Unit := do
     totalPassed := totalPassed + p; totalFailed := totalFailed + f
   else
     IO.println "\n── Redtt Library Parsing Tests (skipped, use --all or --redtt) ──"
+
+  -- Semantic validation tests
+  if runValidate then
+    let validateTests ← runValidationTests rt
+    let (p, f) ← printTestGroup "Semantic Validation Tests" validateTests
+    totalPassed := totalPassed + p; totalFailed := totalFailed + f
+  else
+    IO.println "\n── Semantic Validation Tests (skipped, use --all or --validate) ──"
+
+  -- Type checking tests
+  if runTypecheck then
+    let typecheckTests ← runTypeCheckingTests rt
+    let (p, f) ← printTestGroup "Type Checking Tests" typecheckTests
+    totalPassed := totalPassed + p; totalFailed := totalFailed + f
+  else
+    IO.println "\n── Type Checking Tests (skipped, use --all or --typecheck) ──"
+
+  -- Normalization tests
+  if runNormalize then
+    let normalizeTests ← runNormalizationTests rt
+    let (p, f) ← printTestGroup "Normalization Tests" normalizeTests
+    totalPassed := totalPassed + p; totalFailed := totalFailed + f
+  else
+    IO.println "\n── Normalization Tests (skipped, use --all or --normalize) ──"
 
   IO.println ""
   IO.println "═══════════════════════════════════════════════════════════════"

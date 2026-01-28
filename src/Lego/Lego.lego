@@ -1299,6 +1299,14 @@ piece ProofAutomation
   -- Generates: plam i . (nat_ind P base (lam n. step) i)
   rule by_ind_nat: (byIndTac $n $base $step) ~~> (plam i . (natElim $P $base $step $n)) ;
   
+  -- PATH ALGEBRA SIMPLIFICATION RULES
+  -- These fire during normalization to simplify proof terms
+  rule sym_refl: (sym (refl $a)) ~~> (refl $a) ;  -- sym(refl a) = refl a
+  rule trans_refl_l: (trans (refl $a) $p) ~~> $p ;  -- refl · p = p
+  rule trans_refl_r: (trans $p (refl $a)) ~~> $p ;  -- p · refl = p
+  rule sym_sym: (sym (sym $p)) ~~> $p ;  -- sym(sym p) = p
+  rule cong_refl: (cong $f (refl $a)) ~~> (refl (App $f $a)) ;  -- cong f (refl a) = refl (f a)
+  
   -- TRIVIAL: solve trivially true goals
   rule trivial_true: (trivialTac true) ~~> true ;
   rule trivial_refl: (trivialTac (Path $A $a $a)) ~~> (refl $a) ;
@@ -1418,3 +1426,21 @@ test "setQuotEq_dim1": (setQuotEq a b r dim1) ~~> (setQuot b) ;
 -- Extension types tests
 test "extOut_extIn": (extOut (extIn a p)) ~~> a ;
 test "refineOut_refineIn": (refineOut (refineIn a p)) ~~> a ;
+
+-- Proof Automation tests
+-- autoTac tests: auto_refl fires when endpoints are identical
+test "auto_refl_Z": (autoTac (Path Nat Z Z)) ~~> (refl Z) ;
+test "auto_refl_var": (autoTac (Path A x x)) ~~> (refl x) ;
+-- reflTac tests: directly produce refl proofs
+test "refl_tac_Z": (reflTac (Path Nat Z Z)) ~~> (refl Z) ;
+test "refl_tac_var": (reflTac (Path A a a)) ~~> (refl a) ;
+-- trivialTac tests: handle simple goals
+test "trivial_true": (trivialTac true) ~~> true ;
+test "trivial_refl_test": (trivialTac (Path A x x)) ~~> (refl x) ;
+-- symmetry and transitivity (NOTE: these fully normalize via path algebra rules!)
+test "by_sym_test": (bySymTac (refl a)) ~~> (refl a) ;
+test "by_trans_test": (byTransTac (refl a) (refl a)) ~~> (refl a) ;
+-- Chained proofs: sym (refl a) normalizes to refl a via sym_refl
+test "sym_refl_norm": (sym (refl a)) ~~> (refl a) ;
+-- cong application (also fully normalizes!)
+test "by_cong_test": (byCongTac f (refl a)) ~~> (refl (App f a)) ;

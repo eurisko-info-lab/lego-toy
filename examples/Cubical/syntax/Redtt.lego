@@ -140,7 +140,11 @@ piece Definitions
                 | "contr" | "hsuc" | "prop" | "set" | "pt" | "base" | "loop" | "surf" ;
   defnamesuffix ::= "→" defnamepart | "→" | "~" ident ;
   defargs    ::= defarg* ;
-  defarg     ::= "(" ident+ ":" expr ")" | ident ;
+  -- defarg allows keywords as parameter names (e.g., ret : type, path : A → B)
+  defarg     ::= "(" defargname+ ":" expr ")" | ident ;
+  defargname ::= ident | "ret" | "path" | "type" | "equiv" | "fiber" | "is-equiv" | "is-contr" | "is-prop" | "is-set"
+               | "refl" | "symm" | "trans" | "cong" | "ap" | "funext" | "base" | "loop" | "pt" | "glue"
+               | "coe" | "hcom" | "comp" | "box" | "cap" | "square" | "elim" ;
 
 -----------------------------------------------------
 -- Meta Commands: meta ⦉ mlcmd ⦊
@@ -294,9 +298,9 @@ piece Application
   appexpr    ::= projexpr appitem* ;
   appitem    ::= projsuffix | projexpr ;
   projexpr   ::= atom projsuffix* ;
-  -- projname can be a keyword (for projections like .vproj)
+  -- projname can be a keyword (for projections like .vproj, .cap)
   projsuffix ::= "." projname | levelspec ;
-  projname   ::= ident | "vproj" ;
+  projname   ::= ident | "vproj" | "cap" ;
 
 -----------------------------------------------------
 -- Atomic Expressions
@@ -366,6 +370,9 @@ piece Atoms
                | "glue" | "ret" | "inl" | "inr" | "zero" | "suc" | "nil" | "cons"
                | "tt" | "ff" | "base" | "loop" | "pt" | "refl"
                | "contr" | "hsuc" | "square" | "surf"
+               -- Type-level predicates used as values (partial application)
+               | "is-equiv" | "is-contr" | "is-prop" | "is-set" | "has-hlevel" | "fiber"
+               | "equiv" | "id-equiv" | "funext"
                | "*" | "★" | "☆" ;
   pair       ::= "(" expr ("," expr)+ ")" ;
   hole       ::= "?" ;
@@ -531,7 +538,20 @@ piece BoxCap
 piece RawTerms
   rawterm    ::= "`" "(" sexprlist ")" ;
   -- sexpr allows ident, number, @, parenthesized lists, and keywords (for raw terms like `(vin ...))
-  sexpr      ::= ident | number | "@" | "(" sexprlist ")" | keyword ;
+  sexpr      ::= ident | number | "@" | "(" sexprlist ")" | sexprkeyword ;
+  sexprkeyword ::= "def" | "let" | "in" | "fun" | "where" | "with" | "data"
+                 | "import" | "opaque" | "private" | "public" | "meta" | "quit"
+                 | "type" | "coe" | "hcom" | "comp" | "box" | "cap"
+                 | "V" | "vin" | "vproj" | "glue" | "elim"
+                 | "path" | "pathd" | "refl" | "symm" | "trans" | "cong" | "ap" | "apd"
+                 | "square" | "funext" | "equiv" | "id-equiv" | "is-equiv" | "fiber"
+                 | "is-contr" | "is-prop" | "is-set" | "has-hlevel" | "pre"
+                 | "kan" | "cof" | "and" | "or" | "boundary"
+                 | "begin" | "end" | "check" | "print" | "normalize" | "debug"
+                 | "contr" | "hsuc" | "pt" | "base" | "loop" | "surf"
+                 | "zero" | "suc" | "nil" | "cons" | "inl" | "inr" | "tt" | "ff"
+                 | "ret" | "void" | "unit" | "bool" | "nat" | "int" | "list" | "maybe"
+                 | "not" | "_" ;
   sexprlist  ::= sexpr* ;
 
 -----------------------------------------------------
